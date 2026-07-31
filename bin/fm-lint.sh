@@ -176,6 +176,20 @@ fi
 # pair is left alone. The macos-stock-bash CI job stays the authoritative
 # cross-version proof; this guard turns the same defect into a local, explained
 # failure before the push.
+#
+# Known boundary: the lexer below deliberately does not model backtick command
+# substitution. An unpaired backtick in a nested heredoc body carries the same
+# Bash 3.2 hazard as an unpaired apostrophe, confirmed against 3.2.57: the body
+# opens a backtick substitution that consumes the rest of the file. It is left
+# unmodelled because no script in the canonical file set uses backticks as shell
+# command substitution and ShellCheck's SC2006 keeps it that way, while many
+# nested heredoc bodies carry literal backticks as Markdown code spans and
+# JavaScript template literals, whose `${...}`, quotes and parens would then be
+# re-lexed as shell and reported as breaks that Bash 3.2 parses fine. A guard
+# that cries wolf on working scripts gets switched off, which would cost more
+# than the case it covers. The macos-stock-bash CI job runs
+# `/bin/bash -n` over the whole `--list-files` inventory and still catches a real
+# backtick break, so this guard is defence in depth rather than the backstop.
 fm_lint_parse_guard() {  # <path>...
   local perl_bin
   if ! perl_bin=$(command -v perl); then
@@ -423,6 +437,12 @@ fm-lint.sh: Bash 3.2 (stock macOS /bin/bash) resolves $( ... ) by scanning for t
   A modern Bash parses the same file cleanly, so this breaks only on macOS.
   Fix the shape rather than the prose - drop the $( ) wrapper, for example
   `IFS= read -r -d '' VAR <<EOF || true` - so no future wording can reintroduce it.
+  Known boundary: this check does not model backtick command substitution. An
+  unpaired backtick in such a body breaks Bash 3.2 exactly like an apostrophe, but
+  modelling it would re-lex the Markdown code spans and JavaScript template
+  literals these bodies legitimately carry and report breaks that Bash 3.2 parses
+  fine. The macos-stock-bash CI job parses every file in --list-files under stock
+  /bin/bash and still catches a real backtick break.
 EXPLANATION
 }
 exit 1 if $findings || $errors;
