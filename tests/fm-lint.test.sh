@@ -426,6 +426,147 @@ SH
   pass "seeded dispatcher, adapter, production-owner, and test-local diagnostics preserve parity"
 }
 
+# Fixture builders for the Bash 3.2 parse guard. Both shapes are written with
+# printf rather than embedded literally, so the fixture text can never be lexed
+# as part of this test file.
+fm_lint_write_unsafe_apostrophe() {  # <path>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<EOF' "it is firstmate's check" 'EOF' ')' 'printf "tail\n"' > "$1"
+}
+
+fm_lint_write_unsafe_paren() {  # <path>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<EOF' 'a stray ) paren' 'EOF' ')' 'printf "tail\n"' > "$1"
+}
+
+# The safe shapes: quotes that already pair inside the nesting, an apostrophe in
+# an ordinary heredoc, a here-string, an arithmetic left shift, and a backtick
+# substitution. Bash 3.2 parses every one of these, so the guard must stay quiet.
+fm_lint_write_safe_shapes() {  # <directory>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<EOF' "the mate 'quotes' (evenly) here" 'EOF' ')' > "$1/paired.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'cat <<EOF' "it is firstmate's check" 'EOF' 'printf "tail\n"' > "$1/plain-heredoc.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<<"it'"'"'s a here-string")' 'printf "tail\n"' > "$1/here-string.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'streak=3' 'window=$(( 60 * (1 << streak) ))' 'printf "%s\n" "$window"' > "$1/shift.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=`cat <<EOF' "it is firstmate's check" 'EOF' '`' > "$1/backtick.sh"
+}
+
+# Empirical grounding: when a Bash 3.2 is actually reachable, the fixtures the
+# guard calls dangerous must really fail to parse there, and the ones it calls
+# safe must really parse. Without that, both directions could drift into
+# asserting only the guard's own opinion.
+fm_lint_bash32() {
+  local candidate version
+  for candidate in /bin/bash "${FM_TEST_BASH32:-}"; do
+    [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+    # shellcheck disable=SC2016 # The candidate shell must expand its own version.
+    version=$("$candidate" -c 'printf "%s" "$BASH_VERSION"' 2>/dev/null)
+    case "$version" in 3.2*) printf '%s\n' "$candidate"; return 0 ;; esac
+  done
+  return 1
+}
+
+test_parse_guard_flags_the_bash32_break() {
+  local tmp out rc bash32
+  tmp=$(fm_test_tmproot fm-lint-guard-unsafe)
+  mkdir -p "$tmp"
+  fm_lint_write_unsafe_apostrophe "$tmp/apostrophe.sh"
+  fm_lint_write_unsafe_paren "$tmp/paren.sh"
+
+  rc=0
+  out=$("$LINT" --parse-guard "$tmp/apostrophe.sh" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "the parse guard passed a heredoc that leaves an apostrophe open inside \$( )"
+  assert_contains "$out" "apostrophe.sh:1" "the parse guard did not report the offending line"
+  # The message must explain the cause, not just the shape: a developer who has
+  # only used a modern Bash has no way to guess why this construct is a defect.
+  assert_contains "$out" "Bash 3.2" "the parse guard did not name the affected Bash version"
+  assert_contains "$out" "IFS= read -r -d" "the parse guard did not offer the safe replacement shape"
+
+  rc=0
+  "$LINT" --parse-guard "$tmp/paren.sh" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "the parse guard passed a heredoc that leaves a paren unbalanced inside \$( )"
+
+  if bash32=$(fm_lint_bash32); then
+    "$bash32" -n "$tmp/apostrophe.sh" 2>/dev/null \
+      && fail "fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    "$bash32" -n "$tmp/paren.sh" 2>/dev/null \
+      && fail "paren fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    pass "the parse guard flags the shapes Bash 3.2 ($bash32) genuinely cannot parse"
+    return
+  fi
+  pass "the parse guard flags heredoc nesting that breaks Bash 3.2 (no 3.2 available to confirm)"
+}
+
+test_parse_guard_accepts_safe_shapes() {
+  local tmp fixture rc bash32 confirmed=0
+  tmp=$(fm_test_tmproot fm-lint-guard-safe)
+  mkdir -p "$tmp"
+  fm_lint_write_safe_shapes "$tmp"
+  bash32=$(fm_lint_bash32) || bash32=
+
+  for fixture in "$tmp"/*.sh; do
+    rc=0
+    "$LINT" --parse-guard "$fixture" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] \
+      || fail "the parse guard flagged the Bash 3.2-safe fixture $(basename "$fixture")"
+    if [ -n "$bash32" ]; then
+      "$bash32" -n "$fixture" 2>/dev/null \
+        || fail "fixture assumed safe failed to parse under $bash32: $(basename "$fixture")"
+      confirmed=1
+    fi
+  done
+
+  if [ "$confirmed" -eq 1 ]; then
+    pass "the parse guard stays quiet on nesting Bash 3.2 ($bash32) parses cleanly"
+    return
+  fi
+  pass "the parse guard stays quiet on safe nesting (no 3.2 available to confirm)"
+}
+
+test_parse_guard_covers_the_whole_file_set() {
+  local rc=0 out
+  # The widened scope: every canonical root, not just bin/fm-brief.sh, which is
+  # what makes a latent nesting anywhere in the tree unable to reacquire the bug.
+  out=$("$LINT" --parse-guard 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "the canonical file set carries a Bash 3.2 heredoc parse defect"$'\n'"$out"
+  [ -z "$out" ] || fail "the parse guard emitted unexpected output on a clean tree: $out"
+  pass "the parse guard covers the whole canonical file set and it is clean"
+}
+
+test_parse_guard_reports_an_unreadable_root() {
+  local tmp out rc=0
+  tmp=$(fm_test_tmproot fm-lint-guard-missing)
+  mkdir -p "$tmp"
+  out=$("$LINT" --parse-guard "$tmp/absent.sh" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the parse guard reported a clean result for a path it never read"
+  assert_contains "$out" "not a readable file" "the parse guard did not explain the unreadable root"
+  pass "the parse guard reports a root it cannot read instead of skipping it"
+}
+
+test_canonical_lint_applies_the_parse_guard() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): canonical parse-guard integration"
+    return
+  fi
+  # The fixture is deliberately ShellCheck-clean, so a non-zero exit can only come
+  # from the structural guard running as part of an ordinary lint invocation.
+  local tmp out rc=0
+  tmp=$(fm_test_tmproot fm-lint-guard-integration)
+  mkdir -p "$tmp"
+  fm_lint_write_unsafe_apostrophe "$tmp/apostrophe.sh"
+  out=$("$LINT" "$tmp/apostrophe.sh" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a plain fm-lint.sh run did not apply the Bash 3.2 parse guard"
+  assert_contains "$out" "Bash 3.2" "the canonical lint run did not surface the parse-guard finding"
+  pass "a plain fm-lint.sh run applies the Bash 3.2 parse guard"
+}
+
 test_list_files_reports_the_shell_inventory
 test_pins_an_explicit_version
 test_installer_retries_transient_download_failure
@@ -436,3 +577,8 @@ test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
 test_worker_trees_stop_on_signal
 test_seeded_module_boundary_parity
+test_parse_guard_flags_the_bash32_break
+test_parse_guard_accepts_safe_shapes
+test_parse_guard_covers_the_whole_file_set
+test_parse_guard_reports_an_unreadable_root
+test_canonical_lint_applies_the_parse_guard
