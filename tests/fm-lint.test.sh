@@ -439,12 +439,26 @@ fm_lint_write_unsafe_paren() {  # <path>
   printf '%s\n' 'value=$(cat <<EOF' 'a stray ) paren' 'EOF' ')' 'printf "tail\n"' > "$1"
 }
 
+# Bash 3.2 only starts a comment after a blank, so a `#` glued to a `;` is plain
+# text and the apostrophe behind it still escapes into the rest of the file.
+fm_lint_write_unsafe_semicolon_comment() {  # <path>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<EOF' "echo hi;# it's a note" 'EOF' ')' 'printf "tail\n"' > "$1"
+}
+
 # The safe shapes: quotes that already pair inside the nesting, an apostrophe in
-# an ordinary heredoc, a here-string, an arithmetic left shift, and a backtick
-# substitution. Bash 3.2 parses every one of these, so the guard must stay quiet.
+# an ordinary heredoc, a here-string, an arithmetic left shift, a backtick
+# substitution, a `$'...'` that closes on a later line, and an apostrophe behind a
+# real comment. Bash 3.2 parses every one, so the guard must stay quiet.
 fm_lint_write_safe_shapes() {  # <directory>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'value=$(cat <<EOF' "the mate 'quotes' (evenly) here" 'EOF' ')' > "$1/paired.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<EOF' "prefix=\$'first" "second'" 'EOF' ')' 'printf "tail\n"' \
+    > "$1/ansi-c-multiline.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<EOF' "echo hi # it's a note" 'EOF' ')' 'printf "tail\n"' \
+    > "$1/blank-comment.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'cat <<EOF' "it is firstmate's check" 'EOF' 'printf "tail\n"' > "$1/plain-heredoc.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
@@ -476,6 +490,7 @@ test_parse_guard_flags_the_bash32_break() {
   mkdir -p "$tmp"
   fm_lint_write_unsafe_apostrophe "$tmp/apostrophe.sh"
   fm_lint_write_unsafe_paren "$tmp/paren.sh"
+  fm_lint_write_unsafe_semicolon_comment "$tmp/semicolon-comment.sh"
 
   rc=0
   out=$("$LINT" --parse-guard "$tmp/apostrophe.sh" 2>&1) || rc=$?
@@ -492,11 +507,18 @@ test_parse_guard_flags_the_bash32_break() {
   [ "$rc" -ne 0 ] \
     || fail "the parse guard passed a heredoc that leaves a paren unbalanced inside \$( )"
 
+  rc=0
+  "$LINT" --parse-guard "$tmp/semicolon-comment.sh" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "the parse guard read a \`;#\` as a comment Bash 3.2 does not start there"
+
   if bash32=$(fm_lint_bash32); then
     "$bash32" -n "$tmp/apostrophe.sh" 2>/dev/null \
       && fail "fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/paren.sh" 2>/dev/null \
       && fail "paren fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    "$bash32" -n "$tmp/semicolon-comment.sh" 2>/dev/null \
+      && fail "\`;#\` fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     pass "the parse guard flags the shapes Bash 3.2 ($bash32) genuinely cannot parse"
     return
   fi
@@ -550,6 +572,31 @@ test_parse_guard_reports_an_unreadable_root() {
   pass "the parse guard reports a root it cannot read instead of skipping it"
 }
 
+test_parse_guard_continues_past_an_unopenable_root() {
+  local tmp out rc=0
+  tmp=$(fm_test_tmproot fm-lint-guard-unopenable)
+  mkdir -p "$tmp"
+  printf '%s\n' 'printf "ok\n"' > "$tmp/locked.sh"
+  chmod 000 "$tmp/locked.sh"
+  if [ -r "$tmp/locked.sh" ]; then
+    chmod 644 "$tmp/locked.sh"
+    pass "SKIP (this user can read a mode-000 file): unopenable-root continuation"
+    return
+  fi
+  fm_lint_write_unsafe_apostrophe "$tmp/apostrophe.sh"
+
+  out=$("$LINT" --parse-guard "$tmp/locked.sh" "$tmp/apostrophe.sh" 2>&1) || rc=$?
+  chmod 644 "$tmp/locked.sh"
+  [ "$rc" -ne 0 ] || fail "the parse guard reported a clean result for a root it could not open"
+  assert_contains "$out" "not a readable file" \
+    "the parse guard did not report the unopenable root in its own diagnostic format"
+  # The point of the fix: one unopenable root must not abort the sweep and leave
+  # every later root silently unchecked.
+  assert_contains "$out" "apostrophe.sh:1" \
+    "the parse guard stopped at the unopenable root instead of checking the rest"
+  pass "the parse guard continues the sweep past a root it cannot open"
+}
+
 test_canonical_lint_applies_the_parse_guard() {
   if ! pinned_ready; then
     pass "SKIP (ShellCheck $REQUIRED not resolved): canonical parse-guard integration"
@@ -581,4 +628,5 @@ test_parse_guard_flags_the_bash32_break
 test_parse_guard_accepts_safe_shapes
 test_parse_guard_covers_the_whole_file_set
 test_parse_guard_reports_an_unreadable_root
+test_parse_guard_continues_past_an_unopenable_root
 test_canonical_lint_applies_the_parse_guard

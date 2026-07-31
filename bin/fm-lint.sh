@@ -198,6 +198,13 @@ sub lex_line {
       $$quote_ref = '' if $char eq "'";
       next;
     }
+    # Inside `$'...'` a backslash escapes the next character, including the closing
+    # quote, so the state has to be unwound here rather than by the plain `'` branch.
+    if ($$quote_ref eq "\$'") {
+      $i++ if $char eq '\\';
+      $$quote_ref = '' if $char eq "'";
+      next;
+    }
     if ($char eq '\\') {
       $i++;
       next;
@@ -214,19 +221,18 @@ sub lex_line {
       $$quote_ref = '"';
       next;
     }
-    if ($char eq '#' && $$quote_ref eq '' && ($i == 0 || substr($line, $i - 1, 1) =~ /[\s;|&()]/)) {
+    # Bash 3.2 only starts a comment at the beginning of the text it is scanning,
+    # after a newline, or after a blank. Treating any other `#` as a comment would
+    # skip the rest of the line and miss the state-opening characters after it.
+    if ($char eq '#' && $$quote_ref eq '' && ($i == 0 || substr($line, $i - 1, 1) =~ /[ \t]/)) {
       last;
     }
-    # `$'...'` is ANSI-C quoting, where a backslash escapes the closing quote, so
-    # it cannot be lexed as a plain single-quoted string.
-    if ($char eq '$' && substr($line, $i + 1, 1) eq "'") {
-      $i += 2;
-      while ($i < $length) {
-        my $inner = substr($line, $i, 1);
-        last if $inner eq "'";
-        $i++ if $inner eq '\\';
-        $i++;
-      }
+    # `$'...'` is ANSI-C quoting, where a backslash escapes the closing quote, so it
+    # cannot be lexed as a plain single-quoted string. It is carried in the shared
+    # quote state because Bash 3.2 lets it span lines like the other quotes do.
+    if ($char eq '$' && $$quote_ref eq '' && substr($line, $i + 1, 1) eq "'") {
+      $$quote_ref = "\$'";
+      $i++;
       next;
     }
     # `$"..."` is a localized string that otherwise lexes as a double-quoted one.
@@ -327,13 +333,24 @@ sub reason {
   my ($entry_quote, $quote) = @_;
   return 'leaves a single quote open (an unpaired apostrophe)' if $quote eq "'";
   return 'leaves a double quote open' if $quote eq '"';
+  return "leaves a \$'...' quote open" if $quote eq "\$'";
   return 'closes a quote that was already open' if $quote ne $entry_quote;
   return 'leaves an unbalanced parenthesis';
 }
 
+# A root the guard cannot read is reported rather than skipped, so a mistyped or
+# unopenable path can never be mistaken for a clean result, and so one bad root
+# cannot abort the sweep and leave every later root silently unchecked.
+sub report_unreadable {
+  my ($path) = @_;
+  printf STDERR "fm-lint.sh: %s: not a readable file for the Bash 3.2 parse guard.\n", $path;
+  return undef;
+}
+
 sub check_file {
   my ($path) = @_;
-  open my $source, '<', $path or die "fm-lint.sh: $path: $!\n";
+  my $source;
+  open $source, '<', $path or return report_unreadable($path);
   my @frames;
   my @heredocs;
   my $quote = '';
@@ -384,14 +401,17 @@ sub check_file {
 my $findings = 0;
 my $errors = 0;
 for my $path (@ARGV) {
-  # A root the guard cannot read is reported rather than skipped, so a mistyped
-  # path can never be mistaken for a clean result.
   if (!-f $path) {
-    printf STDERR "fm-lint.sh: %s: not a readable file for the Bash 3.2 parse guard.\n", $path;
+    report_unreadable($path);
     $errors++;
     next;
   }
-  $findings += check_file($path);
+  my $result = check_file($path);
+  if (!defined $result) {
+    $errors++;
+    next;
+  }
+  $findings += $result;
 }
 if ($findings) {
   print STDERR <<'EXPLANATION';
