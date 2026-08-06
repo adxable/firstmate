@@ -191,19 +191,18 @@ fi
 # `/bin/bash -n` over the whole `--list-files` inventory and still catches a real
 # backtick break, so this guard is defence in depth rather than the backstop.
 #
-# Delimiter words are read literally, because Bash applies only quote removal to
-# them and expands nothing: `cat <<$D` is terminated by a line reading `$D`, not by
-# the value of `$D`, and the same holds for `${D}` and `$(printf EOF)`. The scanner
-# therefore copies the word out byte for byte, spanning `$( ... )` and `${ ... }`
-# rather than breaking on the metacharacters inside them, and resolves none of it.
-#
-# Second known boundary: a delimiter word carrying a backtick, or a `$( ` or `${ `
-# the line never closes, is the one shape the scanner cannot read the way Bash
-# does. That single heredoc is skipped rather than tracked under a delimiter Bash
-# would never match, so its body is not checked; scanning continues through the
-# rest of the file, and every break outside that body is still reported. No such
-# delimiter exists in the canonical file set, and the macos-stock-bash CI job
-# covers what the skip leaves unchecked.
+# Second known boundary: a heredoc is analysed only when its delimiter word is one
+# of the three forms this scanner can read with certainty - a bare literal word, or
+# that same word wrapped in single or double quotes. Bash applies only quote removal
+# to a delimiter word and expands nothing, so for those three the terminator is
+# known exactly: `cat <<'EOF'` and `cat <<EOF` both end at a line reading `EOF`.
+# Every other form is skipped, without enumerating them, because a delimiter this
+# scanner cannot read is one it cannot find the end of a body with. A skipped body
+# is consumed verbatim, so nothing inside it is checked and nothing it opens can
+# leak into the file, and scanning resumes the moment the word reappears; a word
+# that never reappears leaves the remainder of that file unchecked. Every heredoc
+# in the canonical file set uses a bare or single-quoted word, so nothing there is
+# skipped today, and the macos-stock-bash CI job covers what a skip would miss.
 fm_lint_parse_guard() {  # <path>...
   local perl_bin
   if ! perl_bin=$(command -v perl); then
@@ -214,28 +213,13 @@ fm_lint_parse_guard() {  # <path>...
 use strict;
 use warnings;
 
-# Return the index of the character closing the `$( ... )` or `${ ... }` that
-# starts at $start, or -1 when it does not close on this line. Only the extent is
-# measured; nothing inside the span is resolved.
-sub span_end {
-  my ($line, $start) = @_;
-  my $length = length $line;
-  my $open = substr($line, $start + 1, 1);
-  my $close = $open eq '(' ? ')' : '}';
-  my $depth = 0;
-  for (my $k = $start + 1; $k < $length; $k++) {
-    my $token = substr($line, $k, 1);
-    if ($token eq '\\') {
-      $k++;
-      next;
-    }
-    $depth++ if $token eq $open;
-    if ($token eq $close) {
-      $depth--;
-      return $k if $depth == 0;
-    }
-  }
-  return -1;
+# The one rule that decides whether a heredoc is analysed at all: the delimiter
+# word must be a bare literal word, or that word in single or double quotes. Those
+# are the forms whose terminator is known exactly, since Bash only removes the
+# quotes. Anything else is left unread rather than guessed at.
+sub readable_delimiter {
+  my ($word) = @_;
+  return $word =~ /\A(?:'[^']*'|"[^"\\`]*"|[^\s;|&()<>'"\\\$`]+)\z/ ? 1 : 0;
 }
 
 # Lex one line, advancing the shared command-substitution and quote state. Heredoc
@@ -341,11 +325,9 @@ sub lex_line {
     my $strip_tabs = substr($line, $j, 1) eq '-';
     $j++ if $strip_tabs;
     $j++ while substr($line, $j, 1) =~ /[ \t]/;
+    my $word_start = $j;
     my $delimiter = '';
     my $delimiter_quote = '';
-    # A delimiter word whose bytes this scanner cannot read the way Bash reads them
-    # is skipped rather than tracked with a delimiter Bash will never match.
-    my $unreadable = 0;
     for (; $j < $length; $j++) {
       my $token = substr($line, $j, 1);
       if ($delimiter_quote) {
@@ -368,36 +350,15 @@ sub lex_line {
         $delimiter .= substr($line, $j, 1);
         next;
       }
-      # A backtick span belongs to the word, but reading one would mean lexing
-      # backticks, which this guard deliberately does not do, so the heredoc is
-      # skipped instead of tracked under a delimiter Bash would not match.
-      if ($token eq '`') {
-        $unreadable = 1;
-        last;
-      }
-      # `$( ... )` and `${ ... }` are part of the delimiter word rather than a
-      # break in it, so the characters they span are copied out literally. Bash
-      # applies only quote removal to the word, so those bytes are the terminator.
-      if ($token eq '$' && substr($line, $j + 1, 1) =~ /[({]/) {
-        my $end = span_end($line, $j);
-        if ($end < 0) {
-          $unreadable = 1;
-          last;
-        }
-        $delimiter .= substr($line, $j, $end - $j + 1);
-        $j = $end;
-        next;
-      }
       last if $token =~ /[\s;|&()<>]/;
       $delimiter .= $token;
     }
-    # Skipping means skipping this one heredoc: the rest of the file is still
-    # scanned, so every break outside the untracked body is still reported.
-    if ($unreadable) {
-      $i = $length;
-      next;
-    }
-    push @$heredocs, { delimiter => $delimiter, strip_tabs => $strip_tabs, line => $. };
+    push @$heredocs, {
+      delimiter => $delimiter,
+      readable => readable_delimiter(substr($line, $word_start, $j - $word_start)),
+      strip_tabs => $strip_tabs,
+      line => $.,
+    };
     $i = $j - 1;
   }
 }
@@ -440,15 +401,23 @@ sub check_file {
   while (my $line = <$source>) {
     if (@heredocs) {
       my $pending = $heredocs[0];
+      my $candidate = $line;
+      $candidate =~ s/\r?\n\z//;
+      $candidate =~ s/^\t+// if $pending->{strip_tabs};
+      # A delimiter outside the three readable forms leaves no way to know where
+      # the body ends, so the body is consumed verbatim: nothing in it is checked
+      # and nothing it opens reaches the rest of the file. Scanning resumes if the
+      # word turns up again.
+      if (!$pending->{readable}) {
+        shift @heredocs if $candidate eq $pending->{delimiter};
+        next;
+      }
       if (!exists $pending->{entry}) {
         $pending->{nested} = scalar(@frames) ? 1 : 0;
         $pending->{entry} = signature(\@frames, $quote);
         $pending->{entry_quote} = $quote;
         $pending->{entry_frames} = [map { {%$_} } @frames];
       }
-      my $candidate = $line;
-      $candidate =~ s/\r?\n\z//;
-      $candidate =~ s/^\t+// if $pending->{strip_tabs};
       if ($candidate eq $pending->{delimiter}) {
         shift @heredocs;
         if ($pending->{nested} && signature(\@frames, $quote) ne $pending->{entry}) {
@@ -472,6 +441,7 @@ sub check_file {
   # scanned the remainder as a phantom body. Reporting that keeps a mis-parse from
   # quietly disabling the rule for everything below it.
   for my $pending (@heredocs) {
+    next unless $pending->{readable};
     printf STDERR "%s:%d: the Bash 3.2 parse guard found no `%s` terminator for this heredoc and could not check the rest of the file.\n",
       $path, $pending->{line}, $pending->{delimiter};
     $findings++;
@@ -510,9 +480,9 @@ fm-lint.sh: Bash 3.2 (stock macOS /bin/bash) resolves $( ... ) by scanning for t
   literals these bodies legitimately carry and report breaks that Bash 3.2 parses
   fine. The macos-stock-bash CI job parses every file in --list-files under stock
   /bin/bash and still catches a real backtick break.
-  Second boundary: a heredoc delimiter word carrying a backtick, or a `$( ` or
-  `${ ` the line never closes, is not read here. That one heredoc body goes
-  unchecked; the rest of the file is still scanned.
+  Second boundary: a heredoc is checked only when its delimiter word is a bare
+  word, or that word in single or double quotes. Any other form is skipped, its
+  body read verbatim and unchecked, and scanning resumes where the word reappears.
 EXPLANATION
 }
 exit 1 if $findings || $errors;

@@ -446,19 +446,26 @@ fm_lint_write_unsafe_semicolon_comment() {  # <path>
   printf '%s\n' 'value=$(cat <<EOF' "echo hi;# it's a note" 'EOF' ')' 'printf "tail\n"' > "$1"
 }
 
-# Bash expands nothing in a delimiter word, so a heredoc closed by the literal
-# `$D` is an ordinary tracked heredoc. A break below one must still be reported:
-# reading a `$` in a delimiter as a reason to stop would hide the whole tail.
+# A delimiter word outside the three readable forms means the guard skips that one
+# heredoc, and a break below it must still be reported. Both fixtures place the
+# break after the skipped body, which is where a skip that lexed the body instead
+# of consuming it would leak an apostrophe and silence the whole tail.
 fm_lint_write_unsafe_below_dollar_delimiter() {  # <path>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'D=EOF' 'cat <<$D' 'body' '$D' 'value=$(cat <<X' "it is firstmate's check" 'X' \
     ')' 'printf "tail\n"' > "$1"
 }
 
+fm_lint_write_unsafe_below_skipped_apostrophe() {  # <path>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'cat <<`EOF`' "it is firstmate's check" '`EOF`' 'value=$(cat <<X' \
+    "the mate's check" 'X' ')' 'printf "tail\n"' > "$1"
+}
+
 # The safe shapes: quotes that already pair inside the nesting, an apostrophe in
 # an ordinary heredoc, a here-string, an arithmetic left shift, a backtick
 # substitution, a `$'...'` that closes on a later line, an apostrophe behind a
-# real comment, and the delimiter words Bash takes literally rather than expanding.
+# real comment, and the delimiter forms the guard reads and the ones it skips.
 # Bash 3.2 runs every one to completion, so the guard must stay quiet.
 #
 # Every fixture ends in the same `tail` marker, because a fixture whose heredoc is
@@ -485,7 +492,9 @@ fm_lint_write_safe_shapes() {  # <directory>
   printf '%s\n' 'value=`cat <<EOF' "it is firstmate's check" 'EOF' '`' 'printf "tail\n"' \
     > "$1/backtick.sh"
   # Bash applies only quote removal to a delimiter word, so each of these closes on
-  # the literal word itself rather than on anything it would expand to.
+  # the literal word itself rather than on anything it would expand to. The guard
+  # skips them for being outside the three readable forms, which must leave it
+  # silent rather than complaining that the word it read never came back.
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'D=EOF' 'cat <<$D' 'body' '$D' 'printf "tail\n"' > "$1/dollar-delimiter.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
@@ -521,6 +530,7 @@ test_parse_guard_flags_the_bash32_break() {
   fm_lint_write_unsafe_paren "$tmp/paren.sh"
   fm_lint_write_unsafe_semicolon_comment "$tmp/semicolon-comment.sh"
   fm_lint_write_unsafe_below_dollar_delimiter "$tmp/below-dollar-delimiter.sh"
+  fm_lint_write_unsafe_below_skipped_apostrophe "$tmp/below-skipped-apostrophe.sh"
 
   rc=0
   out=$("$LINT" --parse-guard "$tmp/apostrophe.sh" 2>&1) || rc=$?
@@ -549,6 +559,13 @@ test_parse_guard_flags_the_bash32_break() {
   assert_contains "$out" "below-dollar-delimiter.sh:5" \
     "the parse guard did not report the break below a heredoc closed by a literal \`\$D\`"
 
+  rc=0
+  out=$("$LINT" --parse-guard "$tmp/below-skipped-apostrophe.sh" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "an apostrophe in a skipped heredoc body leaked and hid the break below it"
+  assert_contains "$out" "below-skipped-apostrophe.sh:4" \
+    "the parse guard did not report the break below a skipped heredoc body"
+
   if bash32=$(fm_lint_bash32); then
     "$bash32" -n "$tmp/apostrophe.sh" 2>/dev/null \
       && fail "fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
@@ -558,6 +575,8 @@ test_parse_guard_flags_the_bash32_break() {
       && fail "\`;#\` fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/below-dollar-delimiter.sh" 2>/dev/null \
       && fail "break-below-\$-delimiter fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    "$bash32" -n "$tmp/below-skipped-apostrophe.sh" 2>/dev/null \
+      && fail "break-below-skipped-body fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     pass "the parse guard flags the shapes Bash 3.2 ($bash32) genuinely cannot parse"
     return
   fi
@@ -584,7 +603,7 @@ test_parse_guard_accepts_safe_shapes() {
       # reaching the tail proves the shape certified here is one Bash 3.2 runs.
       # The match is whole-line because a swallowed body echoes the unrun source
       # line `printf "tail\n"`, which would satisfy a substring test.
-      ran=$("$bash32" "$fixture" 2>/dev/null)
+      ran=$("$bash32" "$fixture" 2>/dev/null </dev/null)
       printf '%s\n' "$ran" | grep -Fxq 'tail' \
         || fail "fixture certified safe never reached its tail under $bash32: $(basename "$fixture")"
       confirmed=1
