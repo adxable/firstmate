@@ -446,22 +446,28 @@ fm_lint_write_unsafe_semicolon_comment() {  # <path>
   printf '%s\n' 'value=$(cat <<EOF' "echo hi;# it's a note" 'EOF' ')' 'printf "tail\n"' > "$1"
 }
 
-# A delimiter the guard cannot read literally stops it reading further, but every
-# break above that point must still be reported.
-fm_lint_write_unsafe_above_expanded_delimiter() {  # <path>
+# Bash expands nothing in a delimiter word, so a heredoc closed by the literal
+# `$D` is an ordinary tracked heredoc. A break below one must still be reported:
+# reading a `$` in a delimiter as a reason to stop would hide the whole tail.
+fm_lint_write_unsafe_below_dollar_delimiter() {  # <path>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
-  printf '%s\n' 'value=$(cat <<EOF' "it is firstmate's check" 'EOF' ')' 'D=EOF' 'cat <<$D' \
-    'body' 'EOF' > "$1"
+  printf '%s\n' 'D=EOF' 'cat <<$D' 'body' '$D' 'value=$(cat <<X' "it is firstmate's check" 'X' \
+    ')' 'printf "tail\n"' > "$1"
 }
 
 # The safe shapes: quotes that already pair inside the nesting, an apostrophe in
 # an ordinary heredoc, a here-string, an arithmetic left shift, a backtick
 # substitution, a `$'...'` that closes on a later line, an apostrophe behind a
-# real comment, and a heredoc delimiter that is a parameter expansion rather than
-# a literal word. Bash 3.2 parses every one, so the guard must stay quiet.
+# real comment, and the delimiter words Bash takes literally rather than expanding.
+# Bash 3.2 runs every one to completion, so the guard must stay quiet.
+#
+# Every fixture ends in the same `tail` marker, because a fixture whose heredoc is
+# never terminated swallows its own tail while still satisfying `bash -n`. Running
+# each one and requiring the marker is what makes this set falsifiable.
 fm_lint_write_safe_shapes() {  # <directory>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
-  printf '%s\n' 'value=$(cat <<EOF' "the mate 'quotes' (evenly) here" 'EOF' ')' > "$1/paired.sh"
+  printf '%s\n' 'value=$(cat <<EOF' "the mate 'quotes' (evenly) here" 'EOF' ')' 'printf "tail\n"' \
+    > "$1/paired.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'value=$(cat <<EOF' "prefix=\$'first" "second'" 'EOF' ')' 'printf "tail\n"' \
     > "$1/ansi-c-multiline.sh"
@@ -473,18 +479,23 @@ fm_lint_write_safe_shapes() {  # <directory>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'value=$(cat <<<"it'"'"'s a here-string")' 'printf "tail\n"' > "$1/here-string.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
-  printf '%s\n' 'streak=3' 'window=$(( 60 * (1 << streak) ))' 'printf "%s\n" "$window"' > "$1/shift.sh"
+  printf '%s\n' 'streak=3' 'window=$(( 60 * (1 << streak) ))' 'printf "%s\n" "$window"' \
+    'printf "tail\n"' > "$1/shift.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
-  printf '%s\n' 'value=`cat <<EOF' "it is firstmate's check" 'EOF' '`' > "$1/backtick.sh"
+  printf '%s\n' 'value=`cat <<EOF' "it is firstmate's check" 'EOF' '`' 'printf "tail\n"' \
+    > "$1/backtick.sh"
+  # Bash applies only quote removal to a delimiter word, so each of these closes on
+  # the literal word itself rather than on anything it would expand to.
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
-  printf '%s\n' 'D=EOF' 'cat <<$D' 'body' 'EOF' 'printf "tail\n"' > "$1/expanded-delimiter.sh"
+  printf '%s\n' 'D=EOF' 'cat <<$D' 'body' '$D' 'printf "tail\n"' > "$1/dollar-delimiter.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
-  printf '%s\n' 'D=EOF' 'cat <<${D}' 'body' 'EOF' 'printf "tail\n"' > "$1/braced-delimiter.sh"
-  # Quoting any part of the word makes Bash take the delimiter literally, so this
-  # one stays fully checkable and must not be waved through as an expansion.
+  printf '%s\n' 'D=EOF' 'cat <<${D}' 'body' '${D}' 'printf "tail\n"' > "$1/braced-delimiter.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<$(printf EOF)' "the mate 'quotes' (evenly) here" '$(printf EOF)' \
+    ')' 'printf "tail\n"' > "$1/substitution-delimiter.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'D=EOF' 'value=$(cat <<"$D"' "the mate 'quotes' (evenly) here" '$D' ')' \
-    > "$1/quoted-dollar-delimiter.sh"
+    'printf "tail\n"' > "$1/quoted-dollar-delimiter.sh"
 }
 
 # Empirical grounding: when a Bash 3.2 is actually reachable, the fixtures the
@@ -509,7 +520,7 @@ test_parse_guard_flags_the_bash32_break() {
   fm_lint_write_unsafe_apostrophe "$tmp/apostrophe.sh"
   fm_lint_write_unsafe_paren "$tmp/paren.sh"
   fm_lint_write_unsafe_semicolon_comment "$tmp/semicolon-comment.sh"
-  fm_lint_write_unsafe_above_expanded_delimiter "$tmp/above-expanded-delimiter.sh"
+  fm_lint_write_unsafe_below_dollar_delimiter "$tmp/below-dollar-delimiter.sh"
 
   rc=0
   out=$("$LINT" --parse-guard "$tmp/apostrophe.sh" 2>&1) || rc=$?
@@ -532,11 +543,11 @@ test_parse_guard_flags_the_bash32_break() {
     || fail "the parse guard read a \`;#\` as a comment Bash 3.2 does not start there"
 
   rc=0
-  out=$("$LINT" --parse-guard "$tmp/above-expanded-delimiter.sh" 2>&1) || rc=$?
+  out=$("$LINT" --parse-guard "$tmp/below-dollar-delimiter.sh" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] \
-    || fail "a later unreadable heredoc delimiter suppressed a break the guard had already found"
-  assert_not_contains "$out" "found no" \
-    "the parse guard reported a missing terminator for a delimiter it cannot expand"
+    || fail "a \`\$\` in an earlier heredoc delimiter hid the break below it"
+  assert_contains "$out" "below-dollar-delimiter.sh:5" \
+    "the parse guard did not report the break below a heredoc closed by a literal \`\$D\`"
 
   if bash32=$(fm_lint_bash32); then
     "$bash32" -n "$tmp/apostrophe.sh" 2>/dev/null \
@@ -545,8 +556,8 @@ test_parse_guard_flags_the_bash32_break() {
       && fail "paren fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/semicolon-comment.sh" 2>/dev/null \
       && fail "\`;#\` fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
-    "$bash32" -n "$tmp/above-expanded-delimiter.sh" 2>/dev/null \
-      && fail "break-above-expansion fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    "$bash32" -n "$tmp/below-dollar-delimiter.sh" 2>/dev/null \
+      && fail "break-below-\$-delimiter fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     pass "the parse guard flags the shapes Bash 3.2 ($bash32) genuinely cannot parse"
     return
   fi
@@ -554,7 +565,7 @@ test_parse_guard_flags_the_bash32_break() {
 }
 
 test_parse_guard_accepts_safe_shapes() {
-  local tmp fixture rc bash32 confirmed=0
+  local tmp fixture rc bash32 confirmed=0 ran
   tmp=$(fm_test_tmproot fm-lint-guard-safe)
   mkdir -p "$tmp"
   fm_lint_write_safe_shapes "$tmp"
@@ -568,6 +579,14 @@ test_parse_guard_accepts_safe_shapes() {
     if [ -n "$bash32" ]; then
       "$bash32" -n "$fixture" 2>/dev/null \
         || fail "fixture assumed safe failed to parse under $bash32: $(basename "$fixture")"
+      # `bash -n` accepts an unterminated heredoc, which swallows every line below
+      # it, so parsing alone cannot tell a working fixture from a broken one. Only
+      # reaching the tail proves the shape certified here is one Bash 3.2 runs.
+      # The match is whole-line because a swallowed body echoes the unrun source
+      # line `printf "tail\n"`, which would satisfy a substring test.
+      ran=$("$bash32" "$fixture" 2>/dev/null)
+      printf '%s\n' "$ran" | grep -Fxq 'tail' \
+        || fail "fixture certified safe never reached its tail under $bash32: $(basename "$fixture")"
       confirmed=1
     fi
   done
