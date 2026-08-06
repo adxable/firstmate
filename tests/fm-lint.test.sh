@@ -446,10 +446,19 @@ fm_lint_write_unsafe_semicolon_comment() {  # <path>
   printf '%s\n' 'value=$(cat <<EOF' "echo hi;# it's a note" 'EOF' ')' 'printf "tail\n"' > "$1"
 }
 
+# A delimiter the guard cannot read literally stops it reading further, but every
+# break above that point must still be reported.
+fm_lint_write_unsafe_above_expanded_delimiter() {  # <path>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<EOF' "it is firstmate's check" 'EOF' ')' 'D=EOF' 'cat <<$D' \
+    'body' 'EOF' > "$1"
+}
+
 # The safe shapes: quotes that already pair inside the nesting, an apostrophe in
 # an ordinary heredoc, a here-string, an arithmetic left shift, a backtick
-# substitution, a `$'...'` that closes on a later line, and an apostrophe behind a
-# real comment. Bash 3.2 parses every one, so the guard must stay quiet.
+# substitution, a `$'...'` that closes on a later line, an apostrophe behind a
+# real comment, and a heredoc delimiter that is a parameter expansion rather than
+# a literal word. Bash 3.2 parses every one, so the guard must stay quiet.
 fm_lint_write_safe_shapes() {  # <directory>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'value=$(cat <<EOF' "the mate 'quotes' (evenly) here" 'EOF' ')' > "$1/paired.sh"
@@ -467,6 +476,15 @@ fm_lint_write_safe_shapes() {  # <directory>
   printf '%s\n' 'streak=3' 'window=$(( 60 * (1 << streak) ))' 'printf "%s\n" "$window"' > "$1/shift.sh"
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'value=`cat <<EOF' "it is firstmate's check" 'EOF' '`' > "$1/backtick.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'D=EOF' 'cat <<$D' 'body' 'EOF' 'printf "tail\n"' > "$1/expanded-delimiter.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'D=EOF' 'cat <<${D}' 'body' 'EOF' 'printf "tail\n"' > "$1/braced-delimiter.sh"
+  # Quoting any part of the word makes Bash take the delimiter literally, so this
+  # one stays fully checkable and must not be waved through as an expansion.
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'D=EOF' 'value=$(cat <<"$D"' "the mate 'quotes' (evenly) here" '$D' ')' \
+    > "$1/quoted-dollar-delimiter.sh"
 }
 
 # Empirical grounding: when a Bash 3.2 is actually reachable, the fixtures the
@@ -491,6 +509,7 @@ test_parse_guard_flags_the_bash32_break() {
   fm_lint_write_unsafe_apostrophe "$tmp/apostrophe.sh"
   fm_lint_write_unsafe_paren "$tmp/paren.sh"
   fm_lint_write_unsafe_semicolon_comment "$tmp/semicolon-comment.sh"
+  fm_lint_write_unsafe_above_expanded_delimiter "$tmp/above-expanded-delimiter.sh"
 
   rc=0
   out=$("$LINT" --parse-guard "$tmp/apostrophe.sh" 2>&1) || rc=$?
@@ -512,6 +531,13 @@ test_parse_guard_flags_the_bash32_break() {
   [ "$rc" -ne 0 ] \
     || fail "the parse guard read a \`;#\` as a comment Bash 3.2 does not start there"
 
+  rc=0
+  out=$("$LINT" --parse-guard "$tmp/above-expanded-delimiter.sh" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "a later unreadable heredoc delimiter suppressed a break the guard had already found"
+  assert_not_contains "$out" "found no" \
+    "the parse guard reported a missing terminator for a delimiter it cannot expand"
+
   if bash32=$(fm_lint_bash32); then
     "$bash32" -n "$tmp/apostrophe.sh" 2>/dev/null \
       && fail "fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
@@ -519,6 +545,8 @@ test_parse_guard_flags_the_bash32_break() {
       && fail "paren fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/semicolon-comment.sh" 2>/dev/null \
       && fail "\`;#\` fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    "$bash32" -n "$tmp/above-expanded-delimiter.sh" 2>/dev/null \
+      && fail "break-above-expansion fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     pass "the parse guard flags the shapes Bash 3.2 ($bash32) genuinely cannot parse"
     return
   fi

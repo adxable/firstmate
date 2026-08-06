@@ -190,6 +190,15 @@ fi
 # than the case it covers. The macos-stock-bash CI job runs
 # `/bin/bash -n` over the whole `--list-files` inventory and still catches a real
 # backtick break, so this guard is defence in depth rather than the backstop.
+#
+# Second known boundary: a heredoc whose delimiter word is not literal - an
+# unquoted parameter expansion such as `cat <<$D`, a `${...}`, or a substitution -
+# names a terminator that only exists after expansion, and this guard deliberately
+# resolves no variable and models no expansion. Bash 3.2 parses such a file fine,
+# so treating the unexpanded word as a missing terminator would fail a working
+# script. The guard instead stops reading that file at the operator line: every
+# heredoc above it is still checked, nothing below it is, and nothing is reported.
+# The macos-stock-bash CI job covers what the guard then leaves unchecked.
 fm_lint_parse_guard() {  # <path>...
   local perl_bin
   if ! perl_bin=$(command -v perl); then
@@ -305,6 +314,11 @@ sub lex_line {
     $j++ while substr($line, $j, 1) =~ /[ \t]/;
     my $delimiter = '';
     my $delimiter_quote = '';
+    # A `$` or a backtick the delimiter word neither quotes nor escapes makes the
+    # real terminator an expansion result, which this guard cannot know. Quoting
+    # any part of the word makes Bash take the whole delimiter literally, so only
+    # the bare form is unknowable.
+    my $expanded = 0;
     for (; $j < $length; $j++) {
       my $token = substr($line, $j, 1);
       if ($delimiter_quote) {
@@ -328,9 +342,11 @@ sub lex_line {
         next;
       }
       last if $token =~ /[\s;|&()<>]/;
+      $expanded = 1 if $token =~ /[\$`]/;
       $delimiter .= $token;
     }
-    push @$heredocs, { delimiter => $delimiter, strip_tabs => $strip_tabs, line => $. };
+    push @$heredocs,
+      { delimiter => $delimiter, strip_tabs => $strip_tabs, line => $., expanded => $expanded };
     $i = $j - 1;
   }
 }
@@ -373,6 +389,10 @@ sub check_file {
   while (my $line = <$source>) {
     if (@heredocs) {
       my $pending = $heredocs[0];
+      # The terminator of an expanded delimiter is only known after expansion, so
+      # the body has no recognizable end and every later line is unreadable too.
+      # Stopping here keeps the guard silent on a file Bash 3.2 parses fine.
+      last if $pending->{expanded};
       if (!exists $pending->{entry}) {
         $pending->{nested} = scalar(@frames) ? 1 : 0;
         $pending->{entry} = signature(\@frames, $quote);
@@ -405,6 +425,7 @@ sub check_file {
   # scanned the remainder as a phantom body. Reporting that keeps a mis-parse from
   # quietly disabling the rule for everything below it.
   for my $pending (@heredocs) {
+    last if $pending->{expanded};
     printf STDERR "%s:%d: the Bash 3.2 parse guard found no `%s` terminator for this heredoc and could not check the rest of the file.\n",
       $path, $pending->{line}, $pending->{delimiter};
     $findings++;
@@ -443,6 +464,10 @@ fm-lint.sh: Bash 3.2 (stock macOS /bin/bash) resolves $( ... ) by scanning for t
   literals these bodies legitimately carry and report breaks that Bash 3.2 parses
   fine. The macos-stock-bash CI job parses every file in --list-files under stock
   /bin/bash and still catches a real backtick break.
+  Second boundary: a heredoc whose delimiter is not a literal word, such as
+  `cat <<$D`, names a terminator that only exists after expansion. This check
+  resolves no variable, so it stops reading that file at the operator line and
+  reports nothing there rather than failing a script Bash 3.2 parses fine.
 EXPLANATION
 }
 exit 1 if $findings || $errors;
