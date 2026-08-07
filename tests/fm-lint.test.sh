@@ -434,6 +434,19 @@ fm_lint_write_unsafe_apostrophe() {  # <path>
   printf '%s\n' 'value=$(cat <<EOF' "it is firstmate's check" 'EOF' ')' 'printf "tail\n"' > "$1"
 }
 
+# Quoting and escaping do not make a delimiter word unreadable: Bash only removes
+# them, so these end at the same `EOF` line a bare word would, and the break inside
+# each body has to be reported exactly as it is for `<<EOF`.
+fm_lint_write_unsafe_escaped_delimiter() {  # <path>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<\EOF' "it is firstmate's check" 'EOF' ')' 'printf "tail\n"' > "$1"
+}
+
+fm_lint_write_unsafe_partly_quoted_delimiter() {  # <path>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(cat <<EO"F"' "it is firstmate's check" 'EOF' ')' 'printf "tail\n"' > "$1"
+}
+
 fm_lint_write_unsafe_paren() {  # <path>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'value=$(cat <<EOF' 'a stray ) paren' 'EOF' ')' 'printf "tail\n"' > "$1"
@@ -446,7 +459,7 @@ fm_lint_write_unsafe_semicolon_comment() {  # <path>
   printf '%s\n' 'value=$(cat <<EOF' "echo hi;# it's a note" 'EOF' ')' 'printf "tail\n"' > "$1"
 }
 
-# A delimiter word outside the three readable forms means the guard skips that one
+# A delimiter word the scan cannot read literally means the guard skips that one
 # heredoc, and a break below it must still be reported. Both fixtures place the
 # break after the skipped body, which is where a skip that lexed the body instead
 # of consuming it would leak an apostrophe and silence the whole tail.
@@ -529,6 +542,8 @@ test_parse_guard_flags_the_bash32_break() {
   fm_lint_write_unsafe_apostrophe "$tmp/apostrophe.sh"
   fm_lint_write_unsafe_paren "$tmp/paren.sh"
   fm_lint_write_unsafe_semicolon_comment "$tmp/semicolon-comment.sh"
+  fm_lint_write_unsafe_escaped_delimiter "$tmp/escaped-delimiter.sh"
+  fm_lint_write_unsafe_partly_quoted_delimiter "$tmp/partly-quoted-delimiter.sh"
   fm_lint_write_unsafe_below_dollar_delimiter "$tmp/below-dollar-delimiter.sh"
   fm_lint_write_unsafe_below_skipped_apostrophe "$tmp/below-skipped-apostrophe.sh"
 
@@ -553,6 +568,16 @@ test_parse_guard_flags_the_bash32_break() {
     || fail "the parse guard read a \`;#\` as a comment Bash 3.2 does not start there"
 
   rc=0
+  "$LINT" --parse-guard "$tmp/escaped-delimiter.sh" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "the parse guard skipped a \`<<\\EOF\` heredoc whose word it reads as the literal EOF"
+
+  rc=0
+  "$LINT" --parse-guard "$tmp/partly-quoted-delimiter.sh" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "the parse guard skipped a \`<<EO\"F\"\` heredoc whose word it reads as the literal EOF"
+
+  rc=0
   out=$("$LINT" --parse-guard "$tmp/below-dollar-delimiter.sh" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] \
     || fail "a \`\$\` in an earlier heredoc delimiter hid the break below it"
@@ -573,6 +598,10 @@ test_parse_guard_flags_the_bash32_break() {
       && fail "paren fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/semicolon-comment.sh" 2>/dev/null \
       && fail "\`;#\` fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    "$bash32" -n "$tmp/escaped-delimiter.sh" 2>/dev/null \
+      && fail "escaped-delimiter fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    "$bash32" -n "$tmp/partly-quoted-delimiter.sh" 2>/dev/null \
+      && fail "partly-quoted-delimiter fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/below-dollar-delimiter.sh" 2>/dev/null \
       && fail "break-below-\$-delimiter fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/below-skipped-apostrophe.sh" 2>/dev/null \

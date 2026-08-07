@@ -191,13 +191,16 @@ fi
 # `/bin/bash -n` over the whole `--list-files` inventory and still catches a real
 # backtick break, so this guard is defence in depth rather than the backstop.
 #
-# Second known boundary: a heredoc is analysed only when its delimiter word is one
-# of the three forms this scanner can read with certainty - a bare literal word, or
-# that same word wrapped in single or double quotes. Bash applies only quote removal
-# to a delimiter word and expands nothing, so for those three the terminator is
-# known exactly: `cat <<'EOF'` and `cat <<EOF` both end at a line reading `EOF`.
-# Every other form is skipped, without enumerating them, because a delimiter this
-# scanner cannot read is one it cannot find the end of a body with. A skipped body
+# Second known boundary: a heredoc is analysed only when the scan reads every
+# character of its delimiter word as a literal one. Bash applies only quote removal
+# to a delimiter word and expands nothing, so however such a word is spelled - bare,
+# backslash-escaped, single- or double-quoted, or any mix of those - the terminator
+# is known exactly, and `cat <<EOF`, `cat <<'EOF'`, `cat <<\EOF` and `cat <<EO"F"`
+# all end at a line reading `EOF`. A word stops being readable the moment the scan
+# meets something this guard does not model: an unquoted `$` or a backtick, or a
+# quote the line never closes. Such a word is skipped rather than guessed at,
+# because a delimiter this scan cannot read is one it cannot find the end of a body
+# with. A skipped body
 # is consumed verbatim, so nothing inside it is checked and nothing it opens can
 # leak into the file, and scanning resumes the moment the word reappears; a word
 # that never reappears leaves the remainder of that file unchecked. Every heredoc
@@ -212,15 +215,6 @@ fm_lint_parse_guard() {  # <path>...
   "$perl_bin" - "$@" <<'PERL'
 use strict;
 use warnings;
-
-# The one rule that decides whether a heredoc is analysed at all: the delimiter
-# word must be a bare literal word, or that word in single or double quotes. Those
-# are the forms whose terminator is known exactly, since Bash only removes the
-# quotes. Anything else is left unread rather than guessed at.
-sub readable_delimiter {
-  my ($word) = @_;
-  return $word =~ /\A(?:'[^']*'|"[^"\\`]*"|[^\s;|&()<>'"\\\$`]+)\z/ ? 1 : 0;
-}
 
 # Lex one line, advancing the shared command-substitution and quote state. Heredoc
 # operators are only recognized when $allow_heredoc is set, because Bash 3.2 does
@@ -325,9 +319,13 @@ sub lex_line {
     my $strip_tabs = substr($line, $j, 1) eq '-';
     $j++ if $strip_tabs;
     $j++ while substr($line, $j, 1) =~ /[ \t]/;
-    my $word_start = $j;
     my $delimiter = '';
     my $delimiter_quote = '';
+    # The one rule that decides whether this heredoc is analysed at all: every
+    # character of the word has to be one the scan reads as a literal. Quoting and
+    # escaping stay readable, so `EOF`, `'EOF'`, `\EOF` and `EO"F"` are all the
+    # same word. What is not readable is a construct this guard does not model.
+    my $readable = 1;
     for (; $j < $length; $j++) {
       my $token = substr($line, $j, 1);
       if ($delimiter_quote) {
@@ -337,6 +335,7 @@ sub lex_line {
           $j++;
           $delimiter .= substr($line, $j, 1);
         } else {
+          $readable = 0 if $token eq '`' && $delimiter_quote eq '"';
           $delimiter .= $token;
         }
         next;
@@ -350,12 +349,13 @@ sub lex_line {
         $delimiter .= substr($line, $j, 1);
         next;
       }
+      $readable = 0 if $token eq '$' || $token eq '`';
       last if $token =~ /[\s;|&()<>]/;
       $delimiter .= $token;
     }
     push @$heredocs, {
       delimiter => $delimiter,
-      readable => readable_delimiter(substr($line, $word_start, $j - $word_start)),
+      readable => ($readable && $delimiter_quote eq '') ? 1 : 0,
       strip_tabs => $strip_tabs,
       line => $.,
     };
@@ -480,9 +480,10 @@ fm-lint.sh: Bash 3.2 (stock macOS /bin/bash) resolves $( ... ) by scanning for t
   literals these bodies legitimately carry and report breaks that Bash 3.2 parses
   fine. The macos-stock-bash CI job parses every file in --list-files under stock
   /bin/bash and still catches a real backtick break.
-  Second boundary: a heredoc is checked only when its delimiter word is a bare
-  word, or that word in single or double quotes. Any other form is skipped, its
-  body read verbatim and unchecked, and scanning resumes where the word reappears.
+  Second boundary: a heredoc is checked only when every character of its delimiter
+  word reads as a literal one, however it is quoted or escaped. A word carrying an
+  unquoted $ or a backtick, or a quote the line never closes, is skipped, its body
+  read verbatim and unchecked, and scanning resumes where the word reappears.
 EXPLANATION
 }
 exit 1 if $findings || $errors;
