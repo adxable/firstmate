@@ -13,6 +13,14 @@
 # deterministic shard and root order after every worker finishes. FM_LINT_JOBS=1
 # runs the same shards serially with byte-identical diagnostics and exit selection.
 #
+# Every canonical run also applies one structural rule ShellCheck does not model:
+# the Bash 3.2 command-substitution heredoc parse defect (issues #166, #945, #958,
+# #1069). Bash 3.2, the stock macOS /bin/bash, scans a command substitution for its
+# closing paren textually and keeps lexing quote, escape, and paren state straight
+# through any heredoc body nested inside it, so a body that leaves that state
+# unbalanced swallows the rest of the script. The guard reports the bodies that
+# break, not the construct; two shapes it does not model are noted at the guard.
+#
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
 #
@@ -21,6 +29,7 @@
 #   fm-lint.sh <path>...               lint explicit roots with the same config
 #   fm-lint.sh --jobs <1|2> [path]...  override bounded worker count
 #   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
+#   fm-lint.sh --parse-guard [path]... run only the Bash 3.2 parse guard
 #   fm-lint.sh --required-version      print the ShellCheck pin
 #   fm-lint.sh --list-files            print the canonical file set
 #   fm-lint.sh --help                  print this usage
@@ -84,12 +93,13 @@ if [ "${1:-}" = "--required-version" ]; then
 fi
 
 fm_lint_usage() {
-  sed -n '2,26{s/^# \{0,1\}//;p;}' "$SELF"
+  sed -n '2,35{s/^# \{0,1\}//;p;}' "$SELF"
 }
 
 JOBS=${FM_LINT_JOBS:-2}
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 LIST_FILES=0
+PARSE_GUARD_ONLY=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --jobs)
@@ -112,6 +122,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --list-files)
       LIST_FILES=1
+      shift
+      ;;
+    --parse-guard)
+      PARSE_GUARD_ONLY=1
       shift
       ;;
     --help|-h)
@@ -145,6 +159,341 @@ if [ "$LIST_FILES" -eq 1 ]; then
   }
   printf '%s\n' "${ROOTS[@]}"
   exit 0
+fi
+
+# Bash 3.2 command-substitution heredoc parse guard.
+#
+# Bash 3.2 (stock macOS /bin/bash) resolves `$( ... )` by scanning forward for the
+# matching `)` and lexing everything in between, including any heredoc body nested
+# inside it, as ordinary shell text. Quote, escape, comment, and paren state
+# therefore leak out of that body: one unpaired apostrophe leaves a single quote
+# open, and the rest of the file is consumed as quoted text. `bash -n` then fails
+# far from the real cause, and only on Bash 3.2, so a modern shell and CI can both
+# look green while a stock macOS run of the same script is dead.
+#
+# The Perl below models that lexer and reports only the nested bodies that would
+# actually leave the state unbalanced, so a body whose quotes and parens already
+# pair is left alone. The macos-stock-bash CI job stays the authoritative
+# cross-version proof; this guard turns the same defect into a local, explained
+# failure before the push.
+#
+# Known boundary: the lexer below deliberately does not model backtick command
+# substitution. An unpaired backtick in a nested heredoc body carries the same
+# Bash 3.2 hazard as an unpaired apostrophe, confirmed against 3.2.57: the body
+# opens a backtick substitution that consumes the rest of the file. It is left
+# unmodelled because no script in the canonical file set uses backticks as shell
+# command substitution and ShellCheck's SC2006 keeps it that way, while many
+# nested heredoc bodies carry literal backticks as Markdown code spans and
+# JavaScript template literals, whose `${...}`, quotes and parens would then be
+# re-lexed as shell and reported as breaks that Bash 3.2 parses fine. A guard
+# that cries wolf on working scripts gets switched off, which would cost more
+# than the case it covers. The macos-stock-bash CI job runs
+# `/bin/bash -n` over the whole `--list-files` inventory and still catches a real
+# backtick break, so this guard is defence in depth rather than the backstop.
+#
+# Second known boundary: a heredoc is analysed only when the scan reads every
+# character of its delimiter word as a literal one. Bash applies only quote removal
+# to a delimiter word and expands nothing, so however such a word is spelled - bare,
+# backslash-escaped, single- or double-quoted, or any mix of those - the terminator
+# is known exactly, and `cat <<EOF`, `cat <<'EOF'`, `cat <<\EOF` and `cat <<EO"F"`
+# all end at a line reading `EOF`. A word stops being readable the moment the scan
+# meets something this guard does not model: an unquoted `$` or a backtick, or a
+# quote the line never closes. Such a word is skipped rather than guessed at,
+# because a delimiter this scan cannot read is one it cannot find the end of a body
+# with. A skipped body
+# is consumed verbatim, so nothing inside it is checked and nothing it opens can
+# leak into the file, and scanning resumes the moment the word reappears; a word
+# that never reappears leaves the remainder of that file unchecked. Every heredoc
+# in the canonical file set uses a bare or single-quoted word, so nothing there is
+# skipped today, and the macos-stock-bash CI job covers what a skip would miss.
+fm_lint_parse_guard() {  # <path>...
+  local perl_bin
+  if ! perl_bin=$(command -v perl); then
+    printf 'fm-lint.sh: perl is required for the Bash 3.2 parse guard.\n' >&2
+    return 127
+  fi
+  "$perl_bin" - "$@" <<'PERL'
+use strict;
+use warnings;
+
+# Lex one line, advancing the shared command-substitution and quote state. Heredoc
+# operators are only recognized when $allow_heredoc is set, because Bash 3.2 does
+# not start a further heredoc from inside a body it is already scanning.
+sub lex_line {
+  my ($line, $frames, $quote_ref, $heredocs, $allow_heredoc) = @_;
+  my $length = length $line;
+  for (my $i = 0; $i < $length; $i++) {
+    my $char = substr($line, $i, 1);
+    if ($$quote_ref eq "'") {
+      $$quote_ref = '' if $char eq "'";
+      next;
+    }
+    # Inside `$'...'` a backslash escapes the next character, including the closing
+    # quote, so the state has to be unwound here rather than by the plain `'` branch.
+    if ($$quote_ref eq "\$'") {
+      $i++ if $char eq '\\';
+      $$quote_ref = '' if $char eq "'";
+      next;
+    }
+    if ($char eq '\\') {
+      $i++;
+      next;
+    }
+    if ($$quote_ref eq '"' && $char eq '"') {
+      $$quote_ref = '';
+      next;
+    }
+    if ($char eq "'" && $$quote_ref eq '') {
+      $$quote_ref = "'";
+      next;
+    }
+    if ($char eq '"' && $$quote_ref eq '') {
+      $$quote_ref = '"';
+      next;
+    }
+    # Bash 3.2 only starts a comment at the beginning of the text it is scanning,
+    # after a newline, or after a blank. Treating any other `#` as a comment would
+    # skip the rest of the line and miss the state-opening characters after it.
+    if ($char eq '#' && $$quote_ref eq '' && ($i == 0 || substr($line, $i - 1, 1) =~ /[ \t]/)) {
+      last;
+    }
+    # `$'...'` is ANSI-C quoting, where a backslash escapes the closing quote, so it
+    # cannot be lexed as a plain single-quoted string. It is carried in the shared
+    # quote state because Bash 3.2 lets it span lines like the other quotes do.
+    if ($char eq '$' && $$quote_ref eq '' && substr($line, $i + 1, 1) eq "'") {
+      $$quote_ref = "\$'";
+      $i++;
+      next;
+    }
+    # `$"..."` is a localized string that otherwise lexes as a double-quoted one.
+    if ($char eq '$' && substr($line, $i + 1, 1) eq '"') {
+      next;
+    }
+    # `$(( ... ))` and a bare `(( ... ))` are arithmetic, where `<<` is a left
+    # shift rather than a heredoc operator. Tracking them keeps a shift such as
+    # `$(( x * (1 << n) ))` from opening a heredoc that never terminates, which
+    # would silently disable the guard for the whole rest of the file.
+    if ($char eq '$' && substr($line, $i + 1, 2) eq '((') {
+      push @$frames, { depth => 2, quote => $$quote_ref, arith => 1 };
+      $$quote_ref = '';
+      $i += 2;
+      next;
+    }
+    if ($char eq '$' && substr($line, $i + 1, 1) eq '(') {
+      push @$frames, { depth => 1, quote => $$quote_ref, arith => 0 };
+      $$quote_ref = '';
+      $i++;
+      next;
+    }
+    if ($$quote_ref eq '' && $char eq '(' && substr($line, $i + 1, 1) eq '(') {
+      push @$frames, { depth => 2, quote => $$quote_ref, arith => 1 };
+      $i++;
+      next;
+    }
+    if (@$frames && $$quote_ref eq '' && $char eq '(') {
+      $frames->[-1]{depth}++;
+      next;
+    }
+    if (@$frames && $$quote_ref eq '' && $char eq ')') {
+      $frames->[-1]{depth}--;
+      if ($frames->[-1]{depth} == 0) {
+        my $frame = pop @$frames;
+        $$quote_ref = $frame->{quote};
+      }
+      next;
+    }
+    next unless $$quote_ref eq '' && $char eq '<' && substr($line, $i + 1, 1) eq '<';
+    # `<<<` is a here-string, not a heredoc, and Bash 3.2 parses it normally.
+    if (substr($line, $i + 2, 1) eq '<') {
+      $i += 2;
+      next;
+    }
+    # A left shift inside arithmetic, and a `<<` inside a body Bash 3.2 is already
+    # scanning, both stay redirections-that-aren't.
+    if (!$allow_heredoc || (@$frames && $frames->[-1]{arith})) {
+      $i++;
+      next;
+    }
+
+    my $j = $i + 2;
+    my $strip_tabs = substr($line, $j, 1) eq '-';
+    $j++ if $strip_tabs;
+    $j++ while substr($line, $j, 1) =~ /[ \t]/;
+    my $delimiter = '';
+    my $delimiter_quote = '';
+    # The one rule that decides whether this heredoc is analysed at all: every
+    # character of the word has to be one the scan reads as a literal. Quoting and
+    # escaping stay readable, so `EOF`, `'EOF'`, `\EOF` and `EO"F"` are all the
+    # same word. What is not readable is a construct this guard does not model.
+    my $readable = 1;
+    for (; $j < $length; $j++) {
+      my $token = substr($line, $j, 1);
+      if ($delimiter_quote) {
+        if ($token eq $delimiter_quote) {
+          $delimiter_quote = '';
+        } elsif ($token eq '\\' && $delimiter_quote eq '"') {
+          $j++;
+          $delimiter .= substr($line, $j, 1);
+        } else {
+          $readable = 0 if $token eq '`' && $delimiter_quote eq '"';
+          $delimiter .= $token;
+        }
+        next;
+      }
+      if ($token eq "'" || $token eq '"') {
+        $delimiter_quote = $token;
+        next;
+      }
+      if ($token eq '\\') {
+        $j++;
+        $delimiter .= substr($line, $j, 1);
+        next;
+      }
+      $readable = 0 if $token eq '$' || $token eq '`';
+      last if $token =~ /[\s;|&()<>]/;
+      $delimiter .= $token;
+    }
+    push @$heredocs, {
+      delimiter => $delimiter,
+      readable => ($readable && $delimiter_quote eq '') ? 1 : 0,
+      strip_tabs => $strip_tabs,
+      line => $.,
+    };
+    $i = $j - 1;
+  }
+}
+
+# Bash 3.2 begins a body with whatever state the operator line ended in, and a
+# second heredoc on the same line begins with the state the first one left, so the
+# entry snapshot is taken when the body starts rather than at the `<<` token.
+sub signature {
+  my ($frames, $quote) = @_;
+  return join(',', map { $_->{depth} } @$frames) . "|$quote";
+}
+
+sub reason {
+  my ($entry_quote, $quote) = @_;
+  return 'leaves a single quote open (an unpaired apostrophe)' if $quote eq "'";
+  return 'leaves a double quote open' if $quote eq '"';
+  return "leaves a \$'...' quote open" if $quote eq "\$'";
+  return 'closes a quote that was already open' if $quote ne $entry_quote;
+  return 'leaves an unbalanced parenthesis';
+}
+
+# A root the guard cannot read is reported rather than skipped, so a mistyped or
+# unopenable path can never be mistaken for a clean result, and so one bad root
+# cannot abort the sweep and leave every later root silently unchecked.
+sub report_unreadable {
+  my ($path) = @_;
+  printf STDERR "fm-lint.sh: %s: not a readable file for the Bash 3.2 parse guard.\n", $path;
+  return undef;
+}
+
+sub check_file {
+  my ($path) = @_;
+  my $source;
+  open $source, '<', $path or return report_unreadable($path);
+  my @frames;
+  my @heredocs;
+  my $quote = '';
+  my $findings = 0;
+
+  while (my $line = <$source>) {
+    if (@heredocs) {
+      my $pending = $heredocs[0];
+      my $candidate = $line;
+      $candidate =~ s/\r?\n\z//;
+      $candidate =~ s/^\t+// if $pending->{strip_tabs};
+      # A delimiter outside the three readable forms leaves no way to know where
+      # the body ends, so the body is consumed verbatim: nothing in it is checked
+      # and nothing it opens reaches the rest of the file. Scanning resumes if the
+      # word turns up again.
+      if (!$pending->{readable}) {
+        shift @heredocs if $candidate eq $pending->{delimiter};
+        next;
+      }
+      if (!exists $pending->{entry}) {
+        $pending->{nested} = scalar(@frames) ? 1 : 0;
+        $pending->{entry} = signature(\@frames, $quote);
+        $pending->{entry_quote} = $quote;
+        $pending->{entry_frames} = [map { {%$_} } @frames];
+      }
+      if ($candidate eq $pending->{delimiter}) {
+        shift @heredocs;
+        if ($pending->{nested} && signature(\@frames, $quote) ne $pending->{entry}) {
+          printf STDERR "%s:%d: heredoc body inside \$( ) %s; Bash 3.2 then parses the rest of the file as that leftover state.\n",
+            $path, $pending->{line}, reason($pending->{entry_quote}, $quote);
+          $findings++;
+          @frames = @{ $pending->{entry_frames} };
+          $quote = $pending->{entry_quote};
+        }
+        next;
+      }
+      # Only a body nested in a command substitution is lexed by Bash 3.2; an
+      # ordinary heredoc body is read verbatim and cannot leak any state.
+      lex_line($line, \@frames, \$quote, \@heredocs, 0) if $pending->{nested};
+      next;
+    }
+    lex_line($line, \@frames, \$quote, \@heredocs, 1);
+  }
+  close $source;
+  # A heredoc whose delimiter never arrives means the guard mis-read the file and
+  # scanned the remainder as a phantom body. Reporting that keeps a mis-parse from
+  # quietly disabling the rule for everything below it.
+  for my $pending (@heredocs) {
+    next unless $pending->{readable};
+    printf STDERR "%s:%d: the Bash 3.2 parse guard found no `%s` terminator for this heredoc and could not check the rest of the file.\n",
+      $path, $pending->{line}, $pending->{delimiter};
+    $findings++;
+  }
+  return $findings;
+}
+
+my $findings = 0;
+my $errors = 0;
+for my $path (@ARGV) {
+  if (!-f $path) {
+    report_unreadable($path);
+    $errors++;
+    next;
+  }
+  my $result = check_file($path);
+  if (!defined $result) {
+    $errors++;
+    next;
+  }
+  $findings += $result;
+}
+if ($findings) {
+  print STDERR <<'EXPLANATION';
+fm-lint.sh: Bash 3.2 (stock macOS /bin/bash) resolves $( ... ) by scanning for the
+  matching ) and keeps tracking quote and paren state through any heredoc nested
+  inside it. State the body leaves open therefore escapes into the rest of the
+  script: one apostrophe in `VAR=$(cat <<EOF ... EOF)` silently swallows every
+  later line, so `bash -n` fails at end of file with no hint of the real cause.
+  A modern Bash parses the same file cleanly, so this breaks only on macOS.
+  Fix the shape rather than the prose - drop the $( ) wrapper, for example
+  `IFS= read -r -d '' VAR <<EOF || true` - so no future wording can reintroduce it.
+  Known boundary: this check does not model backtick command substitution. An
+  unpaired backtick in such a body breaks Bash 3.2 exactly like an apostrophe, but
+  modelling it would re-lex the Markdown code spans and JavaScript template
+  literals these bodies legitimately carry and report breaks that Bash 3.2 parses
+  fine. The macos-stock-bash CI job parses every file in --list-files under stock
+  /bin/bash and still catches a real backtick break.
+  Second boundary: a heredoc is checked only when every character of its delimiter
+  word reads as a literal one, however it is quoted or escaped. A word carrying an
+  unquoted $ or a backtick, or a quote the line never closes, is skipped, its body
+  read verbatim and unchecked, and scanning resumes where the word reappears.
+EXPLANATION
+}
+exit 1 if $findings || $errors;
+exit 0;
+PERL
+}
+
+if [ "$PARSE_GUARD_ONLY" -eq 1 ]; then
+  fm_lint_parse_guard "${ROOTS[@]}"
+  exit $?
 fi
 
 if ! command -v shellcheck >/dev/null 2>&1; then
@@ -355,6 +704,13 @@ while [ "$worker" -lt "$SHARD_COUNT" ]; do
   fi
   worker=$((worker + 1))
 done
+
+# The structural guard replays after both shards so ShellCheck diagnostics keep
+# their deterministic order, and contributes to the same exit selection.
+fm_lint_parse_guard "${ROOTS[@]}" || {
+  guard_rc=$?
+  [ "$overall_rc" -ne 0 ] || overall_rc=$guard_rc
+}
 
 if [ -n "$TELEMETRY" ]; then
   TELEMETRY_END_EPOCH=$(date +%s)
