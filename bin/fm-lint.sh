@@ -18,8 +18,8 @@
 # #1069). Bash 3.2, the stock macOS /bin/bash, scans a command substitution for its
 # closing paren textually and keeps lexing quote, escape, and paren state straight
 # through any heredoc body nested inside it, so a body that leaves that state
-# unbalanced swallows the rest of the script. The guard reports exactly the bodies
-# that would break, which is why safe existing nesting stays untouched.
+# unbalanced swallows the rest of the script. The guard reports the bodies that
+# break, not the construct; two shapes it does not model are noted at the guard.
 #
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
