@@ -36,7 +36,7 @@ Never run the gates for work the captain asked to just ship, never in parallel w
 ## The approval loop (firstmate-owned, once per gate)
 
 1. The scout writes the gate doc plus its Lavish artifact, appends `needs-decision [key=gate-N]: gate N ready for review`, and waits.
-2. Firstmate opens the artifact with `lavish-axi data/<id>/gates/<file>.html`, then loads `process-event-sources` and arms `bin/fm-procevent-lavish.sh arm <file>`.
+2. Firstmate opens the artifact with `lavish-axi data/<id>/gates/<file>.html`, then loads `process-event-sources` and arms `bin/fm-procevent-lavish.sh arm data/<id>/gates/<file>.html`.
    Never run `lavish-axi poll` in a conversational turn; the armed source wakes firstmate when the captain responds.
 3. Artifact requirements per gate - open each matching Lavish playbook before writing HTML:
    - Gate 1: `plan` + `input`; one mockup file per screen, rendered in the product's own design system per `lavish-axi design` priority; no technical vocabulary anywhere on the surface.
@@ -45,11 +45,12 @@ Never run the gates for work the captain asked to just ship, never in parallel w
    - Gate 4: `table` or `plan` + `input` over the slice list and build order.
 
    Every artifact ends with one `input` control set - "Approve Gate N" / "Change: ..." - so the verdict returns as a structured queued answer, not loose prose.
-4. On the resulting `check:` wake, classify and handle the captured result:
-   - **feedback** -> translate it into one steer to the scout through `fm-send` (long feedback goes into a file); the scout revises doc and artifact and re-signals.
-   - **approval** -> record it durably in the backlog note, `resolved` the gate's key, and steer the scout to the next gate.
-   - **ended with open questions** -> the questions stay as decision holds; re-ask in plain chat at the next natural contact; never reopen the session uninvited.
+4. On the resulting `check:` wake, route the captured result by the captain's verdict on the gate rather than by how the session ended - a verdict that arrives together with the session ending is a valid verdict, so an approval sent that way is an approval and never feedback to revise:
+   - **changes requested** -> translate them into one steer to the scout through `fm-send` (long feedback goes into a file); the scout revises doc and artifact and re-signals.
+   - **approved** -> record it durably in the backlog note, `resolved` the gate's key, and steer the scout to the next gate.
+   - **open questions instead of a verdict** -> the questions stay as decision holds; re-ask in plain chat at the next natural contact; never reopen the session uninvited.
 
+   A result carrying no verdict at all means re-opening the artifact and re-arming it, or asking the captain in plain chat when the session is gone, never leaving the scout parked on an open decision with nothing armed to wake firstmate.
    `process-event-sources` owns the durable result read, the adapter classification call, source lifecycle, and the handled acknowledgement.
 5. An approval counts only once it is in a durable record (backlog note or resolved hold).
    The published Lavish poll destructively clears feedback, so the durable record - never the poll bytes or conversation memory - is the source of truth.
@@ -75,8 +76,8 @@ Never run the gates for work the captain asked to just ship, never in parallel w
 
 ## After the gates
 
-- Tear the scout down once the report and holds pass the shared completion gate, then dispatch the slice tasks; each brief points at `data/<id>/gates/` and slice 1's brief requires committing `docs/plans/<feature-slug>/` in its PR.
-  If the scout already spiked working code, promote it into slice 1 through `bin/fm-promote.sh` instead of dispatching fresh.
+- Once the report and holds pass the shared completion gate, settle slice 1 while the scout task is still alive: if it already spiked working code, promote it into slice 1 through `bin/fm-promote.sh`, otherwise tear it down and dispatch a fresh slice 1.
+  Dispatch the remaining slice tasks after that; each brief carries the absolute home path to `data/<id>/gates/`, the slices run in the home that owns the scout's data directory, and slice 1's brief requires committing `docs/plans/<feature-slug>/` in its PR.
 - Each slice ships through the project's selected delivery path, and the gates add no extra reviewer and no per-slice manual gate on top of it; AGENTS.md section 7 owns that rule.
   The PR, its checks, and the standing merge authority are the gate, and the per-slice "prove it works" is the captain's visual proof: a screenshot or short clip plus two or three sentences.
 - "Continue or re-steer?" is the natural intake of the next queued slice: an unchanged plan continues silently under the standing authority; a captain correction rewrites the remaining slice tasks - they are only backlog items, so re-steering stays cheap by design.
