@@ -585,8 +585,62 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+# A brief only teaches the decision-key shape correctly if the examples it shows
+# actually parse. bin/fm-classify-lib.sh reads the key from the prefix BEFORE the
+# first colon, so an example that puts `[key=...]` after the colon - or that shows
+# the bare token with no position at all - leads a worker to write a line whose key
+# is dropped, collapsing every open decision into "default". Rather than pinning
+# prose, this renders each variant, lifts every backticked snippet carrying a key
+# token, and runs it through the real parser.
+test_decision_key_examples_parse_to_the_shown_key() {
+  local home variant brief examples line concrete key opened closed
+  home="$TMP_ROOT/decision-key-home"
+  mkdir -p "$home/data"
+  # shellcheck source=bin/fm-classify-lib.sh
+  . "$ROOT/bin/fm-classify-lib.sh"
+
+  for variant in ship scout secondmate; do
+    case "$variant" in
+      ship) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "dk-$variant" alpha --mode no-mistakes >/dev/null 2>&1 ;;
+      scout) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "dk-$variant" alpha --scout >/dev/null 2>&1 ;;
+      secondmate) FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+        "$ROOT/bin/fm-brief.sh" "dk-$variant" --secondmate --no-projects >/dev/null 2>&1 ;;
+    esac
+    brief="$home/data/dk-$variant/brief.md"
+    assert_present "$brief" "$variant brief was not scaffolded"
+
+    examples=$(tr '`' '\n' < "$brief" | grep -F '[key=' || true)
+    [ -n "$examples" ] || fail "$variant brief shows no [key=...] example at all"
+    opened=0
+    closed=0
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      concrete=${line//<work-slug>/demo-slug}
+      concrete=${concrete//<slug>/demo-slug}
+      case "$concrete" in
+        *:*) : ;;
+        *) fail "$variant brief shows a bare key token without a full status-line example: $line" ;;
+      esac
+      key=$(_fm_decision_key "$concrete") \
+        || fail "$variant brief example does not parse as a keyed status line: $line"
+      [ "$key" = demo-slug ] \
+        || fail "$variant brief example parses as key '$key', not the slug it shows; the key must sit before the colon: $line"
+      case "${concrete%%:*}" in
+        needs-decision*|blocked*|working*) opened=1 ;;
+        resolved*) closed=1 ;;
+      esac
+    done <<EOF
+$examples
+EOF
+    [ "$opened" -eq 1 ] || fail "$variant brief never shows a keyed opening example"
+    [ "$closed" -eq 1 ] || fail "$variant brief never shows a keyed resolved example"
+  done
+  pass "fm-brief.sh: every variant's key examples parse to the slug they show"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
+test_decision_key_examples_parse_to_the_shown_key
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_ship_mode_is_required_and_closed_set
