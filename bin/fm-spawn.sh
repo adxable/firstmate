@@ -109,7 +109,8 @@
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root that is distinct from the primary project checkout AND is not
-#   already recorded as the worktree= of another task whose endpoint still exists.
+#   already recorded as the worktree= of another task whose endpoint is proven to
+#   still exist; a refusal takes its own just-created endpoint back down.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -1266,6 +1267,21 @@ real_path_or_raw() {  # <path>
   fi
 }
 
+# discard_refused_endpoint: take back the endpoint THIS spawn just created.
+# The ownership refusal fires after the task window already exists and after
+# `treehouse get` moved its pane into the contested worktree, so exiting bare
+# leaves an orphaned pane sitting in another task's worktree and poisons the
+# obvious next move - fix the ownership and re-run the same id - because
+# fm_backend_tmux_create_task refuses a window name that already exists.
+# The orca and herdr-projection paths own richer cleanup (task worktree
+# removal, projection journal) through spawn_abort_cleanup and are left to it.
+discard_refused_endpoint() {
+  [ "${BACKEND:-}" != orca ] || return 0
+  [ "${HERDR_PROJECTION_ABORT_CLEANUP:-0}" != 1 ] || return 0
+  [ -n "${T:-}" ] || return 0
+  fm_backend_kill "$BACKEND" "$T" >/dev/null 2>&1 || true
+}
+
 # worktree_owner_conflict: is the resolved worktree already owned by another
 # LIVE task in this home? Prints "<other-id><TAB><recorded path>" and returns 0
 # on the first conflict, returns 1 when the path is free to claim.
@@ -1277,11 +1293,18 @@ real_path_or_raw() {  # <path>
 # task lets the newcomer reset the branch out from under work that has not
 # landed. This home's own state/<id>.meta records are the ownership truth.
 #
-# Liveness is the recorded endpoint's continued existence
-# (fm_backend_target_exists, the same cheap read the fleet digest uses). That
-# keeps a stale record from holding a slot hostage: a task whose endpoint is
-# gone does not block, and a torn-down task has no meta file left at all. A
-# record with no readable endpoint target is likewise treated as not live.
+# Liveness here is the recorded ENDPOINT's continued existence, not a running
+# harness agent: an idle endpoint still owns its worktree and may hold unlanded
+# work, while agent_state is `unverified` on several supported backends, which
+# would silently stop the guard from blocking there.
+#
+# The read must be PROOF-GRADE (fm_backend_target_proven), because only proven
+# ownership may block: a lenient probe that cannot distinguish an absent
+# endpoint from a present one turns every stale record into a permanent slot
+# block, which is the failure this guard exists to prevent. So a record blocks
+# only when a positive read shows its endpoint still there; a provably absent
+# endpoint, an endpoint whose existence cannot be established at all, and a
+# torn-down task (which leaves no meta file) all leave the slot free.
 worktree_owner_conflict() {  # <resolved-worktree-real-path>
   local wt_real=$1 meta other_id other_wt other_wt_real backend target
   for meta in "$STATE"/*.meta; do
@@ -1295,7 +1318,7 @@ worktree_owner_conflict() {  # <resolved-worktree-real-path>
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     [ -n "$target" ] || continue
-    fm_backend_target_exists "$backend" "$target" "fm-$other_id" 2>/dev/null || continue
+    fm_backend_target_proven "$backend" "$target" "fm-$other_id" 2>/dev/null || continue
     printf '%s\t%s\n' "$other_id" "$other_wt"
     return 0
   done
@@ -1331,7 +1354,8 @@ validate_spawn_worktree() {  # <source> <inspect-target>
     IFS=$'\t' read -r conflict_id conflict_path <<EOF
 $conflict
 EOF
-    echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint is still live; refusing to launch $ID there to avoid resetting $conflict_id's branch and losing its unlanded work. Inspect target $inspect_target" >&2
+    echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint still exists; refusing to launch $ID there to avoid resetting $conflict_id's branch and losing its unlanded work. Inspect target $inspect_target" >&2
+    discard_refused_endpoint
     exit 1
   fi
 }

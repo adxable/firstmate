@@ -137,6 +137,32 @@ fm_backend_tmux_kill() {  # <target>
   tmux kill-window -t "=$session:=$window" 2>/dev/null || true
 }
 
+# fm_backend_tmux_target_exists_exact: does the EXACT recorded window still
+# exist? A bare `tmux display-message -t <session>:<name>` cannot answer that
+# question: an absent NAME target silently resolves to the client's active
+# window and the read succeeds, so a lenient probe reports every closed window
+# as present (docs/verification/runtime-backends.md "Named-target fallback").
+# The window must therefore appear in a successful session inventory before it
+# counts as present, exactly as fm_backend_tmux_agent_state requires before it
+# trusts any pane read.
+#
+# Returns 0 only on that positive proof: a failed inventory, an absent session,
+# and an omitted window all return nonzero, so no caller can read "exists" out
+# of a read that could not be made. Window NAME is the recorded target form
+# every firstmate endpoint uses, and is the same field the classifier matches.
+fm_backend_tmux_target_exists_exact() {  # <session:window>
+  local target=${1:-} session window windows
+  case "$target" in
+    *:*:*|:*|*:) return 1 ;;
+    *:*) ;;
+    *) return 1 ;;
+  esac
+  session=${target%%:*}
+  window=${target#*:}
+  windows=$(LC_ALL=C tmux list-windows -t "$session" -F '#{window_name}' 2>/dev/null) || return 1
+  printf '%s\n' "$windows" | grep -Fqx "$window"
+}
+
 # fm_backend_tmux_current_command: <target>'s live foreground process name -
 # tmux's own `#{pane_current_command}`, already resolved from the pty's
 # foreground process group (verified empirically with real tmux 3.6a: a

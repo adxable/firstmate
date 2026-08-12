@@ -869,6 +869,35 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
   esac
 }
 
+# fm_backend_target_proven: PROOF-GRADE endpoint existence. Same question as
+# fm_backend_target_exists - does the recorded TARGET still exist on BACKEND -
+# under a stricter burden of proof: it may never answer "exists" out of a read
+# that cannot tell the recorded endpoint apart from some other one, so an
+# unreadable backend is "not proven" rather than "still there".
+#
+# Only the tmux arm differs, and it differs structurally rather than by degree:
+# a NAME-form tmux target silently falls back to the client's active window, so
+# the cheap read above reports a closed window as present forever. Every other
+# arm of fm_backend_target_exists is already an addressed per-endpoint read
+# with no such fallback, so those backends reuse it unchanged.
+#
+# Use this where a false "exists" is the expensive mistake - fm-spawn.sh's
+# worktree-ownership guard, where a stale record would otherwise hold a pool
+# slot hostage - and keep the cheap read for the passive digests, whose
+# expensive mistake runs the other way.
+fm_backend_target_proven() {  # <backend> <target> [expected-label]
+  local backend=$1 target=$2 expected_label=${3:-}
+  case "$backend" in
+    tmux)
+      fm_backend_source tmux || return 1
+      fm_backend_tmux_target_exists_exact "$target"
+      ;;
+    *)
+      fm_backend_target_exists "$backend" "$target" "$expected_label"
+      ;;
+  esac
+}
+
 # fm_backend_agent_state: the single recovery-grade agent/endpoint state
 # contract. It is deliberately richer than fm_backend_target_exists's cheap
 # pane-presence read and prints exactly one of:

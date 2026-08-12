@@ -135,6 +135,33 @@ tests/fm-tmux-submit-busy.test.sh
 Expected structural matrix: real text on any content row is pending; all-empty complete boxes are empty; unreadable, incomplete, or unsafe boxes are unknown; and non-bordered panes retain cursor-row compatibility.
 Expected submit matrix: proven pending plus busy is accepted as queued; proven pending plus idle remains pending; ambiguous pending is never converted by the busy exception; and only a proven empty composer succeeds directly.
 
+### Named-target fallback
+
+Named-target resolution was verified on 2026-08-12 with tmux 3.7b on macOS arm64, on a throwaway private socket.
+
+```sh
+tmux -L "$socket" new-session -d -s sess -n fm-real 'sleep 300'
+tmux -L "$socket" display-message -p -t 'sess:fm-real' '#{pane_id}'
+tmux -L "$socket" display-message -p -t 'sess:fm-does-not-exist' '#{pane_id}'
+tmux -L "$socket" list-windows -t sess -F '#{window_id}|#{window_index}|#{window_name}'
+```
+
+Observed output:
+
+```text
+%0
+%0
+@0|0|fm-real
+```
+
+Both reads exited 0.
+An absent named target is therefore indistinguishable from a present one: tmux silently answers about the client's active window instead of failing, so a bare `display-message` read can never establish that a recorded endpoint is gone.
+The session inventory is the signal that can, and it is what `fm_backend_tmux_target_exists_exact` requires before reporting a window present, the same structural precondition `fm_backend_tmux_agent_state` already applies before trusting any pane read.
+This is why `fm_backend_target_proven` exists next to the cheaper `fm_backend_target_exists`: fm-spawn.sh's worktree-ownership guard may block a pool slot only on proven ownership, so a stale record whose window has closed releases the slot instead of holding it forever.
+
+Portable regression: `tests/fm-tmux-target-proof.test.sh`.
+Refresh this record after a tmux upgrade with `FM_TMUX_TARGET_FALLBACK_DRIFT=1 tests/fm-tmux-target-fallback-live-e2e.test.sh`, which reruns the commands above against the installed tmux and fails naming its version if the behavior has changed.
+
 ### Cleanup endpoint identity
 
 The cleanup identity boundary was validated on 2026-07-28 with tmux 3.6a and metadata fixtures for every supported backend.
