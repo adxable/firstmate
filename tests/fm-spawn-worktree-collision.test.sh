@@ -196,13 +196,14 @@ test_live_owner_blocks_spawn() {
   assert_contains "$out" "$WT_DIR" "refusal did not name the contested worktree path"
   assert_absent "$HOME_DIR/state/$id.meta" "refused spawn still recorded task metadata"
 
-  # The branch is created by the worker that reads the brief, so the refusal is
-  # only worth anything if it lands before the brief does. The `treehouse get`
-  # line proves the log captured what DID reach the pane, so the brief
-  # assertion cannot pass merely because nothing was ever logged.
+  # The branch is created by the worker the launch command starts, so the
+  # refusal is only worth anything if it lands before that command does. What
+  # goes on the wire is the harness invocation carrying the brief PATH, so that
+  # path is what a launch send would really log; the allowed retry below sends
+  # it into this same log, which is what proves this assertion can fail.
   assert_grep "treehouse get" "$SENDLOG" "refused spawn never reached the pane at all"
-  assert_no_grep "brief for $id" "$SENDLOG" \
-    "refused spawn still sent the launch brief to the pane"
+  assert_no_grep "$HOME_DIR/data/$id/brief.md" "$SENDLOG" \
+    "refused spawn still sent the launch command to the pane"
   head_after=$(git -C "$WT_DIR" rev-parse --abbrev-ref HEAD)
   [ "$head_after" = "$head_before" ] || \
     fail "refused spawn changed the contested worktree's branch: $head_before -> $head_after"
@@ -220,8 +221,10 @@ test_live_owner_blocks_spawn() {
   status=$?
   expect_code 0 "$status" "re-running the refused task id should work once the collision is gone"
   assert_contains "$out" "spawned $id" "retry after a refusal did not report success"
+  assert_grep "$HOME_DIR/data/$id/brief.md" "$SENDLOG" \
+    "the allowed retry sent no launch command, so the refused-spawn assertion above pins nothing"
 
-  pass "a worktree still owned by a live task refuses the spawn before the brief is sent"
+  pass "a worktree still owned by a live task refuses the spawn before the launch command is sent"
   pass "a refusal takes its own endpoint back down, so re-running the same id works"
 }
 
