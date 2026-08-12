@@ -108,7 +108,8 @@
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
-#   git worktree root distinct from the primary project checkout.
+#   git worktree root that is distinct from the primary project checkout AND is not
+#   already recorded as the worktree= of another task whose endpoint still exists.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -1265,6 +1266,42 @@ real_path_or_raw() {  # <path>
   fi
 }
 
+# worktree_owner_conflict: is the resolved worktree already owned by another
+# LIVE task in this home? Prints "<other-id><TAB><recorded path>" and returns 0
+# on the first conflict, returns 1 when the path is free to claim.
+#
+# Why durable records and not the slot pool: a worktree pool marks a slot free
+# from process presence inside the slot directory, so a worker parked elsewhere
+# (typically a shell sitting in the validation pipeline's own directory) reads
+# as `available` while it still owns its worktree. Handing that slot to a second
+# task lets the newcomer reset the branch out from under work that has not
+# landed. This home's own state/<id>.meta records are the ownership truth.
+#
+# Liveness is the recorded endpoint's continued existence
+# (fm_backend_target_exists, the same cheap read the fleet digest uses). That
+# keeps a stale record from holding a slot hostage: a task whose endpoint is
+# gone does not block, and a torn-down task has no meta file left at all. A
+# record with no readable endpoint target is likewise treated as not live.
+worktree_owner_conflict() {  # <resolved-worktree-real-path>
+  local wt_real=$1 meta other_id other_wt other_wt_real backend target
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    other_id=$(basename "$meta" .meta)
+    [ "$other_id" != "$ID" ] || continue
+    other_wt=$(fm_meta_get "$meta" worktree)
+    [ -n "$other_wt" ] || continue
+    other_wt_real=$(real_path_or_raw "$other_wt")
+    [ "$other_wt_real" = "$wt_real" ] || continue
+    backend=$(fm_backend_of_meta "$meta")
+    target=$(fm_backend_target_of_meta "$meta")
+    [ -n "$target" ] || continue
+    fm_backend_target_exists "$backend" "$target" "fm-$other_id" 2>/dev/null || continue
+    printf '%s\t%s\n' "$other_id" "$other_wt"
+    return 0
+  done
+  return 1
+}
+
 # Session-provider container-ensure + task creation. tmux stays exactly as P1
 # left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
 # a herdr spawn goes through the version-gated, workspace-per-HOME,
@@ -1275,6 +1312,7 @@ real_path_or_raw() {  # <path>
 # per-backend routing (fm_backend_resolve_selector).
 validate_spawn_worktree() {  # <source> <inspect-target>
   local source=$1 inspect_target=$2 wt_real proj_real wt_top wt_top_real
+  local conflict conflict_id conflict_path
   wt_real=
   if ! wt_real=$(cd "$WT" 2>/dev/null && pwd -P); then
     wt_real=
@@ -1287,6 +1325,13 @@ validate_spawn_worktree() {  # <source> <inspect-target>
   fi
   if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || [ "$wt_real" != "$wt_top_real" ] || [ "$wt_real" = "$proj_real" ]; then
     echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
+    exit 1
+  fi
+  if conflict=$(worktree_owner_conflict "$wt_real"); then
+    IFS=$'\t' read -r conflict_id conflict_path <<EOF
+$conflict
+EOF
+    echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint is still live; refusing to launch $ID there to avoid resetting $conflict_id's branch and losing its unlanded work. Inspect target $inspect_target" >&2
     exit 1
   fi
 }
