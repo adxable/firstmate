@@ -159,6 +159,25 @@ An absent named target is therefore indistinguishable from a present one: tmux s
 The session inventory is the signal that can, and it is what `fm_backend_tmux_target_exists_exact` requires before reporting a window present, the same structural precondition `fm_backend_tmux_agent_state` already applies before trusting any pane read.
 This is why `fm_backend_target_proven` exists next to the cheaper `fm_backend_target_exists`: fm-spawn.sh's worktree-ownership guard may block a pool slot only on proven ownership, so a stale record whose window has closed releases the slot instead of holding it forever.
 
+Session resolution was verified in the same run and hides the same falsehood one level up.
+
+```sh
+tmux -L "$socket" new-session -d -s gone-b -n fm-holder 'sleep 30'
+tmux -L "$socket" list-windows -t gone -F '#{window_name}'
+tmux -L "$socket" list-windows -t '=gone' -F '#{window_name}'
+```
+
+Observed output:
+
+```text
+fm-holder
+can't find session: gone
+```
+
+The unanchored read exited 0 and the anchored one exited 1.
+A target-session resolves by exact match, then fnmatch, then start-of-name, so a recorded session that is gone answers out of a surviving session whose name it prefixes.
+The `=` exact-match prefix is what refuses that substitution, which is why the inventory read anchors both the session and the window name before reporting a window present.
+
 Portable regression: `tests/fm-tmux-target-proof.test.sh`.
 Refresh this record after a tmux upgrade with `FM_TMUX_TARGET_FALLBACK_DRIFT=1 tests/fm-tmux-target-fallback-live-e2e.test.sh`, which reruns the commands above against the installed tmux and fails naming its version if the behavior has changed.
 

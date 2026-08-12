@@ -100,4 +100,22 @@ if fm_backend_target_proven tmux "no-such-session:fm-present"; then
 fi
 pass "a target whose session is gone is not proven present"
 
+# The same falsehood one level up: tmux resolves a target-session by exact
+# match, then fnmatch, then start-of-name, so a recorded session that is gone
+# can silently resolve into a surviving session whose name it prefixes. The
+# surviving session even holds a window of the recorded name, which is what
+# makes the wrong answer look right.
+"$REAL_TMUX" -L "$SOCKET" new-session -d -s "$SESSION-survivor" -n fm-holder -c "$LAB/wt" \
+  -- "$SLEEP_BIN" 900 \
+  || fail "could not start the surviving session"
+
+fm_backend_target_proven tmux "$SESSION-survivor:fm-holder" \
+  || fail "the surviving session's own window was not proven present on $TMUX_VERSION"
+pass "the surviving session's own endpoint is proven present"
+
+if fm_backend_target_proven tmux "$SESSION-surv:fm-holder"; then
+  fail "a gone session was resolved into the surviving session it prefixes on $TMUX_VERSION; that record would block its pool slot forever"
+fi
+pass "a gone session is not answered for by a surviving session whose name it prefixes"
+
 echo "# all fm-tmux-target-proof tests passed"

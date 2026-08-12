@@ -146,6 +146,13 @@ fm_backend_tmux_kill() {  # <target>
 # counts as present, exactly as fm_backend_tmux_agent_state requires before it
 # trusts any pane read.
 #
+# The session is anchored with the `=` exact-match prefix this file already
+# uses for kills, because an unanchored target-session falls back to fnmatch and
+# then to a start-of-name match: a recorded session that is gone would otherwise
+# resolve into a surviving session whose name it prefixes and answer about that
+# one's windows instead. Both halves of the recorded target must match exactly
+# or the read is not proof.
+#
 # Returns 0 only on that positive proof: a failed inventory, an absent session,
 # and an omitted window all return nonzero, so no caller can read "exists" out
 # of a read that could not be made. Window NAME is the recorded target form
@@ -159,7 +166,7 @@ fm_backend_tmux_target_exists_exact() {  # <session:window>
   esac
   session=${target%%:*}
   window=${target#*:}
-  windows=$(LC_ALL=C tmux list-windows -t "$session" -F '#{window_name}' 2>/dev/null) || return 1
+  windows=$(LC_ALL=C tmux list-windows -t "=$session" -F '#{window_name}' 2>/dev/null) || return 1
   printf '%s\n' "$windows" | grep -Fqx "$window"
 }
 
