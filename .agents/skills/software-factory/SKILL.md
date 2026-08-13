@@ -25,7 +25,7 @@ Never run the gates for work the captain asked to just ship, never in parallel w
 
 - **Gates 1-3 and the Gate 4 slice plan are ONE scout task.**
   Deliverables live under `data/<id>/`: `report.md` (running summary and final slice plan), `gates/01-product.md`, `gates/mockups/*.html`, `gates/02-architecture.md`, `gates/03-program-design.md`, `gates/04-slices.md`, and the Lavish artifacts `gates/*.html`.
-  The scout's brief must explicitly extend its write permission to `data/<id>/` beyond the report, and must carry the gate templates below in its `{TASK}` section.
+  The scout's brief must explicitly extend its write permission to `data/<id>/` beyond the report, and must carry the gate templates below plus the challenger-pass requirement in its `{TASK}` section.
 - **Gate state is the backlog item note plus decision holds** - there is no separate status file.
   Record each approval as `gateN=approved <date>` in the task note when it lands.
 - **Each approved slice becomes one ship task with one PR**, chained with tasks-axi dependencies, under the project's registered delivery mode and yolo posture.
@@ -35,27 +35,38 @@ Never run the gates for work the captain asked to just ship, never in parallel w
 
 ## The approval loop (firstmate-owned, once per gate)
 
-1. The scout writes the gate doc plus its Lavish artifact, appends `needs-decision [key=gate-N]: gate N ready for review`, and waits.
-2. Firstmate opens the artifact with `lavish-axi data/<id>/gates/<file>.html`, then loads `process-event-sources` and arms `bin/fm-procevent-lavish.sh arm data/<id>/gates/<file>.html`.
+1. The scout writes the gate doc plus its Lavish artifact, runs the challenger pass below, appends `needs-decision [key=gate-N]: gate N ready for review`, and waits.
+2. **Challenger pass - mandatory, and no gate reaches the captain without it.**
+   The requirement: before gate N is signalled ready, a fresh-context reader that has never seen this feature reads every gate document written so far - gate 1 through gate N, gate 1's mockups included - against each other and returns a typed verdict of critical, warning, and ok items.
+   It hunts contradictions BETWEEN documents, numbers that do not agree, assumptions with nothing behind them, and whether a reader could build the feature from these documents alone.
+   Acceptance: the gate is ready only once every critical item is either fixed in the documents or carried onto the gate's Lavish surface as a captain question, with the verdict recorded in the scout's report either way.
+   Two conditions carry the whole mechanism, and breaking either one makes the pass worthless rather than merely weaker:
+   - The reader receives **only the document paths**.
+     Handing it the brief, the conversation history, or the scout's own conclusions gives back the glue that lets an author read their own contradictions as coherent, and the pass then confirms the author instead of testing them.
+   - **The author never resolves its own critical items.**
+     They reach the captain as questions on that gate's surface, next to the approve and change controls.
+
+   How the fresh reader is obtained is the scout's choice; showing that both conditions held is not.
+3. Firstmate opens the artifact with `lavish-axi data/<id>/gates/<file>.html`, then loads `process-event-sources` and arms `bin/fm-procevent-lavish.sh arm data/<id>/gates/<file>.html`.
    Never run `lavish-axi poll` in a conversational turn; the armed source wakes firstmate when the captain responds.
-3. Artifact requirements per gate - open each matching Lavish playbook before writing HTML:
+4. Artifact requirements per gate - open each matching Lavish playbook before writing HTML:
    - Gate 1: `plan` + `input`; one mockup file per screen, rendered in the product's own design system per `lavish-axi design` priority; no technical vocabulary anywhere on the surface.
    - Gate 2: `diagram` (Mermaid, whiteboard-editable in review) + `plan` + `input`.
    - Gate 3: `code` (types and signatures, no bodies) + `plan` + `input`.
    - Gate 4: `table` or `plan` + `input` over the slice list and build order.
 
    Every artifact ends with one `input` control set - "Approve Gate N" / "Change: ..." - so the verdict returns as a structured queued answer, not loose prose.
-4. On the resulting `check:` wake, route the captured result by the captain's verdict on the gate rather than by how the session ended - a verdict that arrives together with the session ending is a valid verdict, so an approval sent that way is an approval and never feedback to revise:
+5. On the resulting `check:` wake, route the captured result by the captain's verdict on the gate rather than by how the session ended - a verdict that arrives together with the session ending is a valid verdict, so an approval sent that way is an approval and never feedback to revise:
    - **changes requested** -> translate them into one steer to the scout through `fm-send` (long feedback goes into a file); the scout revises doc and artifact and re-signals.
    - **approved** -> record it durably in the backlog note, `resolved` the gate's key, and steer the scout to the next gate.
    - **open questions instead of a verdict** -> the questions stay as decision holds; re-ask in plain chat at the next natural contact; never reopen the session uninvited.
 
    A result carrying no verdict at all means re-opening the artifact and re-arming it, or asking the captain in plain chat when the session is gone, never leaving the scout parked on an open decision with nothing armed to wake firstmate.
    `process-event-sources` owns the durable result read, the adapter classification call, source lifecycle, and the handled acknowledgement.
-5. An approval counts only once it is in a durable record (backlog note or resolved hold).
+6. An approval counts only once it is in a durable record (backlog note or resolved hold).
    The published Lavish poll destructively clears feedback, so the durable record - never the poll bytes or conversation memory - is the source of truth.
-6. Unresolved captain decisions follow `decision-hold-lifecycle` as they appear during the gates, not in a sweep at the end.
-7. **Backtracking:** if later work shows an approved gate wrong, hold the affected slice tasks, revise the gate doc through the current worker's report or a follow-up scout, and re-run this loop for that gate before continuing.
+7. Unresolved captain decisions follow `decision-hold-lifecycle` as they appear during the gates, not in a sweep at the end.
+8. **Backtracking:** if later work shows an approved gate wrong, hold the affected slice tasks, revise the gate doc through the current worker's report or a follow-up scout, and re-run this loop for that gate before continuing.
 
 ## Gate content templates (carried into the scout's brief)
 
