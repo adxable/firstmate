@@ -20,6 +20,16 @@
 # inventory the fake keeps, exactly as it does in a real tmux server. The
 # fallback itself is pinned against a real tmux server in
 # tests/fm-tmux-target-proof.test.sh.
+#
+# What this fake CANNOT check, stated so nobody counts it as coverage: neither
+# the harness worker nor the real worktree pool ever runs here, so nothing in
+# this file can observe the contested worktree's branch move, and no assertion
+# about its HEAD would be capable of failing. The branch reset is a property of
+# the real worker and of `treehouse get`, and the pool tool's own termination
+# behavior is pinned separately against real binaries in
+# tests/fm-treehouse-pool-termination-live-e2e.test.sh. What this file does pin
+# about the refusal's ordering is the durable record and the wire: no
+# state/<id>.meta is written and no launch command reaches the pane.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -179,13 +189,12 @@ run_collision_spawn() {
 
 # The incident: the pool hands out a slot another live task still owns.
 test_live_owner_blocks_spawn() {
-  local rec id holder out status head_before head_after
+  local rec id holder out status
   id=collide-new-k1
   holder=collide-holder-k2
   rec=$(make_collision_case collide-live "$id" "$holder")
   read_collision_record "$rec"
   open_window "fm-$holder"
-  head_before=$(git -C "$WT_DIR" rev-parse --abbrev-ref HEAD)
 
   out=$(run_collision_spawn "$id")
   status=$?
@@ -204,9 +213,6 @@ test_live_owner_blocks_spawn() {
   assert_grep "treehouse get" "$SENDLOG" "refused spawn never reached the pane at all"
   assert_no_grep "$HOME_DIR/data/$id/brief.md" "$SENDLOG" \
     "refused spawn still sent the launch command to the pane"
-  head_after=$(git -C "$WT_DIR" rev-parse --abbrev-ref HEAD)
-  [ "$head_after" = "$head_before" ] || \
-    fail "refused spawn changed the contested worktree's branch: $head_before -> $head_after"
 
   # The refusal must not leave its own pane parked in the contested worktree,
   # and the owner's endpoint is none of its business.

@@ -1275,6 +1275,15 @@ real_path_or_raw() {  # <path>
 # fm_backend_tmux_create_task refuses a window name that already exists.
 # The orca and herdr-projection paths own richer cleanup (task worktree
 # removal, projection journal) through spawn_abort_cleanup and are left to it.
+#
+# Killing the pane is also the SAFE way to end that acquisition, which is not
+# obvious and is the reason the orphan is not simply left alone: verified with
+# real binaries (docs/verification/runtime-backends.md "Endpoint kill and
+# worktree-pool safety", pinned by
+# tests/fm-treehouse-pool-termination-live-e2e.test.sh), a hung-up pane leaves
+# the worktree exactly as it stands, while the ordinary subshell exit an
+# operator would type into that orphan runs the pool's return-and-reset path
+# and detaches the contested worktree off its own branch.
 discard_refused_endpoint() {
   [ "${BACKEND:-}" != orca ] || return 0
   [ "${HERDR_PROJECTION_ABORT_CLEANUP:-0}" != 1 ] || return 0
@@ -1354,7 +1363,7 @@ validate_spawn_worktree() {  # <source> <inspect-target>
     IFS=$'\t' read -r conflict_id conflict_path <<EOF
 $conflict
 EOF
-    echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint still exists; refusing to launch $ID there to avoid resetting $conflict_id's branch and losing its unlanded work. Inspect target $inspect_target" >&2
+    echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint still exists; refusing to launch $ID there so no second worker branches or works inside $conflict_id's worktree. $source has already detached that worktree from its branch, so check $conflict_id's branch before restarting it. Inspect target $inspect_target" >&2
     discard_refused_endpoint
     exit 1
   fi

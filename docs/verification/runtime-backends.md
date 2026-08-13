@@ -181,6 +181,37 @@ The `=` exact-match prefix is what refuses that substitution, which is why the i
 Portable regression: `tests/fm-tmux-target-proof.test.sh`.
 Refresh this record after a tmux upgrade with `FM_TMUX_TARGET_FALLBACK_DRIFT=1 tests/fm-tmux-target-fallback-live-e2e.test.sh`, which reruns the commands above against the installed tmux and fails naming its version if the behavior has changed.
 
+### Endpoint kill and worktree-pool safety
+
+How a task pane's termination reaches the worktree pool was verified on 2026-08-13 with tmux 3.7b and treehouse v2.1.1 on macOS arm64, in a throwaway repo whose `treehouse.toml` set `root = "./"` and on a private tmux socket, so no real pool was touched.
+
+```sh
+tmux -L "$socket" send-keys -t "$session:fm-x" 'treehouse get' Enter
+git -C "$worktree" checkout -b fm/holder && git -C "$worktree" commit -m 'holder work'
+tmux -L "$socket" kill-window -t "=$session:=fm-x"      # hang-up case
+tmux -L "$socket" send-keys -t "$session:fm-y" 'exit' Enter   # ordinary-exit case
+treehouse get --lease --lease-holder probe               # acquire case
+```
+
+Observed results:
+
+| Termination | Worktree branch after | Content after | Pool banner |
+| --- | --- | --- | --- |
+| `tmux kill-window` on the pane | unchanged, still `fm/holder` | intact, clean and dirty alike | none |
+| `exit` typed in the subshell | detached at the base commit | reset, working-tree files dropped | `Worktree returned to pool.` |
+| next `treehouse get` or `get --lease` | detached at the base commit | reset before the caller sees it | `Setting up worktree...` |
+
+A hung-up pane runs no return and no reset, so ending a refused spawn's own pane with `tmux kill-window` cannot disturb a worktree another task owns.
+The ordinary subshell exit does run the return path, which means an orphaned pane left behind for an operator to close is the termination that detaches the contested worktree, not the kill.
+That is the empirical basis for `discard_refused_endpoint` in `bin/fm-spawn.sh` taking its own endpoint down rather than leaving it parked.
+
+The reset is owned by the acquire, not by anything firstmate does afterwards.
+Both the interactive `treehouse get` and the non-interactive `treehouse get --lease` detach the worktree they hand out before the caller can inspect it, so no ownership check placed after an acquire, and none placed before it that still has to ask the pool for a path, can prevent that first detach.
+A worktree carrying uncommitted changes reads `dirty` and is never handed out - the pool created an additional slot instead and left the dirty one untouched - so this detach loses committed branch position rather than unlanded edits.
+Occupancy itself stays process-based, which is why a slot whose owner is parked elsewhere reads free at all.
+
+Drift guard: `FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 tests/fm-treehouse-pool-termination-live-e2e.test.sh`, which reruns all three terminations against the installed binaries and fails naming both versions if any of them changes.
+
 ### Cleanup endpoint identity
 
 The cleanup identity boundary was validated on 2026-07-28 with tmux 3.6a and metadata fixtures for every supported backend.
