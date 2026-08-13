@@ -139,4 +139,17 @@ if [ "$(branch_of "$ACQ_WT")" = holder-exit ]; then
 fi
 pass "a normally exited subshell does return and reset the worktree, so the kill case is a real observation"
 
+# --- the same boundary on the non-interactive acquire ------------------------
+# The lease form is the one an ownership check would have to use to resolve a
+# path before opening any pane, so the record's claim that it resets too is what
+# rules that route out. It is also a live firstmate call path (bin/fm-home-seed.sh).
+stage_holder_state "$ACQ_WT" holder-lease || fail "could not stage the holder state in $ACQ_WT"
+LEASE_WT=$(cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-probe 2>/dev/null) \
+  || fail "treehouse $TREEHOUSE_VERSION could not lease the single-slot worktree"
+[ "$LEASE_WT" = "$ACQ_WT" ] || fail "the single-slot pool leased $LEASE_WT rather than $ACQ_WT, so this case no longer observes the staged worktree"
+if [ "$(branch_of "$LEASE_WT")" = holder-lease ]; then
+  fail "treehouse $TREEHOUSE_VERSION no longer resets a worktree when it leases one; the dated record's claim that no pre-acquire ownership check can avoid the first detach no longer describes this pool"
+fi
+pass "the non-interactive lease acquire resets the worktree it hands out as well, so no pre-acquire check avoids that detach"
+
 echo "# all fm-treehouse-pool-termination live tests passed"

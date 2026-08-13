@@ -14,11 +14,16 @@
 # window and the read succeeds - so a task whose window was closed without a
 # teardown probed as present and blocked its pool slot forever.
 #
-# The first case asserts that fallback directly, against the real server, so
-# the rest of the file cannot go quietly vacuous: it is the reason a lenient
-# read is not allowed to decide ownership, and if it ever stops being true this
-# fails loudly naming the tmux version rather than leaving a dead assumption in
-# place.
+# This file pins only what stays correct whatever tmux does: the same target
+# must read proven-present while its window exists and released once it is gone,
+# and neither an absent session nor a surviving session whose name the recorded
+# one prefixes may answer for it. Those cases cannot go quietly vacuous, because
+# one target is observed flipping verdict across a real kill-window.
+# The fallback itself is a current tmux behavior rather than a guarantee, so the
+# assertion that it still happens lives in the env-gated
+# tests/fm-tmux-target-fallback-live-e2e.test.sh: a tmux that stopped falling
+# back would leave this file and the ownership guard correct, and must not turn
+# CI red.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -71,12 +76,6 @@ fm_backend_source tmux || fail "fm_backend_source tmux failed"
 
 PRESENT="$SESSION:fm-present"
 ABSENT="$SESSION:fm-torn-down"
-
-# --- the fallback that makes a lenient read unusable -------------------------
-if ! fm_backend_target_exists tmux "$ABSENT" >/dev/null 2>&1; then
-  fail "$TMUX_VERSION no longer resolves an absent named target to the active window; the proof-grade read and its callers need re-deriving from this tmux's actual behavior"
-fi
-pass "a bare existence read of an absent named target still succeeds on $TMUX_VERSION"
 
 # --- proof-grade existence ---------------------------------------------------
 fm_backend_target_proven tmux "$PRESENT" \

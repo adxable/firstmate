@@ -1276,19 +1276,31 @@ real_path_or_raw() {  # <path>
 # The orca and herdr-projection paths own richer cleanup (task worktree
 # removal, projection journal) through spawn_abort_cleanup and are left to it.
 #
-# Killing the pane is also the SAFE way to end that acquisition, which is not
-# obvious and is the reason the orphan is not simply left alone: verified with
-# real binaries (docs/verification/runtime-backends.md "Endpoint kill and
-# worktree-pool safety", pinned by
-# tests/fm-treehouse-pool-termination-live-e2e.test.sh), a hung-up pane leaves
-# the worktree exactly as it stands, while the ordinary subshell exit an
-# operator would type into that orphan runs the pool's return-and-reset path
-# and detaches the contested worktree off its own branch.
+# Ending that endpoint is SAFE ON TMUX AND ONLY ON TMUX, which is why this
+# takes the endpoint back on that surface and nowhere else. Verified with real
+# binaries on tmux 3.7b with treehouse v2.1.1
+# (docs/verification/runtime-backends.md "Endpoint kill and worktree-pool
+# safety", pinned by tests/fm-treehouse-pool-termination-live-e2e.test.sh): a
+# hung-up tmux pane leaves the worktree exactly as it stands, while the
+# ordinary subshell exit an operator would type into that orphan runs the
+# pool's return-and-reset path and detaches the contested worktree off its own
+# branch. The pool is also the worktree provider for herdr, zellij and cmux,
+# and nothing establishes that closing a herdr pane, a zellij tab or a cmux
+# workspace hangs the shell up rather than letting that return complete, so on
+# those surfaces this refuses to guess and says what it left behind instead.
+# Deciding ownership before the acquisition would remove the question, but the
+# same record shows both `treehouse get` and `treehouse get --lease` detach the
+# worktree they hand out before the caller can see which one it is, so the pool
+# cannot name a path without resetting it first and the decision cannot move.
 discard_refused_endpoint() {
   [ "${BACKEND:-}" != orca ] || return 0
   [ "${HERDR_PROJECTION_ABORT_CLEANUP:-0}" != 1 ] || return 0
   [ -n "${T:-}" ] || return 0
-  fm_backend_kill "$BACKEND" "$T" >/dev/null 2>&1 || true
+  if [ "$BACKEND" = tmux ]; then
+    fm_backend_kill tmux "$T" >/dev/null 2>&1 || true
+    return 0
+  fi
+  echo "warning: leaving the $BACKEND endpoint $T open inside '$WT'; ending it is only known to be worktree-pool safe on tmux, and an unverified close could let the pool take '$WT' back and detach it. Close $T by hand after checking the pool, and expect a re-run of $ID to refuse while that endpoint still exists" >&2
 }
 
 # worktree_owner_conflict: is the resolved worktree already owned by another
@@ -1344,7 +1356,7 @@ worktree_owner_conflict() {  # <resolved-worktree-real-path>
 # per-backend routing (fm_backend_resolve_selector).
 validate_spawn_worktree() {  # <source> <inspect-target>
   local source=$1 inspect_target=$2 wt_real proj_real wt_top wt_top_real
-  local conflict conflict_id conflict_path
+  local conflict conflict_id conflict_path detach_note
   wt_real=
   if ! wt_real=$(cd "$WT" 2>/dev/null && pwd -P); then
     wt_real=
@@ -1363,7 +1375,11 @@ validate_spawn_worktree() {  # <source> <inspect-target>
     IFS=$'\t' read -r conflict_id conflict_path <<EOF
 $conflict
 EOF
-    echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint still exists; refusing to launch $ID there so no second worker branches or works inside $conflict_id's worktree. $source has already detached that worktree from its branch, so check $conflict_id's branch before restarting it. Inspect target $inspect_target" >&2
+    detach_note=
+    if [ "${BACKEND:-}" != orca ]; then
+      detach_note=" $source has already detached that worktree from its branch, so check $conflict_id's branch before restarting it."
+    fi
+    echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint still exists; refusing to launch $ID there so no second worker branches or works inside $conflict_id's worktree.$detach_note Inspect target $inspect_target" >&2
     discard_refused_endpoint
     exit 1
   fi
