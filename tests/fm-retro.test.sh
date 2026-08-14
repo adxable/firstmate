@@ -96,13 +96,41 @@ test_classification_separates_recorded_causes_from_unrecoverable_ones() {
   out=$(run_retro "$home" "$db")
 
   assert_contains "$out" '1  czyste' 'the single-pass task must classify as clean'
-  assert_contains "$out" '1  z naprawami' 'a repair round with a fix summary is explained'
+  assert_contains "$out" '1  wyjaśnione' 'a repair round with a fix summary is explained'
   assert_contains "$out" '1  twarde wznowienie' 'a named failure plus a second run is hard recovery'
   assert_contains "$out" '2  NIEWYJAŚNIONE' 'an empty fix summary and a bare exit status are both unexplained'
   assert_contains "$out" 'zadanie-bez-opisu' 'the unexplained list must name the task with no fix summary'
   assert_contains "$out" 'zadanie-goly-kod' 'the unexplained list must name the task with only a gate name'
   assert_not_contains "$out" 'zadanie-czyste  (' 'a clean task must not appear in the unexplained list'
   pass 'classification separates recorded causes from unrecoverable ones'
+}
+
+# What the explained class has in common is a RECOVERABLE CAUSE, not that repair
+# rounds happened: a single run that aborted with a named reason and no repair
+# round belongs there too. The label must not claim rounds the same report then
+# accounts for as an aborted run.
+test_a_single_aborted_run_with_a_named_reason_is_classed_as_explained() {
+  local home db out
+  home=$(make_home aborted)
+  db="$home/state.sqlite"
+  make_db "$db"
+
+  add_run "$db" c1 fm/czysty completed ''
+  add_step "$db" sc1 c1 review completed 600000
+
+  # One run, one named terminal error, zero auto_fix rounds.
+  add_run "$db" f1 fm/jeden-bieg-padl failed 'step push failed: remote rejected: permission denied'
+  add_step "$db" sf1 f1 push failed 1800000
+
+  out=$(run_retro "$home" "$db")
+
+  assert_contains "$out" '1  wyjaśnione - nadprogramowy przebieg z nazwaną przyczyną' \
+    'an aborted run with a named reason is explained, and the label must say only that'
+  assert_not_contains "$out" 'rundy naprawcze, każda' \
+    'the class label must not claim repair rounds that never happened'
+  assert_contains "$out" 'przerwany bieg' \
+    'the cost section must still account for it as an aborted run'
+  pass 'a single aborted run with a named reason is classed as explained'
 }
 
 # A branch whose pipeline was run twice had a second pass by definition, even
@@ -464,6 +492,139 @@ test_the_unexplained_list_announces_the_entries_it_cut() {
   pass 'the unexplained list announces the entries it cut'
 }
 
+# The collapse figure is one of the tool's self-reported coverage numbers, so it
+# must count terms it dropped, not the comparisons that dropped them: a short term
+# swallowed by two longer supersets is still one collapse.
+test_the_collapse_figure_counts_dropped_terms_not_comparisons() {
+  local home db out
+  home=$(make_home collapse)
+  db="$home/state.sqlite"
+  make_db "$db"
+  add_run "$db" r1 fm/zadanie-fabryka completed ''
+  add_step "$db" s1 r1 review completed 600000
+
+  # Both rounds carry the same nest of names, so "software" and "factory" are each
+  # swallowed by TWO longer supersets and "software-factory" by one: three dropped
+  # terms across five (i,j) comparisons.
+  add_decision "$home" zadanie-fabryka runda-jedna \
+    'The software-factory-gate rejected it, the software-factory rule fired again.'
+  add_decision "$home" zadanie-fabryka runda-druga \
+    'Once more the software-factory-gate tripped on the software-factory rule.'
+
+  out=$(run_retro "$home" "$db")
+
+  assert_contains "$out" 'Zwiniętych jako to samo słowo w dłuższej postaci: 3.' \
+    'the collapse figure must count each dropped term once, not once per comparison'
+  pass 'the collapse figure counts dropped terms not comparisons'
+}
+
+# When a direct read-only open fails, the reason printed must be the one sqlite
+# actually gave. Naming an unobserved cause is the exact failure this tool exists
+# to avoid, and the reason must also reach the section that lists what it could
+# not read.
+test_the_copy_fallback_states_the_reason_it_actually_observed() {
+  local home db out dbdir
+  home=$(make_home observedreason)
+  dbdir="$home/dbdir"
+  mkdir -p "$dbdir"
+  db="$dbdir/state.sqlite"
+  make_db "$db"
+  sqlite3 "$db" "pragma journal_mode=wal;" >/dev/null
+  add_run "$db" r1 fm/zadanie-czyste completed ''
+  add_step "$db" s1 r1 review completed 600000
+  # The -shm is PRESENT but unreadable, so the direct open fails for a reason that
+  # has nothing to do with a missing sidecar.
+  [ -e "$db-shm" ] || sqlite3 "$db" "select count(*) from runs;" >/dev/null
+  chmod 000 "$db-shm"
+
+  out=$(run_retro "$home" "$db")
+  chmod 600 "$db-shm" 2>/dev/null || true
+
+  assert_contains "$out" '1  czyste' 'the fallback must still produce the report'
+  assert_contains "$out" 'odczytane z kopii roboczej' 'reading from a copy must be disclosed'
+  assert_not_contains "$out" 'bez pliku -shm' \
+    'a cause that was not observed must never be printed as the reason'
+  assert_not_contains "$out" 'Nic - każdy napotkany rekord' \
+    'the failed direct open must reach the section listing what could not be read'
+  assert_contains "$out" 'nie dało się otworzyć wprost tylko do odczytu' \
+    'the disclosure must name what actually failed'
+  pass 'the copy fallback states the reason it actually observed'
+}
+
+# Committed rows can live in the -wal and not in the main file, so a copy without
+# it is a different database. The report must show what the source really holds.
+test_rows_living_only_in_the_wal_survive_the_copy_fallback() {
+  local home db out dbdir fifo writer n before after
+  home=$(make_home walrows)
+  dbdir="$home/dbdir"
+  mkdir -p "$dbdir/src" "$dbdir/live"
+  db="$dbdir/live/state.sqlite"
+
+  make_db "$dbdir/src/state.sqlite"
+  sqlite3 "$dbdir/src/state.sqlite" "pragma journal_mode=wal; pragma wal_autocheckpoint=0;" >/dev/null
+  add_run "$dbdir/src/state.sqlite" r1 fm/w-glownym-pliku completed ''
+  add_step "$dbdir/src/state.sqlite" s1 r1 review completed 600000
+
+  # A writer that has committed but not closed leaves its rows in the -wal. The
+  # pair is snapshotted without the -shm, which is the shape a stopped daemon
+  # leaves and the shape that forces the copy path.
+  fifo="$TMP_ROOT/walrows.fifo"
+  rm -f "$fifo"
+  mkfifo "$fifo"
+  sqlite3 "$dbdir/src/state.sqlite" < "$fifo" >/dev/null 2>&1 &
+  writer=$!
+  exec 8> "$fifo"
+  printf 'pragma wal_autocheckpoint=0;\ninsert into runs values ("r2","fm/tylko-w-wal","completed","");\ninsert into step_results values ("s2","r2","review","completed",600000);\nselect count(*) from runs;\n' >&8
+  n=0
+  while [ ! -s "$dbdir/src/state.sqlite-wal" ] && [ "$n" -lt 200 ]; do
+    n=$((n + 1))
+    sleep 0.05
+  done
+  [ -s "$dbdir/src/state.sqlite-wal" ] || fail "the writer never left rows in the -wal"
+  cp "$dbdir/src/state.sqlite" "$db"
+  cp "$dbdir/src/state.sqlite-wal" "$db-wal"
+  printf '.quit\n' >&8
+  exec 8>&-
+  wait "$writer" 2>/dev/null || true
+  rm -f "$fifo"
+
+  before=$(find "$dbdir/live" -mindepth 1 -maxdepth 1 | LC_ALL=C sort)
+  out=$(run_retro "$home" "$db")
+  after=$(find "$dbdir/live" -mindepth 1 -maxdepth 1 | LC_ALL=C sort)
+
+  assert_contains "$out" 'biegów: 2' 'a run committed only into the -wal must be counted'
+  assert_contains "$out" 'odczytane z kopii roboczej' 'reading from a copy must be disclosed'
+  [ "$before" = "$after" ] || fail "the read created files beside the source database: $after"
+  pass 'rows living only in the wal survive the copy fallback'
+}
+
+# An empty step duration is only "the step never started" if the step's own state
+# says so. The report states the split it observed, and names any empty duration
+# that does not mean not-yet-started instead of explaining it away.
+test_empty_step_durations_are_reported_by_their_observed_state() {
+  local home db out
+  home=$(make_home nullsteps)
+  db="$home/state.sqlite"
+  make_db "$db"
+  add_run "$db" r1 fm/zadanie completed ''
+  add_step "$db" s1 r1 review completed 600000
+  add_step "$db" s2 r1 push pending NULL
+  # The exception: a step recorded as finished yet carrying no duration at all.
+  add_step "$db" s3 r1 lint completed NULL
+
+  out=$(run_retro "$home" "$db")
+
+  assert_contains "$out" 'puste wg ZAOBSERWOWANEGO stanu kroku: completed: 1, pending: 1' \
+    'the split of empty durations must be the one observed in the records'
+  assert_contains "$out" 'nieuruchomionych: 1 z 2' \
+    'only the states that really mean not-yet-started may be counted as such'
+  assert_contains "$out" 'kroków bez zmierzonego czasu w stanie "completed": 1' \
+    'an empty duration on a finished step must be named, not explained away'
+  assert_not_contains "$out" 'Nic - każdy napotkany rekord' \
+    'that exception must reach the section listing what could not be read'
+  pass 'empty step durations are reported by their observed state'
+}
+
 # The tool is a retrospective: reading it must never change the fleet it reads.
 test_the_run_leaves_the_home_and_the_database_untouched() {
   local home db out before after
@@ -500,6 +661,7 @@ test_help_needs_no_fleet_state() {
 }
 
 test_classification_separates_recorded_causes_from_unrecoverable_ones
+test_a_single_aborted_run_with_a_named_reason_is_classed_as_explained
 test_a_task_run_twice_is_never_clean_even_when_every_run_completed
 test_second_pass_cost_is_excess_over_the_median_clean_run
 test_a_task_below_the_median_contributes_no_negative_cost
@@ -510,6 +672,10 @@ test_keyed_blocked_and_indented_rounds_are_read_like_upstream_reads_them
 test_a_readable_database_with_no_records_reports_zero_coverage_not_a_failed_read
 test_a_wal_database_is_still_read_when_no_sidecar_allows_a_read_only_open
 test_a_wal_database_with_a_live_writer_is_read_directly
+test_the_copy_fallback_states_the_reason_it_actually_observed
+test_rows_living_only_in_the_wal_survive_the_copy_fallback
+test_empty_step_durations_are_reported_by_their_observed_state
+test_the_collapse_figure_counts_dropped_terms_not_comparisons
 test_a_symlinked_status_file_is_refused_and_named
 test_the_unexplained_list_announces_the_entries_it_cut
 test_the_run_leaves_the_home_and_the_database_untouched

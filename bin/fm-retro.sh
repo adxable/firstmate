@@ -94,11 +94,13 @@ warn() { printf '%s\n' "$1" >> "$WARN"; }
 # lock the live pipeline database. Tabs and newlines are flattened inside SQL
 # because the extract is tab-separated.
 #
-# A WAL database whose -shm sidecar is absent cannot be opened read-only at all,
-# so a cleanly stopped pipeline daemon would otherwise cost both headline
-# sections. The fallback copies the database and whatever sidecars exist into
+# Some databases cannot be opened read-only at all - a WAL one whose -shm sidecar
+# is absent, or one left with a hot rollback journal - which would otherwise cost
+# both headline sections. The fallback copies the database and its journals into
 # THIS run's own temp directory and reads the copy, which keeps the promise the
-# header makes: no -wal or -shm is ever created beside somebody else's database.
+# header makes: nothing is ever created beside somebody else's database. Whatever
+# the direct open actually reported is carried into the report rather than
+# replaced by a guess at the cause.
 # Reading an immutable=1 view of the live file is deliberately NOT the fallback -
 # the daemon writes continuously, and a quietly wrong number is worse than a
 # refusal for a tool whose whole point is that its numbers can be trusted.
@@ -107,6 +109,7 @@ warn() { printf '%s\n' "$1" >> "$WARN"; }
 DB_OK=0
 DB_EMPTY=0
 DB_VIA_COPY=0
+DB_ERR_RO=''
 
 # The busy timeout is what keeps the direct read on the live database: a daemon
 # holding an open write transaction makes a read-only open fail with "database is
@@ -121,10 +124,16 @@ extract() {  # <sqlite-uri-or-path>
     > "$TMP/facts.tsv" 2> "$TMP/dberr"
 }
 
+# The journals travel with the database or the copy is not the database. -wal
+# holds committed pages the main file does not have yet, and a hot -journal is
+# what rolls a half-written transaction back - copied without it, those partial
+# pages read as committed data and every number below would be quietly wrong.
+# -shm is deliberately NOT copied: sqlite rebuilds the wal-index from the WAL,
+# and a wal-index copied non-atomically can point past the end of the copied WAL.
 copy_db() {
   mkdir -p "$TMP/db" || return 1
   cp "$DB" "$TMP/db/state.sqlite" || return 1
-  for sfx in -wal -shm; do
+  for sfx in -wal -journal; do
     if [ -r "$DB$sfx" ]; then
       cp "$DB$sfx" "$TMP/db/state.sqlite$sfx" || return 1
     fi
@@ -140,7 +149,6 @@ else
   flat() { printf "replace(replace(coalesce(%s,''), char(9),' '), char(10),' ')" "$1"; }
   ERR_SQL=$(flat error)
   FIX_SQL=$(flat rd.fix_summary)
-  DB_ERR_RO=''
   if [ -e "$DB-wal" ] && [ ! -e "$DB-shm" ]; then
     # Even under mode=ro, opening a WAL database with no -shm CREATES that
     # sidecar beside the source. This tool only reads, so that case skips the
@@ -158,6 +166,7 @@ else
     elif extract "$TMP/db/state.sqlite"; then
       DB_OK=1
       DB_VIA_COPY=1
+      warn "bazy no-mistakes nie dało się otworzyć wprost tylko do odczytu ($DB_ERR_RO) - liczby niżej pochodzą z kopii roboczej zrobionej na czas tego przebiegu."
     else
       warn "baza no-mistakes nie dała się odczytać ani wprost ($DB_ERR_RO), ani z kopii: $(tr '\n' ' ' < "$TMP/dberr")"
     fi
@@ -285,8 +294,13 @@ if [ "$DB_OK" -eq 1 ]; then
       next
     }
     $1 == "S" {
-      run = $2; d = $5
-      if (d < 0) { steps_null++; next }
+      run = $2; st = $4; d = $5
+      if (d < 0) {
+        steps_null++
+        if (st == "") st = "(bez stanu)"
+        null_by_status[st]++
+        next
+      }
       steps_set++
       run_dur[run] += d
       next
@@ -337,12 +351,21 @@ if [ "$DB_OK" -eq 1 ]; then
         else if (e == 0 && runs_n[task] + 0 == 1 && completed_n[task] + 0 > 0) cls = "czyste"
         else if (u > 0) cls = "NIEWYJAŚNIONE"
         else if (runs_n[task] + 0 > 1) cls = "twarde wznowienie"
-        else cls = "z naprawami"
+        else cls = "wyjaśnione"
         print "TASK", task, cls, runs_n[task] + 0, e, u, dur
       }
       print "COV", "runs", runs_total + 0
       print "COV", "steps_set", steps_set + 0
       print "COV", "steps_null", steps_null + 0
+      # An empty step duration means "never started" only when the recorded state
+      # of that step says so. The split is printed as observed, and a state that
+      # does not mean not-yet-started is named rather than explained away.
+      for (s in null_by_status) {
+        print "NULLSTAT", s, null_by_status[s]
+        if (s == "pending" || s == "queued") null_notrun += null_by_status[s]
+        else print "WARN", "kroków bez zmierzonego czasu w stanie \"" s "\": " null_by_status[s] " - to NIE są kroki, które nie ruszyły; liczę je jako zero, bo baza nie mówi, ile trwały"
+      }
+      print "COV", "steps_null_notrun", null_notrun + 0
       print "COV", "rounds_fix", rounds_fix + 0
       print "COV", "rounds_nofix", rounds_nofix + 0
       print "COV", "grade_named", grade_n["nazwana"] + 0
@@ -357,6 +380,11 @@ if [ "$DB_OK" -eq 1 ]; then
 fi
 
 cov() { awk -F'\t' -v k="$1" '$1=="COV" && $2==k {print $3; found=1} END{if(!found) print 0}' "$TMP/model.tsv"; }
+
+null_split() {
+  awk -F'\t' '$1=="NULLSTAT"{printf "%s: %s\n", $2, $3}' "$TMP/model.tsv" | LC_ALL=C sort \
+    | awk '{ if (NR > 1) printf ", "; printf "%s", $0 } END { if (NR == 0) printf "brak"; printf "\n" }'
+}
 
 # Median total pipeline duration over clean tasks. The whole cost model hangs on
 # this one number, so it is printed with the sample size that produced it.
@@ -381,8 +409,8 @@ if [ "$DB_OK" -eq 1 ]; then
   ROUNDS_ALL=$(( $(cov rounds_fix) + $(cov rounds_nofix) ))
   printf '  zapisy potoku      : %s\n' "$DB"
   if [ "$DB_VIA_COPY" -eq 1 ]; then
-    printf '                       (odczytane z kopii roboczej - bazy w trybie WAL bez pliku -shm\n'
-    printf '                        nie da się otworzyć tylko do odczytu; oryginał nietknięty)\n'
+    printf '                       (odczytane z kopii roboczej, bo wprost tylko do odczytu się nie dało:\n'
+    printf '                        %s; oryginał nietknięty)\n' "$DB_ERR_RO"
   fi
   if [ "$DB_EMPTY" -eq 1 ]; then
     printf '                       BAZA ODCZYTANA POPRAWNIE, ale nie ma w niej ani jednego zapisu\n'
@@ -391,7 +419,11 @@ if [ "$DB_OK" -eq 1 ]; then
   printf '                       biegów: %s, kroków zmierzonych: %s, rund naprawczych: %s\n' \
     "$(cov runs)" "$(cov steps_set)" "$ROUNDS_ALL"
   printf '  czas kroku         : zmierzonych: %s, pustych: %s\n' "$(cov steps_set)" "$(cov steps_null)"
-  printf '                       (puste to kroki, które nigdy nie ruszyły - liczone jako zero, nie zgadywane)\n'
+  if [ "$(cov steps_null)" -gt 0 ]; then
+    printf '                       puste wg ZAOBSERWOWANEGO stanu kroku: %s\n' "$(null_split)"
+    printf '                       (nieuruchomionych: %s z %s - liczone jako zero, długości nikt nie zgaduje)\n' \
+      "$(cov steps_null_notrun)" "$(cov steps_null)"
+  fi
   printf '  powód rundy        : z opisem naprawy: %s z %s\n' "$(cov rounds_fix)" "$ROUNDS_ALL"
   printf '  powód przerwania   : nazwanych: %s, tylko z nazwą bramki: %s, bez komunikatu: %s\n' \
     "$(cov grade_named)" "$(cov grade_place)" "$(cov grade_none)"
@@ -416,10 +448,10 @@ if [ "$DB_OK" -eq 1 ]; then
   # Counts lead the line: the labels carry Polish diacritics and awk pads by
   # bytes, so a column of padded labels would not line up.
   awk -F'\t' '$1=="TASK"{n[$3]++} END{
-    order[1]="czyste"; order[2]="z naprawami"; order[3]="twarde wznowienie"
+    order[1]="czyste"; order[2]="wyjaśnione"; order[3]="twarde wznowienie"
     order[4]="NIEWYJAŚNIONE"; order[5]="w locie"
     desc["czyste"]="jeden bieg, zero rund naprawczych"
-    desc["z naprawami"]="rundy naprawcze, każda z nazwaną przyczyną"
+    desc["wyjaśnione"]="nadprogramowy przebieg z nazwaną przyczyną"
     desc["twarde wznowienie"]="potok trzeba było uruchomić od nowa - więcej niż jeden bieg"
     desc["NIEWYJAŚNIONE"]="jest nadprogramowy przebieg, którego przyczyny NIE DA SIĘ dziś odtworzyć"
     desc["w locie"]="jeszcze trwa, pominięte w rachunku kosztu"
