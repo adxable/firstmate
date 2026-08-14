@@ -537,19 +537,21 @@ test_the_copy_fallback_states_the_reason_it_actually_observed() {
   mkdir -p "$dbdir"
   db="$dbdir/state.sqlite"
   make_db "$db"
-  sqlite3 "$db" "pragma journal_mode=wal;" >/dev/null
   add_run "$db" r1 fm/zadanie-czyste completed ''
   add_step "$db" s1 r1 review completed 600000
-  # The -shm is PRESENT but unreadable, so the direct open fails for a reason that
-  # has nothing to do with a missing sidecar.
-  [ -e "$db-shm" ] || sqlite3 "$db" "select count(*) from runs;" >/dev/null
-  chmod 000 "$db-shm"
+  # A hot rollback journal beside a rollback-mode database: sqlite must replay it
+  # before it may read, which a read-only connection cannot do, so the direct
+  # open fails for a reason that has nothing to do with a missing sidecar. The
+  # journal header magic is what makes sqlite treat the file as hot.
+  printf '\331\325\005\371\040\241\143\327' > "$db-journal"
+  head -c 512 /dev/zero >> "$db-journal"
 
   out=$(run_retro "$home" "$db")
-  chmod 600 "$db-shm" 2>/dev/null || true
 
   assert_contains "$out" '1  czyste' 'the fallback must still produce the report'
   assert_contains "$out" 'odczytane z kopii roboczej' 'reading from a copy must be disclosed'
+  assert_contains "$out" 'readonly database' \
+    "the reason printed must be sqlite's own words about what it refused"
   assert_not_contains "$out" 'bez pliku -shm' \
     'a cause that was not observed must never be printed as the reason'
   assert_not_contains "$out" 'Nic - każdy napotkany rekord' \

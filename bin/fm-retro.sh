@@ -132,6 +132,16 @@ extract() {  # <sqlite-uri-or-path>
     > "$TMP/facts.tsv" 2> "$TMP/dberr"
 }
 
+# Whether the database is in WAL mode, read from the file itself: byte 18 of the
+# sqlite header is the write format version, and 2 means WAL. The -wal sidecar is
+# NOT that answer - a cleanly stopped daemon deletes both sidecars and leaves the
+# database in WAL mode, which is the ordinary shape of a fleet that is not
+# running. A short or unreadable file simply is not WAL here; the direct open
+# below then reports what it really observed.
+db_is_wal() {
+  [ "$(od -An -tu1 -j 18 -N 1 "$DB" 2>/dev/null | tr -d '[:space:]')" = 2 ]
+}
+
 # The journals travel with the database or the copy is not the database. -wal
 # holds committed pages the main file does not have yet, and a hot -journal is
 # what rolls a half-written transaction back - copied without it, those partial
@@ -157,11 +167,12 @@ else
   flat() { printf "replace(replace(coalesce(%s,''), char(9),' '), char(10),' ')" "$1"; }
   ERR_SQL=$(flat error)
   FIX_SQL=$(flat rd.fix_summary)
-  if [ -e "$DB-wal" ] && [ ! -e "$DB-shm" ]; then
+  if [ ! -e "$DB-shm" ] && db_is_wal; then
     # Even under mode=ro, opening a WAL database with no -shm CREATES that
-    # sidecar beside the source. This tool only reads, so that case skips the
-    # direct open entirely rather than leaving a file next to somebody else's
-    # database - the copy below answers it without touching the original.
+    # sidecar beside the source - and on some sqlite builds the -wal with it.
+    # This tool only reads, so that case skips the direct open entirely rather
+    # than leaving files next to somebody else's database - the copy below
+    # answers it without touching the original.
     DB_ERR_RO='tryb WAL bez pliku -shm - otwarcie wprost utworzyłoby ten plik obok cudzej bazy'
   elif extract "file:$DB?mode=ro"; then
     DB_OK=1
