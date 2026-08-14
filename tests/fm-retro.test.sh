@@ -136,7 +136,9 @@ test_a_single_aborted_run_with_a_named_reason_is_classed_as_explained() {
 # A branch whose pipeline was run twice had a second pass by definition, even
 # when both runs completed and no repair round was recorded. Letting it into the
 # clean sample would price that pass at zero AND lift the median - the sum of
-# both runs - that every other number in the report is measured against.
+# both runs - that every other number in the report is measured against. With no
+# record of WHY it ran again, the pass is unreadable history, which is what the
+# headline metric counts, so it must reach that figure and not sit beside it.
 test_a_task_run_twice_is_never_clean_even_when_every_run_completed() {
   local home db out
   home=$(make_home tworuns)
@@ -156,11 +158,17 @@ test_a_task_run_twice_is_never_clean_even_when_every_run_completed() {
   out=$(run_retro "$home" "$db")
 
   assert_contains "$out" '1  czyste' 'only the single-run task may count as clean'
-  assert_contains "$out" '1  twarde wznowienie' 'two runs with no repair round is a hard restart'
+  assert_contains "$out" '1  NIEWYJAŚNIONE' \
+    'a second pass with no record of why it happened is unreadable history'
   assert_contains "$out" 'Mediana czystego przebiegu: 10 min (z 1 czystych zadań).' \
     'the twice-run task must not enter the median sample or inflate it to 20 min'
-  assert_contains "$out" 'ponowny bieg potoku' \
-    'the second pass must carry its excess instead of being priced at zero'
+  assert_contains "$out" 'bez ani jednego zapisu przyczyny: 1' \
+    'the causeless re-run must be disclosed as its own coverage figure'
+  assert_contains "$out" 'dwa-biegi' 'the task must be named in the unexplained list'
+  # 20 min total against a 10 min median: the whole 10 min excess is unexplained,
+  # so the headline figure must carry it rather than report it beside the table.
+  assert_contains "$out" 'Metryka główna: 10 min z tej nadwyżki jest NIEWYJAŚNIONE.' \
+    'the excess of a causeless second pass must land in the headline metric'
   pass 'a task run twice is never clean even when every run completed'
 }
 
@@ -645,13 +653,67 @@ test_the_run_leaves_the_home_and_the_database_untouched() {
   pass 'the run leaves the home and the database untouched'
 }
 
+# The precise half of the read-only promise, on the path almost every run takes.
+# Reading a WAL database DOES write a read-mark into the -shm sidecar, so the
+# claim that survives is the narrow one: the database file and its -wal come out
+# byte-identical. That is what is pinned here, and nothing wider.
+test_a_wal_database_and_its_wal_are_byte_identical_after_a_run() {
+  local home db out dbdir fifo writer n before_db before_wal after_db after_wal
+  home=$(make_home walbytes)
+  dbdir="$home/dbdir"
+  mkdir -p "$dbdir"
+  db="$dbdir/state.sqlite"
+  make_db "$db"
+  sqlite3 "$db" "pragma journal_mode=wal; pragma wal_autocheckpoint=0;" >/dev/null
+  add_run "$db" r1 fm/zadanie-czyste completed ''
+  add_step "$db" s1 r1 review completed 600000
+
+  # A writer that keeps the sidecars open and has advanced the WAL since the last
+  # reader: the shape the live daemon leaves, and the one where the read really
+  # does touch the -shm.
+  fifo="$TMP_ROOT/walbytes.fifo"
+  rm -f "$fifo"
+  mkfifo "$fifo"
+  sqlite3 "$db" < "$fifo" >/dev/null 2>&1 &
+  writer=$!
+  exec 7> "$fifo"
+  printf 'pragma wal_autocheckpoint=0;\ninsert into runs values ("r2","fm/drugie","completed","");\ninsert into step_results values ("s2","r2","review","completed",600000);\n' >&7
+  n=0
+  while { [ ! -s "$db-wal" ] || [ ! -e "$db-shm" ]; } && [ "$n" -lt 200 ]; do
+    n=$((n + 1))
+    sleep 0.05
+  done
+  [ -s "$db-wal" ] && [ -e "$db-shm" ] || fail "the writer never opened the WAL sidecars"
+
+  before_db=$(shasum "$db" | cut -d' ' -f1)
+  before_wal=$(shasum "$db-wal" | cut -d' ' -f1)
+  out=$(run_retro "$home" "$db")
+  after_db=$(shasum "$db" | cut -d' ' -f1)
+  after_wal=$(shasum "$db-wal" | cut -d' ' -f1)
+
+  printf '.quit\n' >&7
+  exec 7>&-
+  wait "$writer" 2>/dev/null || true
+  rm -f "$fifo"
+
+  assert_contains "$out" 'RETROSPEKTYWA POTOKU' 'the report must still have been produced'
+  [ "$before_db" = "$after_db" ] || fail "the retrospective changed the database file itself"
+  [ "$before_wal" = "$after_wal" ] || fail "the retrospective changed the database -wal"
+  pass 'a wal database and its wal are byte-identical after a run'
+}
+
 # Usage must be answerable without a home, a database, or a fleet.
 test_help_needs_no_fleet_state() {
   local out rc=0
   out=$("$RETRO" --help 2>&1) || rc=$?
   expect_code 0 "$rc" 'help'
   assert_contains "$out" 'fm-retro.sh' 'help must name the tool'
-  assert_contains "$out" 'READ-ONLY' 'help must state the read-only contract'
+  # The contract help states must be the true one: what stays untouched, and the
+  # side effect a WAL read really has. A blanket no-locks claim is what this
+  # replaced, so help must not carry it back.
+  assert_contains "$out" 'shared lock' 'help must disclose the lock a WAL read holds'
+  assert_contains "$out" 'byte-identical' 'help must state which files really come out unchanged'
+  assert_not_contains "$out" 'takes no locks' 'help must not restate the blanket no-locks claim'
   assert_not_contains "$out" 'set -u' 'help must stop at the end of the header, not spill into code'
 
   rc=0
@@ -679,6 +741,7 @@ test_the_collapse_figure_counts_dropped_terms_not_comparisons
 test_a_symlinked_status_file_is_refused_and_named
 test_the_unexplained_list_announces_the_entries_it_cut
 test_the_run_leaves_the_home_and_the_database_untouched
+test_a_wal_database_and_its_wal_are_byte_identical_after_a_run
 test_help_needs_no_fleet_state
 
 echo "# all fm-retro tests passed"

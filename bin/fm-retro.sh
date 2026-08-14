@@ -14,11 +14,19 @@
 #                   differently-named gate findings were one cause wearing three
 #                   disguises.
 #
-# READ-ONLY. It opens the no-mistakes database read-only, never writes to the
-# fleet home, never touches a project, and takes no locks. When a read-only open
-# is impossible - a WAL database with no -shm sidecar - it copies the database
-# into its own temp directory and reads the copy, so not even a sidecar is ever
-# created beside the source.
+# WHAT READING COSTS, stated exactly. The fleet home, every project, and the
+# no-mistakes database FILE itself stay untouched: this tool writes to none of
+# them and creates no file beside the database. It is not free of side effects,
+# though, and the difference matters for a tool that must not overstate itself:
+# reading a WAL database writes a read-mark into the shared-memory sidecar
+# (<db>-shm) next to it and holds a shared lock for the length of the read. The
+# database and its -wal come out byte-identical - that part is pinned by a test.
+# A read-mark never blocks the writing daemon, and the sidecar is the database's
+# own scratch space, not a record.
+#
+# When a read-only open is impossible at all - a WAL database with no -shm, or a
+# hot rollback journal - it copies the database into its own temp directory and
+# reads the copy, so that path touches nothing beside the source whatsoever.
 #
 # Sources, all local:
 #   $FM_RETRO_DB (default ~/.no-mistakes/state.sqlite)
@@ -90,17 +98,17 @@ warn() { printf '%s\n' "$1" >> "$WARN"; }
 
 # --- source 1: the no-mistakes database -------------------------------------
 #
-# Opened read-only via the sqlite URI so a retrospective can never mutate or
-# lock the live pipeline database. Tabs and newlines are flattened inside SQL
-# because the extract is tab-separated.
+# Opened read-only via the sqlite URI so a retrospective can never mutate the
+# live pipeline database. It is not lock-free - see the header on the WAL
+# read-mark - but it takes nothing a writer waits on. Tabs and newlines are
+# flattened inside SQL because the extract is tab-separated.
 #
 # Some databases cannot be opened read-only at all - a WAL one whose -shm sidecar
 # is absent, or one left with a hot rollback journal - which would otherwise cost
 # both headline sections. The fallback copies the database and its journals into
-# THIS run's own temp directory and reads the copy, which keeps the promise the
-# header makes: nothing is ever created beside somebody else's database. Whatever
-# the direct open actually reported is carried into the report rather than
-# replaced by a guess at the cause.
+# THIS run's own temp directory and reads the copy, so nothing is created beside
+# somebody else's database. Whatever the direct open actually reported is carried
+# into the report rather than replaced by a guess at the cause.
 # Reading an immutable=1 view of the live file is deliberately NOT the fallback -
 # the daemon writes continuously, and a quietly wrong number is worse than a
 # refusal for a tool whose whole point is that its numbers can be trusted.
@@ -343,9 +351,15 @@ if [ "$DB_OK" -eq 1 ]; then
         # joined the clean sample and lifted the median every excess is measured
         # against, so the one pass this tool exists to price would be priced at
         # zero and would inflate the baseline at the same time.
+        #
+        # It is UNEXPLAINED, not merely restarted: the records hold not one word
+        # about why the pipeline ran again, which is exactly what the headline
+        # metric measures. Anything less would understate the very case it exists
+        # to count.
         if (e == 0 && open_n[task] + 0 == 0 && runs_n[task] + 0 > 1) {
-          e = 1
-          print "EVENT", task, "ponowny bieg potoku", dur
+          e = 1; u = 1
+          rerun_nocause++
+          print "EVENT", task, "niewyjaśnione", dur
         }
         if (open_n[task] + 0 > 0) cls = "w locie"
         else if (e == 0 && runs_n[task] + 0 == 1 && completed_n[task] + 0 > 0) cls = "czyste"
@@ -371,6 +385,7 @@ if [ "$DB_OK" -eq 1 ]; then
       print "COV", "grade_named", grade_n["nazwana"] + 0
       print "COV", "grade_place", grade_n["tylko-miejsce"] + 0
       print "COV", "grade_none", grade_n["brak"] + 0
+      print "COV", "rerun_nocause", rerun_nocause + 0
       for (s in unknown_run_status) print "WARN", "nieznany stan biegu \"" s "\" w " unknown_run_status[s] " rekordach - policzony jako niezakończony"
       for (b in nonfm) print "WARN", "gałąź \"" b "\" nie ma przedrostka fm/, więc tożsamość zadania jest zgadywana"
       if (orphan_rounds + 0 > 0) print "WARN", orphan_rounds " rund naprawczych wskazuje bieg, którego nie ma w tabeli biegów - pominięte"
@@ -428,6 +443,10 @@ if [ "$DB_OK" -eq 1 ]; then
   printf '  powód przerwania   : nazwanych: %s, tylko z nazwą bramki: %s, bez komunikatu: %s\n' \
     "$(cov grade_named)" "$(cov grade_place)" "$(cov grade_none)"
   printf '                       (sama nazwa bramki mówi GDZIE, nie DLACZEGO - liczy się jako niewyjaśnione)\n'
+  if [ "$(cov rerun_nocause)" -gt 0 ]; then
+    printf '  ponowne biegi      : bez ani jednego zapisu przyczyny: %s\n' "$(cov rerun_nocause)"
+    printf '                       (potok poszedł drugi raz i nic nie mówi dlaczego - niewyjaśnione)\n'
+  fi
 else
   printf '  zapisy potoku      : BRAK - klasyfikacji i kosztu NIE LICZĘ\n'
 fi

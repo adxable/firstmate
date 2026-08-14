@@ -11,7 +11,8 @@ metadata:
 # pipeline-retro
 
 Run `bin/fm-retro.sh` in the active home and read its report.
-It is read-only: no locks, no writes, no project access.
+It writes to nothing you own: not the fleet home, not a project, not the no-mistakes database file.
+Reading a WAL database does write a read-mark into the `-shm` sidecar beside it and hold a shared lock while the query runs; the database and its `-wal` come out byte-identical, and the read-mark never blocks the daemon.
 
 The report is already Polish and already phrased as outcomes, so relay it as it stands.
 Do not restate its numbers in your own words and do not add a number it did not print.
