@@ -105,6 +105,37 @@ test_classification_separates_recorded_causes_from_unrecoverable_ones() {
   pass 'classification separates recorded causes from unrecoverable ones'
 }
 
+# A branch whose pipeline was run twice had a second pass by definition, even
+# when both runs completed and no repair round was recorded. Letting it into the
+# clean sample would price that pass at zero AND lift the median - the sum of
+# both runs - that every other number in the report is measured against.
+test_a_task_run_twice_is_never_clean_even_when_every_run_completed() {
+  local home db out
+  home=$(make_home tworuns)
+  db="$home/state.sqlite"
+  make_db "$db"
+
+  # The genuinely clean baseline: one run, 10 minutes.
+  add_run "$db" c1 fm/jeden-bieg completed ''
+  add_step "$db" sc1 c1 review completed 600000
+
+  # Two completed runs of one branch, 10 minutes each, zero repair rounds.
+  add_run "$db" d1 fm/dwa-biegi completed ''
+  add_step "$db" sd1 d1 review completed 600000
+  add_run "$db" d2 fm/dwa-biegi completed ''
+  add_step "$db" sd2 d2 review completed 600000
+
+  out=$(run_retro "$home" "$db")
+
+  assert_contains "$out" '1  czyste' 'only the single-run task may count as clean'
+  assert_contains "$out" '1  twarde wznowienie' 'two runs with no repair round is a hard restart'
+  assert_contains "$out" 'Mediana czystego przebiegu: 10 min (z 1 czystych zadań).' \
+    'the twice-run task must not enter the median sample or inflate it to 20 min'
+  assert_contains "$out" 'ponowny bieg potoku' \
+    'the second pass must carry its excess instead of being priced at zero'
+  pass 'a task run twice is never clean even when every run completed'
+}
+
 # The cost model is a comparison, not a stopwatch: a task is only expensive
 # relative to what a clean pass of this fleet actually costs.
 test_second_pass_cost_is_excess_over_the_median_clean_run() {
@@ -252,6 +283,187 @@ EOF
   pass 'unreadable input is reported instead of silently dropped'
 }
 
+# The status line grammar belongs to upstream (bin/fm-classify-lib.sh), which
+# opens a keyed decision on `blocked` exactly as on `needs-decision` and tolerates
+# leading whitespace. Reading it more strictly drops real rounds from the coverage
+# count and from the recurrence signal without a word.
+test_keyed_blocked_and_indented_rounds_are_read_like_upstream_reads_them() {
+  local home db out
+  home=$(make_home grammar)
+  db="$home/state.sqlite"
+  make_db "$db"
+  add_run "$db" r1 fm/zadanie completed ''
+  add_step "$db" s1 r1 review completed 600000
+
+  cat > "$home/state/zadanie.status" <<'EOF'
+working: started
+blocked [key=zablokowane]: the gate cannot proceed
+resolved [key=zablokowane]: unblocked
+blocked [key=zablokowane]: blocked again by the very same thing
+  needs-decision  [key=dwie-spacje]: indented, two spaces before the key token
+  needs-decision  [key=dwie-spacje]: and the same key a second time
+blocked: this one carries no key at all
+needs-decision: [key=po-dwukropku] the key is on the wrong side of the colon
+EOF
+
+  out=$(run_retro "$home" "$db")
+
+  assert_contains "$out" 'rund z decyzją: 6' \
+    'blocked rounds must be counted as decision rounds, resolved must not'
+  printf '%s\n' "$out" | grep -F 'zablokowane' | grep -F '2 razy' >/dev/null \
+    || fail "a reopened blocked key must surface as a recurrence"$'\n'"--- output ---"$'\n'"$out"
+  printf '%s\n' "$out" | grep -F 'dwie-spacje' | grep -F '2 razy' >/dev/null \
+    || fail "an indented round with extra spacing before the key must keep its key"$'\n'"--- output ---"$'\n'"$out"
+  assert_contains "$out" 'rundy bez klucza   : 1' 'a keyless blocked round must be counted and disclosed'
+  assert_contains "$out" 'klucz zapisany PO dwukropku' \
+    'the malformed key-after-colon shape must stay visible, not be normalised away'
+  pass 'keyed blocked and indented rounds are read like upstream reads them'
+}
+
+# "I cannot read this right now" and "there is nothing recorded" are different
+# facts, and the second must never be printed when the first is true.
+test_a_readable_database_with_no_records_reports_zero_coverage_not_a_failed_read() {
+  local home db out
+  home=$(make_home emptydb)
+  db="$home/state.sqlite"
+  make_db "$db"
+
+  out=$(run_retro "$home" "$db")
+
+  assert_not_contains "$out" 'nie dała się odczytać' \
+    'a database that read perfectly must not be called unreadable'
+  assert_contains "$out" 'BAZA ODCZYTANA POPRAWNIE' 'an empty record set must be named as zero coverage'
+  assert_contains "$out" 'biegów: 0' 'zero coverage is a number the report may print'
+  assert_not_contains "$out" 'Mediana czystego przebiegu' \
+    'no median may be computed from an empty record set'
+  pass 'a readable database with no records reports zero coverage not a failed read'
+}
+
+# A WAL database cannot be opened read-only without its -shm sidecar, which is
+# exactly the state a stopped pipeline daemon leaves behind. Refusing there would
+# cost both headline sections, and creating the sidecar would write beside
+# somebody else's database - so the tool reads its own copy instead.
+test_a_wal_database_is_still_read_when_no_sidecar_allows_a_read_only_open() {
+  local home db out dbdir before after
+  home=$(make_home walstopped)
+  dbdir="$home/dbdir"
+  mkdir -p "$dbdir"
+  db="$dbdir/state.sqlite"
+  make_db "$db"
+  sqlite3 "$db" "pragma journal_mode=wal;" >/dev/null
+  add_run "$db" r1 fm/zadanie-czyste completed ''
+  add_step "$db" s1 r1 review completed 600000
+  # The daemon-stopped shape: the database stays in WAL mode, the sidecars are
+  # gone, and a direct read-only open therefore cannot succeed.
+  rm -f "$db-wal" "$db-shm"
+
+  before=$(find "$dbdir" -mindepth 1 -maxdepth 1 | LC_ALL=C sort)
+  out=$(run_retro "$home" "$db")
+  after=$(find "$dbdir" -mindepth 1 -maxdepth 1 | LC_ALL=C sort)
+
+  assert_contains "$out" '1  czyste' 'classification must survive a WAL database with no sidecars'
+  assert_not_contains "$out" 'nie dała się odczytać' 'the copy fallback must not report a failed read'
+  assert_contains "$out" 'odczytane z kopii roboczej' 'reading from a copy must be disclosed'
+  [ "$before" = "$after" ] || fail "the read created files beside the source database: $after"
+  pass 'a WAL database is still read when no sidecar allows a read-only open'
+}
+
+# The other half of the same boundary: a live pipeline holds an open WAL writer,
+# leaving both sidecars in place. The direct read-only open works there, and must
+# be taken - reading a copy would be needless work and a staler snapshot.
+test_a_wal_database_with_a_live_writer_is_read_directly() {
+  local home db out dbdir fifo before after
+  home=$(make_home walrunning)
+  dbdir="$home/dbdir"
+  mkdir -p "$dbdir"
+  db="$dbdir/state.sqlite"
+  make_db "$db"
+  sqlite3 "$db" "pragma journal_mode=wal;" >/dev/null
+  add_run "$db" r1 fm/zadanie-czyste completed ''
+  add_step "$db" s1 r1 review completed 600000
+
+  # A writer holding an open transaction is what a running daemon looks like on
+  # disk: both sidecars present and the write lock taken.
+  fifo="$TMP_ROOT/walrunning.fifo"
+  rm -f "$fifo"
+  mkfifo "$fifo"
+  sqlite3 "$db" < "$fifo" >/dev/null 2>&1 &
+  local writer=$! waited=0
+  exec 9> "$fifo"
+  printf 'begin immediate;\ninsert into runs values ("r2","fm/w-locie","running","");\n' >&9
+
+  # The writer opens the sidecars asynchronously, and the tool keys on exactly
+  # that on-disk state, so the fixture must be in it before the run - otherwise
+  # the test races the setup rather than pinning the behavior.
+  while { [ ! -e "$db-wal" ] || [ ! -e "$db-shm" ]; } && [ "$waited" -lt 200 ]; do
+    waited=$((waited + 1))
+    sleep 0.05
+  done
+  [ -e "$db-wal" ] && [ -e "$db-shm" ] || fail "the writer never opened the WAL sidecars"
+
+  before=$(find "$dbdir" -mindepth 1 -maxdepth 1 | LC_ALL=C sort)
+  out=$(run_retro "$home" "$db")
+  after=$(find "$dbdir" -mindepth 1 -maxdepth 1 | LC_ALL=C sort)
+
+  printf 'rollback;\n.quit\n' >&9
+  exec 9>&-
+  wait "$writer" 2>/dev/null || true
+  rm -f "$fifo"
+
+  assert_contains "$out" '1  czyste' 'a live writer must not block the retrospective'
+  assert_not_contains "$out" 'nie dała się odczytać' 'a WAL database with its sidecars must read directly'
+  assert_not_contains "$out" 'odczytane z kopii roboczej' \
+    'the copy fallback must not be taken when a direct read-only open works'
+  [ "$before" = "$after" ] || fail "the read changed the files beside the source database: $after"
+  pass 'a WAL database with a live writer is read directly'
+}
+
+# A status file that is itself a symlink may point anywhere outside the state
+# directory, so it is refused before any read and said out loud.
+test_a_symlinked_status_file_is_refused_and_named() {
+  local home db out
+  home=$(make_home symlink)
+  db="$home/state.sqlite"
+  make_db "$db"
+  add_run "$db" r1 fm/zadanie completed ''
+  add_step "$db" s1 r1 review completed 600000
+
+  printf 'needs-decision [key=obcy-klucz]: a round from outside the state directory\n' \
+    > "$TMP_ROOT/elsewhere.status"
+  ln -s "$TMP_ROOT/elsewhere.status" "$home/state/podstawione.status"
+
+  out=$(run_retro "$home" "$db")
+
+  assert_contains "$out" 'dzienniki statusu  : plików: 0' 'a symlinked status file must not be read'
+  assert_not_contains "$out" 'obcy-klucz' 'no line from outside the state directory may reach the report'
+  assert_contains "$out" 'dziennik statusu jest dowiązaniem' 'the refusal must be reported, not silent'
+  pass 'a symlinked status file is refused and named'
+}
+
+# Every bounded list in the report announces what it cut: ten entries read as the
+# whole set unless the report says otherwise.
+test_the_unexplained_list_announces_the_entries_it_cut() {
+  local home db out i
+  home=$(make_home truncation)
+  db="$home/state.sqlite"
+  make_db "$db"
+  add_run "$db" c1 fm/czysty completed ''
+  add_step "$db" sc1 c1 review completed 600000
+
+  # Thirteen unexplained tasks, each a bare exit status: the list shows ten.
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
+    add_run "$db" "b$i" "fm/bez-przyczyny-$i" failed 'step review failed: agent review: claude exited: exit status 1: '
+    add_step "$db" "sb$i" "b$i" review failed $((1800000 + i * 60000))
+  done
+
+  out=$(run_retro "$home" "$db")
+
+  assert_contains "$out" '13  NIEWYJAŚNIONE' 'every unexplained task must be counted'
+  assert_contains "$out" 'pominiętych tańszych zadań niewyjaśnionych: 3' \
+    'a truncated list must state how many entries it cut'
+  pass 'the unexplained list announces the entries it cut'
+}
+
 # The tool is a retrospective: reading it must never change the fleet it reads.
 test_the_run_leaves_the_home_and_the_database_untouched() {
   local home db out before after
@@ -279,6 +491,7 @@ test_help_needs_no_fleet_state() {
   expect_code 0 "$rc" 'help'
   assert_contains "$out" 'fm-retro.sh' 'help must name the tool'
   assert_contains "$out" 'READ-ONLY' 'help must state the read-only contract'
+  assert_not_contains "$out" 'set -u' 'help must stop at the end of the header, not spill into code'
 
   rc=0
   "$RETRO" --nonsense >/dev/null 2>&1 || rc=$?
@@ -287,11 +500,18 @@ test_help_needs_no_fleet_state() {
 }
 
 test_classification_separates_recorded_causes_from_unrecoverable_ones
+test_a_task_run_twice_is_never_clean_even_when_every_run_completed
 test_second_pass_cost_is_excess_over_the_median_clean_run
 test_a_task_below_the_median_contributes_no_negative_cost
 test_one_cause_is_found_across_three_differently_named_decision_keys
 test_self_reference_and_shared_key_naming_are_not_reported_as_recurrence
 test_unreadable_input_is_reported_instead_of_silently_dropped
+test_keyed_blocked_and_indented_rounds_are_read_like_upstream_reads_them
+test_a_readable_database_with_no_records_reports_zero_coverage_not_a_failed_read
+test_a_wal_database_is_still_read_when_no_sidecar_allows_a_read_only_open
+test_a_wal_database_with_a_live_writer_is_read_directly
+test_a_symlinked_status_file_is_refused_and_named
+test_the_unexplained_list_announces_the_entries_it_cut
 test_the_run_leaves_the_home_and_the_database_untouched
 test_help_needs_no_fleet_state
 

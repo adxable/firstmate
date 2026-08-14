@@ -15,15 +15,19 @@
 #                   disguises.
 #
 # READ-ONLY. It opens the no-mistakes database read-only, never writes to the
-# fleet home, never touches a project, and takes no locks.
+# fleet home, never touches a project, and takes no locks. When a read-only open
+# is impossible - a WAL database with no -shm sidecar - it copies the database
+# into its own temp directory and reads the copy, so not even a sidecar is ever
+# created beside the source.
 #
 # Sources, all local:
 #   $FM_RETRO_DB (default ~/.no-mistakes/state.sqlite)
 #                        runs, step_results, step_rounds - the only source of
 #                        pass and duration data.
 #   $FM_HOME/state/<id>.status
-#                        keyed `needs-decision [key=...]` rounds. Teardown deletes
-#                        these, so they cover live tasks only.
+#                        keyed `needs-decision [key=...]` and `blocked [key=...]`
+#                        rounds. Teardown deletes these, so they cover live tasks
+#                        only.
 #   $FM_HOME/data/<id>/decision-<key>.md
 #                        firstmate's own decision records. These SURVIVE teardown
 #                        and carry the key in the filename, which is what makes
@@ -48,6 +52,7 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
@@ -60,10 +65,14 @@ DB="${FM_RETRO_DB:-$HOME/.no-mistakes/state.sqlite}"
 MIN_KEYS=2
 MAX_SPREAD=3
 TOP_PER_TASK=5
+# Every bounded list in the report states how many entries it cut.
+UNEXP_TOP=10
 TAB_CH=$(printf '\t')
 
+# The header comment IS the usage text, so the slice ends where the comment block
+# ends rather than at a line number that drifts on every header edit.
 usage() {
-  sed -n '2,49p' "$SCRIPT_DIR/fm-retro.sh" | sed 's/^# \{0,1\}//'
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$SELF"
 }
 
 case "${1:-}" in
@@ -84,9 +93,45 @@ warn() { printf '%s\n' "$1" >> "$WARN"; }
 # Opened read-only via the sqlite URI so a retrospective can never mutate or
 # lock the live pipeline database. Tabs and newlines are flattened inside SQL
 # because the extract is tab-separated.
+#
+# A WAL database whose -shm sidecar is absent cannot be opened read-only at all,
+# so a cleanly stopped pipeline daemon would otherwise cost both headline
+# sections. The fallback copies the database and whatever sidecars exist into
+# THIS run's own temp directory and reads the copy, which keeps the promise the
+# header makes: no -wal or -shm is ever created beside somebody else's database.
+# Reading an immutable=1 view of the live file is deliberately NOT the fallback -
+# the daemon writes continuously, and a quietly wrong number is worse than a
+# refusal for a tool whose whole point is that its numbers can be trusted.
 
 : > "$TMP/facts.tsv"
 DB_OK=0
+DB_EMPTY=0
+DB_VIA_COPY=0
+
+# The busy timeout is what keeps the direct read on the live database: a daemon
+# holding an open write transaction makes a read-only open fail with "database is
+# locked" often enough to matter, and waiting it out is strictly better than
+# falling back to copying a file somebody is writing to underneath us.
+extract() {  # <sqlite-uri-or-path>
+  sqlite3 -cmd '.timeout 3000' -separator "$TAB_CH" "$1" \
+    "select 'R', id, branch, status, $ERR_SQL from runs;
+     select 'D', sr.run_id, sr.step_name, rd.trigger_type, coalesce(rd.duration_ms,0), $FIX_SQL
+       from step_rounds rd join step_results sr on sr.id = rd.step_result_id;
+     select 'S', run_id, step_name, status, coalesce(duration_ms,-1) from step_results;" \
+    > "$TMP/facts.tsv" 2> "$TMP/dberr"
+}
+
+copy_db() {
+  mkdir -p "$TMP/db" || return 1
+  cp "$DB" "$TMP/db/state.sqlite" || return 1
+  for sfx in -wal -shm; do
+    if [ -r "$DB$sfx" ]; then
+      cp "$DB$sfx" "$TMP/db/state.sqlite$sfx" || return 1
+    fi
+  done
+  return 0
+}
+
 if ! command -v sqlite3 >/dev/null 2>&1; then
   warn 'sqlite3 nie jest zainstalowany - bez niego nie ma klasyfikacji ani kosztu.'
 elif [ ! -r "$DB" ]; then
@@ -95,16 +140,32 @@ else
   flat() { printf "replace(replace(coalesce(%s,''), char(9),' '), char(10),' ')" "$1"; }
   ERR_SQL=$(flat error)
   FIX_SQL=$(flat rd.fix_summary)
-  if sqlite3 -separator "$TAB_CH" "file:$DB?mode=ro" \
-       "select 'R', id, branch, status, $ERR_SQL from runs;
-        select 'D', sr.run_id, sr.step_name, rd.trigger_type, coalesce(rd.duration_ms,0), $FIX_SQL
-          from step_rounds rd join step_results sr on sr.id = rd.step_result_id;
-        select 'S', run_id, step_name, status, coalesce(duration_ms,-1) from step_results;" \
-       > "$TMP/facts.tsv" 2> "$TMP/dberr" && [ -s "$TMP/facts.tsv" ]; then
+  DB_ERR_RO=''
+  if [ -e "$DB-wal" ] && [ ! -e "$DB-shm" ]; then
+    # Even under mode=ro, opening a WAL database with no -shm CREATES that
+    # sidecar beside the source. This tool only reads, so that case skips the
+    # direct open entirely rather than leaving a file next to somebody else's
+    # database - the copy below answers it without touching the original.
+    DB_ERR_RO='tryb WAL bez pliku -shm - otwarcie wprost utworzyłoby ten plik obok cudzej bazy'
+  elif extract "file:$DB?mode=ro"; then
     DB_OK=1
   else
-    warn "baza no-mistakes nie dała się odczytać: $(tr '\n' ' ' < "$TMP/dberr")"
+    DB_ERR_RO=$(tr '\n' ' ' < "$TMP/dberr")
   fi
+  if [ "$DB_OK" -eq 0 ]; then
+    if ! copy_db 2>/dev/null; then
+      warn "baza no-mistakes nie dała się odczytać ($DB_ERR_RO) i nie udało się zrobić jej kopii do odczytu."
+    elif extract "$TMP/db/state.sqlite"; then
+      DB_OK=1
+      DB_VIA_COPY=1
+    else
+      warn "baza no-mistakes nie dała się odczytać ani wprost ($DB_ERR_RO), ani z kopii: $(tr '\n' ' ' < "$TMP/dberr")"
+    fi
+  fi
+  # A readable database that simply holds no pipeline records is ZERO COVERAGE,
+  # not an unreadable source. Saying "I cannot read this" about a file that read
+  # perfectly is the one lie this tool must never tell.
+  [ "$DB_OK" -eq 1 ] && [ ! -s "$TMP/facts.tsv" ] && DB_EMPTY=1
 fi
 
 # --- source 2 and 3: keyed decision rounds ----------------------------------
@@ -121,8 +182,15 @@ STATUS_LINES=0
 STATUS_UNKEYED=0
 STATUS_MALFORMED=0
 
+# A record file that is itself a symlink may point anywhere outside the directory
+# being enumerated, so it is rejected before any read and named in the report -
+# the same one-builtin boundary bin/fm-classify-lib.sh draws around this glob.
 for f in "$DATA"/*/decision-*.md; do
   [ -f "$f" ] || continue
+  if [ -L "$f" ]; then
+    warn "zapis decyzji jest dowiązaniem, więc go nie czytam: $f"
+    continue
+  fi
   task=$(basename "$(dirname "$f")")
   key=$(basename "$f" .md)
   key=${key#decision-}
@@ -132,23 +200,46 @@ done
 
 for f in "$STATE"/*.status; do
   [ -f "$f" ] || continue
+  if [ -L "$f" ]; then
+    warn "dziennik statusu jest dowiązaniem, więc go nie czytam: $f"
+    continue
+  fi
   task=$(basename "$f" .status)
   STATUS_FILES=$((STATUS_FILES + 1))
   while IFS= read -r line || [ -n "$line" ]; do
-    case $line in
-      needs-decision*) ;;
+    # The line grammar is upstream's, not this tool's: bin/fm-classify-lib.sh
+    # takes the verb from what stands before the first colon with the key token
+    # removed, tolerates leading whitespace, and opens a keyed decision on
+    # `blocked` exactly as on `needs-decision`. Reading it more strictly than its
+    # owner does would drop real rounds without a word.
+    prefix=${line%%:*}
+    verb=${prefix%%\[key=*}
+    verb=${verb#"${verb%%[![:space:]]*}"}
+    verb=${verb%"${verb##*[![:space:]]}"}
+    case $verb in
+      needs-decision|blocked) ;;
       *) continue ;;
     esac
     STATUS_LINES=$((STATUS_LINES + 1))
-    key=$(printf '%s\n' "$line" | sed -n 's/^needs-decision \[key=\([^]]*\)\]:.*$/\1/p')
+    key=''
+    case $prefix in
+      *\[key=*\]*)
+        key=${prefix#*\[key=}
+        key=${key%%\]*}
+        case $key in
+          ''|*[!A-Za-z0-9._-]*) key='' ;;
+        esac
+        ;;
+    esac
     if [ -n "$key" ]; then
       printf '%s\t%s\tdziennik-statusu\t%s\n' "$task" "$key" "$line" >> "$TMP/decisions.tsv"
       continue
     fi
     # Defensive: the key belongs BEFORE the colon. A key after the colon is the
-    # known malformed shape and is reported rather than folded into one bucket.
+    # known malformed shape and stays VISIBLE rather than being normalised away
+    # into the unkeyed bucket.
     case $line in
-      needs-decision:*\[key=*)
+      *:*\[key=*)
         STATUS_MALFORMED=$((STATUS_MALFORMED + 1))
         warn "$task: klucz zapisany PO dwukropku, więc runda nie ma czytelnej tożsamości: $(printf '%.90s' "$line")"
         ;;
@@ -232,8 +323,18 @@ if [ "$DB_OK" -eq 1 ]; then
         dur = 0
         for (run in run_task) if (run_task[run] == task) dur += run_dur[run] + 0
         e = events_n[task] + 0; u = unexplained_n[task] + 0
+        # More than one pipeline run IS a second pass, even when every run ended
+        # completed and nothing failed. Without an event of its own such a task
+        # would carry zero cost while its summed duration - the sum of BOTH runs -
+        # joined the clean sample and lifted the median every excess is measured
+        # against, so the one pass this tool exists to price would be priced at
+        # zero and would inflate the baseline at the same time.
+        if (e == 0 && open_n[task] + 0 == 0 && runs_n[task] + 0 > 1) {
+          e = 1
+          print "EVENT", task, "ponowny bieg potoku", dur
+        }
         if (open_n[task] + 0 > 0) cls = "w locie"
-        else if (e == 0 && completed_n[task] + 0 > 0) cls = "czyste"
+        else if (e == 0 && runs_n[task] + 0 == 1 && completed_n[task] + 0 > 0) cls = "czyste"
         else if (u > 0) cls = "NIEWYJAŚNIONE"
         else if (runs_n[task] + 0 > 1) cls = "twarde wznowienie"
         else cls = "z naprawami"
@@ -279,6 +380,14 @@ printf '== POKRYCIE DANYCH ==\n'
 if [ "$DB_OK" -eq 1 ]; then
   ROUNDS_ALL=$(( $(cov rounds_fix) + $(cov rounds_nofix) ))
   printf '  zapisy potoku      : %s\n' "$DB"
+  if [ "$DB_VIA_COPY" -eq 1 ]; then
+    printf '                       (odczytane z kopii roboczej - bazy w trybie WAL bez pliku -shm\n'
+    printf '                        nie da się otworzyć tylko do odczytu; oryginał nietknięty)\n'
+  fi
+  if [ "$DB_EMPTY" -eq 1 ]; then
+    printf '                       BAZA ODCZYTANA POPRAWNIE, ale nie ma w niej ani jednego zapisu\n'
+    printf '                       potoku - to zerowe pokrycie, nie błąd odczytu.\n'
+  fi
   printf '                       biegów: %s, kroków zmierzonych: %s, rund naprawczych: %s\n' \
     "$(cov runs)" "$(cov steps_set)" "$ROUNDS_ALL"
   printf '  czas kroku         : zmierzonych: %s, pustych: %s\n' "$(cov steps_set)" "$(cov steps_null)"
@@ -311,18 +420,25 @@ if [ "$DB_OK" -eq 1 ]; then
     order[4]="NIEWYJAŚNIONE"; order[5]="w locie"
     desc["czyste"]="jeden bieg, zero rund naprawczych"
     desc["z naprawami"]="rundy naprawcze, każda z nazwaną przyczyną"
-    desc["twarde wznowienie"]="potok trzeba było uruchomić od nowa, przyczyna nazwana"
+    desc["twarde wznowienie"]="potok trzeba było uruchomić od nowa - więcej niż jeden bieg"
     desc["NIEWYJAŚNIONE"]="jest nadprogramowy przebieg, którego przyczyny NIE DA SIĘ dziś odtworzyć"
     desc["w locie"]="jeszcze trwa, pominięte w rachunku kosztu"
     for (i=1;i<=5;i++) { k=order[i]; printf "  %4d  %s - %s\n", n[k]+0, k, desc[k]; tot+=n[k]+0 }
     printf "  %4d  razem\n", tot
   }' "$TMP/model.tsv"
   awk -F'\t' '$1=="TASK" && $3=="NIEWYJAŚNIONE"{printf "%d\t%s\t%d\t%d\n", $7, $2, $5, $6}' "$TMP/model.tsv" \
-    | sort -rn | head -10 > "$TMP/unexplained.tsv"
+    | sort -rn > "$TMP/unexplained-all.tsv"
+  UNEXP_ALL=$(wc -l < "$TMP/unexplained-all.tsv" | tr -d ' ')
+  head -"$UNEXP_TOP" "$TMP/unexplained-all.tsv" > "$TMP/unexplained.tsv"
   if [ -s "$TMP/unexplained.tsv" ]; then
     printf '\n  Zadania niewyjaśnione, od najdroższego:\n'
     awk -F'\t' '{printf "    %5d min  %s  (zdarzeń: %d, w tym bez odtwarzalnej przyczyny: %d)\n", ($1+30000)/60000, $2, $3, $4}' \
       "$TMP/unexplained.tsv"
+    # A bounded list that hides its own truncation reads as complete coverage
+    # when it is not: the reader takes the ten for the whole set.
+    if [ "$UNEXP_ALL" -gt "$UNEXP_TOP" ]; then
+      printf '    ... pominiętych tańszych zadań niewyjaśnionych: %s\n' "$((UNEXP_ALL - UNEXP_TOP))"
+    fi
   fi
 else
   printf '  (pominięta - brak zapisów potoku)\n'
@@ -463,7 +579,12 @@ else
       for (i = 1; i <= nk; i++)
         for (j = 1; j <= nk; j++)
           if (i != j && ktask[i] == ktask[j] && kterm[i] != kterm[j] &&
-              index(kterm[j], kterm[i]) > 0 && kn[j] >= kn[i]) { drop[i] = 1; dup++ }
+              index(kterm[j], kterm[i]) > 0 && kn[j] >= kn[i]) {
+            # Once per DROPPED TERM, not once per (i,j) pair: a candidate
+            # swallowed by two longer supersets is still one collapse.
+            if (!(i in drop)) dup++
+            drop[i] = 1
+          }
       for (i = 1; i <= nk; i++)
         if (!(i in drop)) printf "%d\t%s\t%s\t%s\n", kn[i], ktask[i], kterm[i], kl[i]
       printf "%d\t__VOCAB__\t\t\n", vocab + 0
