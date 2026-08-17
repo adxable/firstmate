@@ -286,8 +286,279 @@ test_uncontested_spawn_is_unaffected() {
   pass "an uncontested spawn is unaffected by the ownership guard"
 }
 
+# --- herdr: the refusal closes nothing, and says so --------------------------
+#
+# The pool is the worktree provider for herdr too, and only tmux's pane
+# termination has been shown to leave an acquired worktree alone, so the
+# ownership refusal must close no herdr endpoint - including on the DEFAULT
+# projected layout, whose projection-abort cleanup would otherwise close the
+# same pane from the exit trap. The single dimension under test is whether a
+# `pane close` reaches the herdr CLI, so every scene below reads the same fake
+# CLI log, and the last scene is a refusal that DOES close, which is what makes
+# the "closed nothing" assertions capable of failing.
+#
+# The fake herdr CLI keeps its workspace/tab/pane inventory in a JSON state file
+# and answers the reads bin/backends/herdr.sh makes, following the stateful
+# fake in tests/fm-backend-herdr.test.sh. No real herdr is started here.
+make_herdr_fakebin() {  # <dir> <state-file>
+  local dir=$1 state=$2 fakebin
+  fakebin=$(fm_fakebin "$dir")
+  printf '{"next":10,"workspaces":[{"workspace_id":"w1","label":"%s","focused":true,"active_tab_id":"w1:t1"}],"tabs":[{"tab_id":"w1:t1","label":"captain","workspace_id":"w1","pane_id":"w1:p1","focused":true}]}\n' \
+    firstmate > "$state"
+  cat > "$fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+STATE=${FM_FAKE_HERDR_STATE:?}
+LOG=${FM_FAKE_HERDR_LOG:?}
+printf '%s\n' "$*" >> "$LOG"
+
+jq_state() { jq "$@" "$STATE"; }
+save() { local tmp="$STATE.tmp.$$"; cat > "$tmp" && mv "$tmp" "$STATE"; }
+
+ws=""; label=""; prev=""
+for a in "$@"; do
+  case "$prev" in
+    --workspace) ws=$a ;;
+    --label) label=$a ;;
+  esac
+  prev=$a
+done
+
+case "${1:-} ${2:-}" in
+  "status --json")
+    printf '{"client":{"version":"0.8.0","protocol":19},"server":{"running":true}}\n'
+    ;;
+  "session list")
+    printf '{"sessions":[{"name":"%s","running":true,"socket_path":"%s"}]}\n' \
+      "${HERDR_SESSION:-default}" "${FM_FAKE_HERDR_SOCKET:?}"
+    ;;
+  "workspace list")
+    jq_state '{result:{workspaces:.workspaces}}'
+    ;;
+  "workspace create")
+    n=$(jq_state -r '.next'); wsid="w$n"; dn=$((n + 1))
+    jq_state --arg wsid "$wsid" --arg wlabel "$label" \
+      --arg tabid "w$n:t$dn" --arg paneid "w$n:p$dn" \
+      '.workspaces += [{workspace_id:$wsid, label:$wlabel, focused:false, active_tab_id:$tabid}]
+       | .tabs += [{tab_id:$tabid, label:"1", workspace_id:$wsid, pane_id:$paneid, focused:false}]
+       | .next = (.next + 2)' | save
+    printf '{"result":{"workspace":{"workspace_id":"%s","label":"%s"},"tab":{"tab_id":"w%s:t%s"},"root_pane":{"pane_id":"w%s:p%s"}}}\n' \
+      "$wsid" "$label" "$n" "$dn" "$n" "$dn"
+    ;;
+  "workspace move")
+    printf '{"result":{}}\n'
+    ;;
+  "tab list")
+    jq_state --arg w "$ws" '{result:{tabs:[.tabs[]|select(.workspace_id==$w)]}}'
+    ;;
+  "tab create")
+    n=$(jq_state -r '.next'); tabid="$ws:t$n"; paneid="$ws:p$n"
+    jq_state --arg w "$ws" --arg wlabel "$label" --arg tabid "$tabid" --arg paneid "$paneid" \
+      '.tabs += [{tab_id:$tabid, label:$wlabel, workspace_id:$w, pane_id:$paneid, focused:false}]
+       | .next = (.next + 1)' | save
+    printf '{"result":{"tab":{"tab_id":"%s"},"root_pane":{"pane_id":"%s"}}}\n' "$tabid" "$paneid"
+    ;;
+  "tab get")
+    jq_state --arg t "${3:-}" '{result:{tab:(.tabs[]|select(.tab_id==$t)|{tab_id, workspace_id})}}'
+    ;;
+  "tab focus")
+    printf '{"result":{}}\n'
+    ;;
+  "tab close")
+    jq_state --arg t "${3:-}" '.tabs |= [.[]|select(.tab_id != $t)]' | save
+    ;;
+  "pane list")
+    jq_state --arg w "$ws" '{result:{panes:[.tabs[]|select(.workspace_id==$w)|{pane_id, tab_id}]}}'
+    ;;
+  "pane get")
+    pane=${3:-}
+    if jq_state -e --arg p "$pane" '[.tabs[]|select(.pane_id==$p)] | length == 1' >/dev/null; then
+      jq_state --arg p "$pane" --arg cwd "${FM_FAKE_PANE_PATH:-}" \
+        '(.tabs[]|select(.pane_id==$p)) as $t
+         | {result:{pane:{pane_id:$t.pane_id, tab_id:$t.tab_id, workspace_id:$t.workspace_id, foreground_cwd:$cwd}}}'
+    else
+      # Real herdr answers a closed pane with this business-logic error body and
+      # a nonzero status; both are load-bearing here, one for the pool-safety
+      # instrumentation and one for the endpoint-existence probe.
+      printf '{"error":{"code":"pane_not_found","message":"pane %s not found"}}\n' "$pane"
+      exit 1
+    fi
+    ;;
+  "pane close")
+    jq_state --arg p "${3:-}" '.tabs |= [.[]|select(.pane_id != $p)]' | save
+    ;;
+  "pane run"|"pane send-text")
+    printf '%s\n' "${4:-}" >> "${FM_FAKE_SENDLOG:?}"
+    ;;
+  "agent get")
+    printf '{"error":{"code":"agent_not_found","message":"no agent"}}\n'
+    ;;
+  *) : ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/herdr"
+  fm_fake_exit0 "$fakebin" treehouse
+  printf '%s\n' "$fakebin"
+}
+
+# make_herdr_case <name> <new-id> <holder-id> <projection: on|off>
+# Builds a home on backend=herdr whose <holder-id> records the shared worktree
+# on a herdr endpoint the fake reports as present.
+make_herdr_case() {
+  local name=$1 id=$2 holder=$3 projection=$4 case_dir home proj wt fakebin state
+  case_dir="$TMP_ROOT/$name"
+  home="$case_dir/home"
+  proj="$case_dir/project"
+  wt="$case_dir/wt"
+  state="$case_dir/herdr-state.json"
+  mkdir -p "$case_dir"
+  fakebin=$(make_herdr_fakebin "$case_dir/fake" "$state")
+  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
+  printf 'codex\n' > "$home/config/crew-harness"
+  printf 'herdr\n' > "$home/config/backend"
+  [ "$projection" = on ] || printf 'off\n' > "$home/config/herdr-presentation-spaces"
+  fm_git_worktree "$proj" "$wt" "fm/$holder"
+  mkdir -p "$home/data/$id"
+  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  touch "$home/state/.last-watcher-beat"
+  # The holder's endpoint is a pane the fake knows about, so the guard's
+  # existence probe proves ownership rather than guessing it.
+  jq '.tabs += [{tab_id:"w1:t9", label:"holder", workspace_id:"w1", pane_id:"w1:p9", focused:false}]' \
+    "$state" > "$state.seed" && mv "$state.seed" "$state"
+  fm_write_meta "$home/state/$holder.meta" \
+    "window=fmtest:w1:p9" \
+    "endpoint_task_id=$holder" \
+    "backend=herdr" \
+    "worktree=$wt" \
+    "project=$proj" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off"
+  printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$case_dir/sendlog|$state|$case_dir/herdr.log"
+}
+
+read_herdr_record() {
+  IFS='|' read -r _ HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR SENDLOG HERDR_STATE HERDR_LOG <<EOF
+$1
+EOF
+}
+
+# run_herdr_spawn <id> <pane-cwd>: spawn <id> on the fake herdr, with the pane
+# settling into <pane-cwd>.
+run_herdr_spawn() {
+  local id=$1 pane_path=$2
+  FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_SPAWN_NO_GUARD=1 TMUX='' HERDR_SESSION=fmtest \
+    FM_FAKE_PANE_PATH="$pane_path" FM_FAKE_HERDR_STATE="$HERDR_STATE" \
+    FM_FAKE_HERDR_LOG="$HERDR_LOG" FM_FAKE_SENDLOG="$SENDLOG" \
+    FM_FAKE_HERDR_SOCKET="$HOME_DIR/herdr.sock" \
+    PATH="$FAKEBIN_DIR:$PATH" \
+    "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+}
+
+# herdr_task_pane <output>: the pane id this spawn's own endpoint resolved to,
+# read from the message that names it, so both sides of the close dimension are
+# judged on the same exact pane rather than on any close at all - the seeded
+# default tab is closed during every projection create.
+herdr_task_pane() {
+  printf '%s\n' "$1" \
+    | sed -n 's/.*[Ii]nspect target fmtest:\([^ ]*\).*/\1/p;s/.*leaving the herdr endpoint fmtest:\([^ ]*\) open.*/\1/p' \
+    | head -1
+}
+
+herdr_pane_was_closed() {  # <pane-id>
+  grep -Fq "pane close $1 " "$HERDR_LOG"
+}
+
+herdr_pane_still_present() {  # <pane-id>
+  jq -e --arg p "$1" '[.tabs[] | select(.pane_id == $p)] | length == 1' "$HERDR_STATE" >/dev/null
+}
+
+assert_herdr_refusal_left_the_endpoint() {  # <output> <id> <holder> <label>
+  local out=$1 id=$2 holder=$3 label=$4 pane
+  assert_contains "$out" "$holder" "$label: refusal did not name the owning task"
+  assert_contains "$out" "$WT_DIR" "$label: refusal did not name the contested worktree"
+  assert_contains "$out" "leaving the herdr endpoint" "$label: refusal did not report the endpoint it left open"
+  assert_contains "$out" "Close " "$label: refusal did not say what the operator must close by hand"
+  assert_contains "$out" "re-run of $id" "$label: refusal did not warn that a re-run refuses while the endpoint exists"
+  assert_absent "$HOME_DIR/state/$id.meta" "$label: refused spawn still recorded task metadata"
+  pane=$(herdr_task_pane "$out")
+  [ -n "$pane" ] || fail "$label: could not read the endpoint pane out of the refusal"
+  ! herdr_pane_was_closed "$pane" || fail "$label: the refusal closed its herdr pane $pane"
+  herdr_pane_still_present "$pane" || fail "$label: the herdr pane $pane is gone from the session"
+}
+
+# The default layout: projection ON, so the exit trap's projection-abort
+# cleanup is armed and would close the very pane sitting in the contested
+# worktree.
+test_herdr_projected_refusal_closes_nothing() {
+  local rec id holder out status
+  id=collide-herdr-k7
+  holder=collide-herdr-holder-k8
+  rec=$(make_herdr_case collide-herdr-projected "$id" "$holder" on)
+  read_herdr_record "$rec"
+
+  out=$(run_herdr_spawn "$id" "$WT_DIR")
+  status=$?
+
+  expect_code 1 "$status" "projected herdr spawn onto a live task's worktree should refuse"
+  assert_herdr_refusal_left_the_endpoint "$out" "$id" "$holder" "projected herdr"
+  pass "the refusal on the default projected herdr layout closes no pane and reports what it left open"
+}
+
+# The same refusal without projection, where nothing but this guard could have
+# closed the pane.
+test_herdr_flat_refusal_closes_nothing() {
+  local rec id holder out status
+  id=collide-herdr-k9
+  holder=collide-herdr-holder-m1
+  rec=$(make_herdr_case collide-herdr-flat "$id" "$holder" off)
+  read_herdr_record "$rec"
+
+  out=$(run_herdr_spawn "$id" "$WT_DIR")
+  status=$?
+
+  expect_code 1 "$status" "flat herdr spawn onto a live task's worktree should refuse"
+  assert_herdr_refusal_left_the_endpoint "$out" "$id" "$holder" "flat herdr"
+  pass "the refusal on a herdr spawn without projection closes no pane either"
+}
+
+# The other side of the same dimension, through the same log: the pre-existing
+# primary-checkout isolation refusal on the projected layout still closes its
+# pane. This is deliberately unchanged by this work, and it is what proves the
+# "closed nothing" assertions above can fail.
+test_herdr_projected_isolation_refusal_still_closes() {
+  local rec id holder out status stray pane
+  id=collide-herdr-m2
+  holder=collide-herdr-holder-m3
+  rec=$(make_herdr_case collide-herdr-isolation "$id" "$holder" on)
+  read_herdr_record "$rec"
+  stray="$TMP_ROOT/collide-herdr-isolation/not-a-worktree"
+  mkdir -p "$stray"
+
+  out=$(run_herdr_spawn "$id" "$stray")
+  status=$?
+
+  expect_code 1 "$status" "a settled path that is no worktree at all should refuse"
+  assert_contains "$out" "did not yield an isolated worktree" "isolation refusal did not fire"
+  pane=$(herdr_task_pane "$out")
+  [ -n "$pane" ] || fail "could not read the endpoint pane out of the isolation refusal"
+  herdr_pane_was_closed "$pane" \
+    || fail "no close of $pane was observed on the isolation refusal, so the collision scenes above prove nothing"
+  ! herdr_pane_still_present "$pane" \
+    || fail "the isolation refusal logged a close of $pane that the session never applied"
+  pass "the isolation refusal still closes its projected pane, so a close is visible through this same instrumentation"
+}
+
 test_live_owner_blocks_spawn
 test_dead_owner_does_not_block_spawn
 test_uncontested_spawn_is_unaffected
+test_herdr_projected_refusal_closes_nothing
+test_herdr_flat_refusal_closes_nothing
+test_herdr_projected_isolation_refusal_still_closes
 
 echo "# all fm-spawn-worktree-collision tests passed"

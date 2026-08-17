@@ -1273,8 +1273,8 @@ real_path_or_raw() {  # <path>
 # leaves an orphaned pane sitting in another task's worktree and poisons the
 # obvious next move - fix the ownership and re-run the same id - because
 # fm_backend_tmux_create_task refuses a window name that already exists.
-# The orca and herdr-projection paths own richer cleanup (task worktree
-# removal, projection journal) through spawn_abort_cleanup and are left to it.
+# Orca is left to spawn_abort_cleanup, which owns its task worktree and its own
+# terminal rather than a pooled worktree.
 #
 # Ending that endpoint is SAFE ON TMUX AND ONLY ON TMUX, which is why this
 # takes the endpoint back on that surface and nowhere else. Verified with real
@@ -1292,14 +1292,21 @@ real_path_or_raw() {  # <path>
 # same record shows both `treehouse get` and `treehouse get --lease` detach the
 # worktree they hand out before the caller can see which one it is, so the pool
 # cannot name a path without resetting it first and the decision cannot move.
+#
+# A default herdr spawn is projected, and its projection-abort cleanup closes
+# the task pane and the seeded pane from the EXIT trap, which is that same
+# unverified close by another route. This refusal therefore disarms that
+# cleanup for itself. The other paths that reach it - the primary-checkout
+# isolation refusal and the settle timeout - still close a projected pane, and
+# changing that is deliberately outside this change.
 discard_refused_endpoint() {
   [ "${BACKEND:-}" != orca ] || return 0
-  [ "${HERDR_PROJECTION_ABORT_CLEANUP:-0}" != 1 ] || return 0
   [ -n "${T:-}" ] || return 0
   if [ "$BACKEND" = tmux ]; then
     fm_backend_kill tmux "$T" >/dev/null 2>&1 || true
     return 0
   fi
+  HERDR_PROJECTION_ABORT_CLEANUP=0
   echo "warning: leaving the $BACKEND endpoint $T open inside '$WT'; ending it is only known to be worktree-pool safe on tmux, and an unverified close could let the pool take '$WT' back and detach it. Close $T by hand after checking the pool, and expect a re-run of $ID to refuse while that endpoint still exists" >&2
 }
 

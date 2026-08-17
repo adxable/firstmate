@@ -207,14 +207,16 @@ That is the empirical basis for `discard_refused_endpoint` in `bin/fm-spawn.sh` 
 
 This evidence covers the tmux surface and nothing else.
 The pool is the worktree provider for herdr, zellij and cmux as well, and whether closing a herdr pane, a zellij tab or a cmux workspace hangs the shell up rather than letting the return complete has not been established here.
-On those surfaces the refusal therefore closes nothing and reports the endpoint it left open, because an unverified close could hand the contested worktree back to the pool, which is the harm the guard exists to prevent.
+On those surfaces the worktree-collision refusal therefore closes nothing and reports the endpoint it left open, because an unverified close could hand the contested worktree back to the pool, which is the harm the guard exists to prevent.
+A default herdr spawn is projected, so that refusal also disarms the projection-abort cleanup that would otherwise close the same pane from the exit trap.
+The other spawn failures that reach that cleanup, the primary-checkout isolation refusal and the worktree settle timeout, still close a projected pane, and changing them is outside this change.
 
 The reset is owned by the acquire, not by anything firstmate does afterwards.
 Both the interactive `treehouse get` and the non-interactive `treehouse get --lease` detach the worktree they hand out before the caller can inspect it, so no ownership check placed after an acquire, and none placed before it that still has to ask the pool for a path, can prevent that first detach.
 A worktree carrying uncommitted changes reads `dirty` and is never handed out - the pool created an additional slot instead and left the dirty one untouched - so this detach loses committed branch position rather than unlanded edits.
 Occupancy itself stays process-based, which is why a slot whose owner is parked elsewhere reads free at all.
 
-Drift guard: `FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 tests/fm-treehouse-pool-termination-live-e2e.test.sh`, which reruns the hang-up, the ordinary exit, the interactive acquire and the lease acquire against the installed binaries and fails naming both versions if any of them changes.
+Drift guard: `FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 tests/fm-treehouse-pool-termination-live-e2e.test.sh`, which reruns the hang-up, the ordinary exit, the interactive acquire, the lease acquire and the dirty-slot skip against the installed binaries and fails naming both versions if any of them changes.
 
 ### Cleanup endpoint identity
 
