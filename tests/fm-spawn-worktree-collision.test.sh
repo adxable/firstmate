@@ -466,7 +466,7 @@ run_herdr_spawn() {
 # default tab is closed during every projection create.
 herdr_task_pane() {
   printf '%s\n' "$1" \
-    | sed -n 's/.*[Ii]nspect target fmtest:\([^ ]*\).*/\1/p;s/.*leaving the herdr endpoint fmtest:\([^ ]*\) open.*/\1/p' \
+    | sed -n 's/.*[Ii]nspect target fmtest:\([^ ]*\).*/\1/p;s/.*left the herdr endpoint fmtest:\([^ ]*\) open.*/\1/p' \
     | head -1
 }
 
@@ -478,13 +478,29 @@ herdr_pane_still_present() {  # <pane-id>
   jq -e --arg p "$1" '[.tabs[] | select(.pane_id == $p)] | length == 1' "$HERDR_STATE" >/dev/null
 }
 
+# Every sentence the refusal prints has to be true on the surface it printed on.
+# Two classes of sentence cannot be: an instruction to perform the close this
+# same code withholds as unverified, and a promise about a later run, which no
+# record backs because a refusal writes no state/<id>.meta at all. These are
+# read out of the text the spawn actually emitted, not out of its source.
+assert_refusal_claims_only_what_holds() {  # <output> <label>
+  local out=$1 label=$2 fragment
+  for fragment in "by hand" "Close " "re-run" "rerun" "will refuse"; do
+    case "$out" in
+      *"$fragment"*)
+        fail "$label: the refusal printed \"$fragment\", which is either an instruction to perform the close it declines as unverified or a promise about a later run that nothing records"$'\n'"--- output ---"$'\n'"$out"
+        ;;
+    esac
+  done
+}
+
 assert_herdr_refusal_left_the_endpoint() {  # <output> <id> <holder> <label>
   local out=$1 id=$2 holder=$3 label=$4 pane
   assert_contains "$out" "$holder" "$label: refusal did not name the owning task"
   assert_contains "$out" "$WT_DIR" "$label: refusal did not name the contested worktree"
-  assert_contains "$out" "leaving the herdr endpoint" "$label: refusal did not report the endpoint it left open"
-  assert_contains "$out" "Close " "$label: refusal did not say what the operator must close by hand"
-  assert_contains "$out" "re-run of $id" "$label: refusal did not warn that a re-run refuses while the endpoint exists"
+  assert_contains "$out" "left the herdr endpoint" "$label: refusal did not report the endpoint it left open"
+  assert_contains "$out" "holding worktree '$WT_DIR'" "$label: refusal did not name the worktree that endpoint is holding"
+  assert_refusal_claims_only_what_holds "$out" "$label"
   assert_absent "$HOME_DIR/state/$id.meta" "$label: refused spawn still recorded task metadata"
   pane=$(herdr_task_pane "$out")
   [ -n "$pane" ] || fail "$label: could not read the endpoint pane out of the refusal"

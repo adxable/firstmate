@@ -1287,7 +1287,10 @@ real_path_or_raw() {  # <path>
 # branch. The pool is also the worktree provider for herdr, zellij and cmux,
 # and nothing establishes that closing a herdr pane, a zellij tab or a cmux
 # workspace hangs the shell up rather than letting that return complete, so on
-# those surfaces this refuses to guess and says what it left behind instead.
+# those surfaces this refuses to guess and names the residue instead: the
+# endpoint left open and the worktree it holds, and no follow-up procedure,
+# because none is measured there and the one operator-typed termination that
+# has been measured is the subshell exit that detaches the worktree.
 # Deciding ownership before the acquisition would remove the question, but the
 # same record shows both `treehouse get` and `treehouse get --lease` detach the
 # worktree they hand out before the caller can see which one it is, so the pool
@@ -1307,7 +1310,7 @@ discard_refused_endpoint() {
     return 0
   fi
   HERDR_PROJECTION_ABORT_CLEANUP=0
-  echo "warning: leaving the $BACKEND endpoint $T open inside '$WT'; ending it is only known to be worktree-pool safe on tmux, and an unverified close could let the pool take '$WT' back and detach it. Close $T by hand after checking the pool, and expect a re-run of $ID to refuse while that endpoint still exists" >&2
+  echo "warning: this refusal left the $BACKEND endpoint $T open, holding worktree '$WT'; firstmate did not close it because only a tmux hang-up has been measured to leave a pooled worktree as it stands, and an unverified close of a $BACKEND endpoint could return '$WT' to the pool and detach it" >&2
 }
 
 # worktree_owner_conflict: is the resolved worktree already owned by another

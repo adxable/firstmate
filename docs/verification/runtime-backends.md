@@ -207,7 +207,8 @@ That is the empirical basis for `discard_refused_endpoint` in `bin/fm-spawn.sh` 
 
 This evidence covers the tmux surface and nothing else.
 The pool is the worktree provider for herdr, zellij and cmux as well, and whether closing a herdr pane, a zellij tab or a cmux workspace hangs the shell up rather than letting the return complete has not been established here.
-On those surfaces the worktree-collision refusal therefore closes nothing and reports the endpoint it left open, because an unverified close could hand the contested worktree back to the pool, which is the harm the guard exists to prevent.
+On those surfaces the worktree-collision refusal therefore closes nothing and reports only the residue it can name, the endpoint left open and the worktree that endpoint holds, because an unverified close could hand the contested worktree back to the pool, which is the harm the guard exists to prevent.
+It offers the operator no follow-up procedure, because no close of a herdr, zellij or cmux endpoint has been measured against this pool, and the one operator-typed termination that has been measured, the ordinary subshell exit on tmux, is the one that detaches the worktree.
 A default herdr spawn is projected, so that refusal also disarms the projection-abort cleanup that would otherwise close the same pane from the exit trap.
 The other spawn failures that reach that cleanup, the primary-checkout isolation refusal and the worktree settle timeout, still close a projected pane, and changing them is outside this change.
 
