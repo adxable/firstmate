@@ -573,8 +573,16 @@ test_herdr_projected_isolation_refusal_still_closes() {
 test_live_owner_blocks_spawn
 test_dead_owner_does_not_block_spawn
 test_uncontested_spawn_is_unaffected
-test_herdr_projected_refusal_closes_nothing
-test_herdr_flat_refusal_closes_nothing
-test_herdr_projected_isolation_refusal_still_closes
+
+# The herdr scenes speak the backend's JSON through the fake CLI, so without jq
+# they would fail on the ownership assertions rather than on the missing tool.
+# The tmux scenes above need no JSON and always run.
+if command -v jq >/dev/null 2>&1; then
+  test_herdr_projected_refusal_closes_nothing
+  test_herdr_flat_refusal_closes_nothing
+  test_herdr_projected_isolation_refusal_still_closes
+else
+  echo "skip: jq not found (the herdr scenes need it to drive the fake herdr CLI)"
+fi
 
 echo "# all fm-spawn-worktree-collision tests passed"

@@ -110,7 +110,8 @@
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root that is distinct from the primary project checkout AND is not
 #   already recorded as the worktree= of another task whose endpoint is proven to
-#   still exist; a refusal takes its own just-created endpoint back down.
+#   still exist; what that refusal does with its own endpoint is backend-specific
+#   and owned by discard_refused_endpoint's header.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only

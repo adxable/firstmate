@@ -48,6 +48,7 @@ note() { printf '# %s\n' "$1"; }
 
 command -v tmux >/dev/null 2>&1 || fail "tmux not found; this guard cannot pass without checking a real tmux"
 command -v treehouse >/dev/null 2>&1 || fail "treehouse not found; this guard cannot pass without checking a real worktree pool"
+command -v jq >/dev/null 2>&1 || fail "jq not found; the pool's own status verdict cannot be read without it"
 REAL_TMUX=$(command -v tmux)
 TMUX_VERSION=$("$REAL_TMUX" -V 2>/dev/null || printf 'unknown')
 TREEHOUSE_VERSION=$(treehouse --version 2>/dev/null || printf 'unknown')
@@ -154,26 +155,53 @@ pass "the non-interactive lease acquire resets the worktree it hands out as well
 
 # --- what the acquire-time detach does NOT cost ------------------------------
 # The record only calls that detach survivable because unlanded edits are never
-# handed out in the first place. This case runs LAST: it deliberately leaves the
-# single slot dirty, which breaks the same-worktree invariant above.
+# handed out in the first place. Dirtiness therefore has to be the ONLY reason
+# the pool can skip this worktree here, so the lease taken above is released
+# first while the worktree is still clean: a leased worktree is skipped by every
+# later acquire whatever its contents, which would explain the skip below on its
+# own. This case runs LAST because it deliberately leaves a slot dirty, which
+# breaks the same-worktree invariant the cases above depend on.
+pool_status_of() {  # <worktree>
+  (cd "$REPO" && treehouse status --json 2>/dev/null) \
+    | jq -r --arg p "$1" '.[]? | select(.path == $p) | .status' 2>/dev/null
+}
+
+(cd "$REPO" && treehouse return "$LEASE_WT" >/dev/null 2>&1) \
+  || fail "could not release the lease on $LEASE_WT while it was still clean, so a later skip could not be attributed to dirtiness"
+
+# Room for a second slot, so a skip is a choice the pool can make rather than
+# one the cap forces on it.
+printf 'max_trees = 2\nroot = "./"\n' > "$REPO/treehouse.toml"
+
+# The contrast this case rests on: with the cap already raised, the pool hands
+# THIS worktree back out while it is clean and unleased instead of creating the
+# second slot. Without that observation the skip below would prove nothing,
+# because a pool that never reuses a slot would look identical.
+CLEAN_ACQ=$(cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-clean 2>/dev/null) \
+  || fail "treehouse $TREEHOUSE_VERSION could not acquire at all once the lease was released"
+[ "$CLEAN_ACQ" = "$LEASE_WT" ] \
+  || fail "the pool built $CLEAN_ACQ rather than reusing the clean unleased $LEASE_WT, so the dirty skip below would not be attributable to dirtiness"
+(cd "$REPO" && treehouse return "$CLEAN_ACQ" >/dev/null 2>&1) \
+  || fail "could not release the contrast lease on $CLEAN_ACQ"
+pass "the pool reuses this worktree while it is clean and unleased, which is the contrast that makes the dirty case falsifiable"
+
 printf 'unlanded edit\n' > "$LEASE_WT/holder-dirty.txt"
 DIRTY_SHA=$(git -C "$LEASE_WT" rev-parse HEAD)
 [ -n "$(git -C "$LEASE_WT" status --porcelain)" ] \
-  || fail "the dirty case could not make the single-slot worktree dirty"
-
-# Room for a second slot, so skipping the dirty one is a choice the pool can
-# make rather than one the cap forces.
-printf 'max_trees = 2\nroot = "./"\n' > "$REPO/treehouse.toml"
+  || fail "the dirty case could not leave uncommitted changes in $LEASE_WT"
+[ "$(pool_status_of "$LEASE_WT")" = dirty ] \
+  || fail "treehouse $TREEHOUSE_VERSION reports $LEASE_WT as '$(pool_status_of "$LEASE_WT")' rather than dirty while it carries uncommitted changes; the record's dirty row needs re-deriving"
+pass "the pool reads a worktree carrying uncommitted changes as dirty"
 
 DIRTY_ACQ=$(cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-dirty 2>/dev/null) \
-  || fail "treehouse $TREEHOUSE_VERSION refused to acquire at all while the only slot was dirty; the record's dirty row needs re-deriving"
-note "acquire while the only slot is dirty handed out: $DIRTY_ACQ"
+  || fail "treehouse $TREEHOUSE_VERSION refused to acquire at all while the only existing slot was dirty; the record's dirty row needs re-deriving"
+note "acquire with that worktree dirty and unleased handed out: $DIRTY_ACQ"
 [ "$DIRTY_ACQ" != "$LEASE_WT" ] \
-  || fail "treehouse $TREEHOUSE_VERSION handed out the worktree carrying uncommitted changes; the record's claim that this detach costs branch position rather than unlanded edits no longer holds"
+  || fail "treehouse $TREEHOUSE_VERSION handed out the worktree carrying uncommitted changes, which it had reused while clean; the record's claim that this detach costs branch position rather than unlanded edits no longer holds"
 [ -f "$LEASE_WT/holder-dirty.txt" ] \
   || fail "treehouse $TREEHOUSE_VERSION discarded the uncommitted file in the dirty worktree"
 [ "$(git -C "$LEASE_WT" rev-parse HEAD)" = "$DIRTY_SHA" ] \
   || fail "treehouse $TREEHOUSE_VERSION moved the dirty worktree's HEAD while acquiring elsewhere"
-pass "a worktree carrying uncommitted changes is skipped and left untouched, which is what bounds the acquire-time detach"
+pass "the same worktree it reused while clean is skipped and left untouched once dirty, which is what bounds the acquire-time detach"
 
 echo "# all fm-treehouse-pool-termination live tests passed"
