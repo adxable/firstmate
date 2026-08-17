@@ -267,8 +267,13 @@ export HERDR_SESSION="$HERDR_LAB_SESSION" HERDR_LAB_SESSION
 LAB_READY=0
 RECORDED_WORKTREES=""
 LOCK_CONTENTION_OWNER_PID=
+# Releasing this file ends every fixture worktree occupant (see
+# occupy_task_worktree); cleanup does it before returning worktrees so no
+# occupant outlives the suite.
+WORKTREE_OCCUPANT_RELEASE="$TMP_ROOT/worktree-occupants-released"
 cleanup_all() {
   local wt
+  : > "$WORKTREE_OCCUPANT_RELEASE" 2>/dev/null || true
   if [ -n "$LOCK_CONTENTION_OWNER_PID" ]; then
     kill "$LOCK_CONTENTION_OWNER_PID" 2>/dev/null || true
     wait "$LOCK_CONTENTION_OWNER_PID" 2>/dev/null || true
@@ -371,19 +376,55 @@ remember_meta_worktree() {  # <meta>
   printf '%s' "$wt"
 }
 
+# Every fixture below keeps its slot until it is torn down, and the pool never
+# hands out an occupied slot, so the pool grows to the number of simultaneously
+# live fixtures instead of recycling. The default cap of 16 is below that peak.
 make_project() {  # <dir>
   local dir=$1
   mkdir -p "$dir"
   git -C "$dir" init -q
   printf '# Herdr projection E2E fixture\n' > "$dir/README.md"
-  git -C "$dir" add README.md
+  printf 'max_trees = 64\nroot = ""\n' > "$dir/treehouse.toml"
+  git -C "$dir" add README.md treehouse.toml
   git -C "$dir" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
 }
 
+# Keep the pool's view of a live fixture honest. Treehouse reads occupancy from
+# processes whose working directory lies inside a slot, and the only such
+# process a fixture has is its pane command - which every deliberate lab stop
+# below kills, and which outlives no restart. The pool then re-hands a worktree
+# that a still-recorded live task owns, and fm-spawn.sh's isolation assertion
+# refuses that spawn rather than let a second worker branch inside another live
+# task's worktree. So each spawned fixture parks one harness-side process in its
+# own worktree, outside the lab session, for as long as the task is meant to be
+# live. `treehouse return`, which both teardown and cleanup use, terminates
+# lingering processes, so returning a slot still frees it exactly as before.
+occupy_task_worktree() {  # <meta>
+  local meta=$1 wt
+  [ -f "$meta" ] || return 0
+  wt=$(grep '^worktree=' "$meta" | cut -d= -f2-)
+  [ -n "$wt" ] && [ -d "$wt" ] || return 0
+  (
+    cd "$wt" || exit 0
+    waited=0
+    while [ ! -e "$WORKTREE_OCCUPANT_RELEASE" ] && [ "$waited" -lt 1800 ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+  ) >/dev/null 2>&1 &
+  # `treehouse return` terminates the occupant, and a tracked job killed by a
+  # signal makes bash print a job notice into the suite's own output; disowning
+  # keeps that plumbing out of the assertions' stream.
+  disown "$!" 2>/dev/null || true
+}
+
 spawn_task() {  # <id> <home> <project>
-  local id=$1 home=$2 project=$3
+  local id=$1 home=$2 project=$3 status=0
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'sleep 120'" --mode no-mistakes --yolo off --backend herdr
+    "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'sleep 120'" --mode no-mistakes --yolo off --backend herdr \
+    || status=$?
+  [ "$status" -ne 0 ] || occupy_task_worktree "$home/state/$id.meta"
+  return "$status"
 }
 
 spawn_secondmate_task() {
