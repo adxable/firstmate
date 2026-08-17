@@ -46,7 +46,8 @@ Verify setup by spawning a small task and confirming its `fm-<id>` window appear
 
 ### Agent liveness probe
 
-A target-existence check proves only that the pane exists.
+The cheap target-existence check proves less than pane presence on this backend: an absent `fm-<id>` target silently resolves to the client's active window and the read still succeeds, so a closed window can read as present ([`verification/runtime-backends.md`](verification/runtime-backends.md#named-target-fallback) records the evidence).
+A caller that may act only on proven endpoint existence uses the proof-grade read instead, which requires the recorded window to appear in an exact-match session inventory; `bin/fm-backend.sh` owns that split between the cheap and the proof-grade check.
 The deeper tmux agent-liveness probe first verifies exact window membership, then reads process names to distinguish a running harness from a bare idle shell.
 It classifies recognized Claude, Codex, OpenCode, Pi, pi-signed, Grok, and Kimi process names as `alive`, common shells as `dead`, an authoritatively absent window as `missing`, unreadable state as `unreadable`, and every other process as `ambiguous`.
 Only `dead` and `missing` authorize recovery because a false dead result could launch a duplicate agent.
