@@ -108,7 +108,10 @@
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
-#   git worktree root distinct from the primary project checkout.
+#   git worktree root that is distinct from the primary project checkout AND is not
+#   already recorded as the worktree= of another task whose endpoint is proven to
+#   still exist; what that refusal does with its own endpoint is backend-specific
+#   and owned by discard_refused_endpoint's header.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -1265,6 +1268,95 @@ real_path_or_raw() {  # <path>
   fi
 }
 
+# discard_refused_endpoint: take back the endpoint THIS spawn just created.
+# The ownership refusal fires after the task window already exists and after
+# `treehouse get` moved its pane into the contested worktree, so exiting bare
+# leaves an orphaned pane sitting in another task's worktree and poisons the
+# obvious next move - fix the ownership and re-run the same id - because
+# fm_backend_tmux_create_task refuses a window name that already exists.
+# Orca is left to spawn_abort_cleanup, which owns its task worktree and its own
+# terminal rather than a pooled worktree.
+#
+# Ending that endpoint is SAFE ON TMUX AND ONLY ON TMUX, which is why this
+# takes the endpoint back on that surface and nowhere else. Verified with real
+# binaries on tmux 3.7b with treehouse v2.1.1
+# (docs/verification/runtime-backends.md "Endpoint kill and worktree-pool
+# safety", pinned by tests/fm-treehouse-pool-termination-live-e2e.test.sh): a
+# hung-up tmux pane leaves the worktree exactly as it stands, while the
+# ordinary subshell exit an operator would type into that orphan runs the
+# pool's return-and-reset path and detaches the contested worktree off its own
+# branch. The pool is also the worktree provider for herdr, zellij and cmux,
+# and nothing establishes that closing a herdr pane, a zellij tab or a cmux
+# workspace hangs the shell up rather than letting that return complete, so on
+# those surfaces this refuses to guess and names the residue instead: the
+# endpoint left open and the worktree it holds, and no follow-up procedure,
+# because none is measured there and the one operator-typed termination that
+# has been measured is the subshell exit that detaches the worktree.
+# Deciding ownership before the acquisition would remove the question, but the
+# same record shows both `treehouse get` and `treehouse get --lease` detach the
+# worktree they hand out before the caller can see which one it is, so the pool
+# cannot name a path without resetting it first and the decision cannot move.
+#
+# A default herdr spawn is projected, and its projection-abort cleanup closes
+# the task pane and the seeded pane from the EXIT trap, which is that same
+# unverified close by another route. This refusal therefore disarms that
+# cleanup for itself. The other paths that reach it - the primary-checkout
+# isolation refusal and the settle timeout - still close a projected pane, and
+# changing that is deliberately outside this change.
+discard_refused_endpoint() {
+  [ "${BACKEND:-}" != orca ] || return 0
+  [ -n "${T:-}" ] || return 0
+  if [ "$BACKEND" = tmux ]; then
+    fm_backend_kill tmux "$T" >/dev/null 2>&1 || true
+    return 0
+  fi
+  HERDR_PROJECTION_ABORT_CLEANUP=0
+  echo "warning: this refusal left the $BACKEND endpoint $T open, holding worktree '$WT'; firstmate did not close it because only a tmux hang-up has been measured to leave a pooled worktree as it stands, and an unverified close of a $BACKEND endpoint could return '$WT' to the pool and detach it" >&2
+}
+
+# worktree_owner_conflict: is the resolved worktree already owned by another
+# LIVE task in this home? Prints "<other-id><TAB><recorded path>" and returns 0
+# on the first conflict, returns 1 when the path is free to claim.
+#
+# Why durable records and not the slot pool: a worktree pool marks a slot free
+# from process presence inside the slot directory, so a worker parked elsewhere
+# (typically a shell sitting in the validation pipeline's own directory) reads
+# as `available` while it still owns its worktree. Handing that slot to a second
+# task lets the newcomer reset the branch out from under work that has not
+# landed. This home's own state/<id>.meta records are the ownership truth.
+#
+# Liveness here is the recorded ENDPOINT's continued existence, not a running
+# harness agent: an idle endpoint still owns its worktree and may hold unlanded
+# work, while agent_state is `unverified` on several supported backends, which
+# would silently stop the guard from blocking there.
+#
+# The read must be PROOF-GRADE (fm_backend_target_proven), because only proven
+# ownership may block: a lenient probe that cannot distinguish an absent
+# endpoint from a present one turns every stale record into a permanent slot
+# block, which is the failure this guard exists to prevent. So a record blocks
+# only when a positive read shows its endpoint still there; a provably absent
+# endpoint, an endpoint whose existence cannot be established at all, and a
+# torn-down task (which leaves no meta file) all leave the slot free.
+worktree_owner_conflict() {  # <resolved-worktree-real-path>
+  local wt_real=$1 meta other_id other_wt other_wt_real backend target
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    other_id=$(basename "$meta" .meta)
+    [ "$other_id" != "$ID" ] || continue
+    other_wt=$(fm_meta_get "$meta" worktree)
+    [ -n "$other_wt" ] || continue
+    other_wt_real=$(real_path_or_raw "$other_wt")
+    [ "$other_wt_real" = "$wt_real" ] || continue
+    backend=$(fm_backend_of_meta "$meta")
+    target=$(fm_backend_target_of_meta "$meta")
+    [ -n "$target" ] || continue
+    fm_backend_target_proven "$backend" "$target" "fm-$other_id" 2>/dev/null || continue
+    printf '%s\t%s\n' "$other_id" "$other_wt"
+    return 0
+  done
+  return 1
+}
+
 # Session-provider container-ensure + task creation. tmux stays exactly as P1
 # left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
 # a herdr spawn goes through the version-gated, workspace-per-HOME,
@@ -1275,6 +1367,7 @@ real_path_or_raw() {  # <path>
 # per-backend routing (fm_backend_resolve_selector).
 validate_spawn_worktree() {  # <source> <inspect-target>
   local source=$1 inspect_target=$2 wt_real proj_real wt_top wt_top_real
+  local conflict conflict_id conflict_path detach_note
   wt_real=
   if ! wt_real=$(cd "$WT" 2>/dev/null && pwd -P); then
     wt_real=
@@ -1287,6 +1380,18 @@ validate_spawn_worktree() {  # <source> <inspect-target>
   fi
   if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || [ "$wt_real" != "$wt_top_real" ] || [ "$wt_real" = "$proj_real" ]; then
     echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
+    exit 1
+  fi
+  if conflict=$(worktree_owner_conflict "$wt_real"); then
+    IFS=$'\t' read -r conflict_id conflict_path <<EOF
+$conflict
+EOF
+    detach_note=
+    if [ "${BACKEND:-}" != orca ]; then
+      detach_note=" $source has already detached that worktree from its branch, so check $conflict_id's branch before restarting it."
+    fi
+    echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint still exists; refusing to launch $ID there so no second worker branches or works inside $conflict_id's worktree.$detach_note Inspect target $inspect_target" >&2
+    discard_refused_endpoint
     exit 1
   fi
 }

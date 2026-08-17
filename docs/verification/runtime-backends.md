@@ -135,6 +135,90 @@ tests/fm-tmux-submit-busy.test.sh
 Expected structural matrix: real text on any content row is pending; all-empty complete boxes are empty; unreadable, incomplete, or unsafe boxes are unknown; and non-bordered panes retain cursor-row compatibility.
 Expected submit matrix: proven pending plus busy is accepted as queued; proven pending plus idle remains pending; ambiguous pending is never converted by the busy exception; and only a proven empty composer succeeds directly.
 
+### Named-target fallback
+
+Named-target resolution was verified on 2026-08-12 with tmux 3.7b on macOS arm64, on a throwaway private socket.
+
+```sh
+tmux -L "$socket" new-session -d -s sess -n fm-real 'sleep 300'
+tmux -L "$socket" display-message -p -t 'sess:fm-real' '#{pane_id}'
+tmux -L "$socket" display-message -p -t 'sess:fm-does-not-exist' '#{pane_id}'
+tmux -L "$socket" list-windows -t sess -F '#{window_id}|#{window_index}|#{window_name}'
+```
+
+Observed output:
+
+```text
+%0
+%0
+@0|0|fm-real
+```
+
+Both reads exited 0.
+An absent named target is therefore indistinguishable from a present one: tmux silently answers about the client's active window instead of failing, so a bare `display-message` read can never establish that a recorded endpoint is gone.
+The session inventory is the signal that can, and it is what `fm_backend_tmux_target_exists_exact` requires before reporting a window present, the same structural precondition `fm_backend_tmux_agent_state` already applies before trusting any pane read.
+This is why `fm_backend_target_proven` exists next to the cheaper `fm_backend_target_exists`: fm-spawn.sh's worktree-ownership guard may block a pool slot only on proven ownership, so a stale record whose window has closed releases the slot instead of holding it forever.
+
+Session resolution was verified in the same run and hides the same falsehood one level up.
+
+```sh
+tmux -L "$socket" new-session -d -s gone-b -n fm-holder 'sleep 30'
+tmux -L "$socket" list-windows -t gone -F '#{window_name}'
+tmux -L "$socket" list-windows -t '=gone' -F '#{window_name}'
+```
+
+Observed output:
+
+```text
+fm-holder
+can't find session: gone
+```
+
+The unanchored read exited 0 and the anchored one exited 1.
+A target-session resolves by exact match, then fnmatch, then start-of-name, so a recorded session that is gone answers out of a surviving session whose name it prefixes.
+The `=` exact-match prefix is what refuses that substitution, which is why the inventory read anchors both the session and the window name before reporting a window present.
+
+Portable regression: `tests/fm-tmux-target-proof.test.sh`.
+Refresh this record after a tmux upgrade with `FM_TMUX_TARGET_FALLBACK_DRIFT=1 tests/fm-tmux-target-fallback-live-e2e.test.sh`, which reruns the commands above against the installed tmux and fails naming its version if the behavior has changed.
+
+### Endpoint kill and worktree-pool safety
+
+How a task pane's termination reaches the worktree pool was verified on 2026-08-13 with tmux 3.7b and treehouse v2.1.1 on macOS arm64, in a throwaway repo whose `treehouse.toml` set `root = "./"` and on a private tmux socket, so no real pool was touched.
+
+```sh
+tmux -L "$socket" send-keys -t "$session:fm-x" 'treehouse get' Enter
+git -C "$worktree" checkout -b fm/holder && git -C "$worktree" commit -m 'holder work'
+tmux -L "$socket" kill-window -t "=$session:=fm-x"      # hang-up case
+tmux -L "$socket" send-keys -t "$session:fm-y" 'exit' Enter   # ordinary-exit case
+treehouse get --lease --lease-holder probe               # acquire case
+```
+
+Observed results:
+
+| Termination | Worktree branch after | Content after | Pool banner |
+| --- | --- | --- | --- |
+| `tmux kill-window` on the pane | unchanged, still `fm/holder` | intact, clean and dirty alike | none |
+| `exit` typed in the subshell | detached at the base commit | reset, working-tree files dropped | `Worktree returned to pool.` |
+| next `treehouse get` or `get --lease` | detached at the base commit | reset before the caller sees it | `Setting up worktree...` |
+
+A hung-up pane runs no return and no reset, so ending a refused spawn's own pane with `tmux kill-window` cannot disturb a worktree another task owns.
+The ordinary subshell exit does run the return path, which means an orphaned pane left behind for an operator to close is the termination that detaches the contested worktree, not the kill.
+That is the empirical basis for `discard_refused_endpoint` in `bin/fm-spawn.sh` taking its own endpoint down rather than leaving it parked.
+
+This evidence covers the tmux surface and nothing else.
+The pool is the worktree provider for herdr, zellij and cmux as well, and whether closing a herdr pane, a zellij tab or a cmux workspace hangs the shell up rather than letting the return complete has not been established here.
+On those surfaces the worktree-collision refusal therefore closes nothing and reports only the residue it can name, the endpoint left open and the worktree that endpoint holds, because an unverified close could hand the contested worktree back to the pool, which is the harm the guard exists to prevent.
+It offers the operator no follow-up procedure, because no close of a herdr, zellij or cmux endpoint has been measured against this pool, and the one operator-typed termination that has been measured, the ordinary subshell exit on tmux, is the one that detaches the worktree.
+A default herdr spawn is projected, so that refusal also disarms the projection-abort cleanup that would otherwise close the same pane from the exit trap.
+The other spawn failures that reach that cleanup, the primary-checkout isolation refusal and the worktree settle timeout, still close a projected pane, and changing them is outside this change.
+
+The reset is owned by the acquire, not by anything firstmate does afterwards.
+Both the interactive `treehouse get` and the non-interactive `treehouse get --lease` detach the worktree they hand out before the caller can inspect it, so no ownership check placed after an acquire, and none placed before it that still has to ask the pool for a path, can prevent that first detach.
+A worktree carrying uncommitted changes reads `dirty` and is never handed out - the pool created an additional slot instead and left the dirty one untouched - so this detach loses committed branch position rather than unlanded edits.
+Occupancy itself stays process-based, which is why a slot whose owner is parked elsewhere reads free at all.
+
+Drift guard: `FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 tests/fm-treehouse-pool-termination-live-e2e.test.sh`, which reruns the hang-up, the ordinary exit, the interactive acquire, the lease acquire and the dirty-slot skip against the installed binaries and fails naming both versions if any of them changes.
+
 ### Cleanup endpoint identity
 
 The cleanup identity boundary was validated on 2026-07-28 with tmux 3.6a and metadata fixtures for every supported backend.
