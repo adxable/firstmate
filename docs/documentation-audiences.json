@@ -193,10 +193,6 @@
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/styl-kapitanski.md",
-      "audience": "agent-runtime"
-    },
-    {
       "path": "AGENTS.md",
       "audience": "agent-runtime"
     },
@@ -291,6 +287,10 @@
     {
       "path": "docs/sessionstart-nudge.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/styl-kapitanski.md",
+      "audience": "agent-runtime"
     },
     {
       "path": "docs/subagent-guard.md",
