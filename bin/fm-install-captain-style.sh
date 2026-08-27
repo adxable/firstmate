@@ -19,17 +19,24 @@
 #
 # Writes only its own marker-delimited block. Any other content in the memory
 # file is preserved byte for byte, and a repeat run replaces the block rather
-# than appending a second one. When the file cannot be written, the exact
-# import line and target file are printed as an explicit manual step, never
-# skipped quietly.
+# than appending a second one. When the memory file cannot be read, nothing is
+# written at all; when it cannot be written, the exact import line and target
+# file are printed as an explicit manual step. Neither case is skipped quietly.
+#
+# The pre-installer wiring - a bare "# Styl odpowiedzi" heading plus one
+# machine-specific @import of the same style file - is replaced rather than
+# left beside the managed block, and the heading goes with it when the removal
+# leaves it with no body of its own.
 #
 # Usage:
 #   fm-install-captain-style.sh [--dry-run]   install or refresh the block
-#   fm-install-captain-style.sh --check       report status, do not write
-#   fm-install-captain-style.sh --verify      resolve the installed line and
-#                                             confirm it reaches a real file
+#   fm-install-captain-style.sh --check       resolve the installed import line,
+#                                             confirm it reaches a real file,
+#                                             report, and never write
+#   fm-install-captain-style.sh --verify      alias for --check
 #   fm-install-captain-style.sh --print-import  print the import line only
 #   fm-install-captain-style.sh --uninstall   remove the block
+#   fm-install-captain-style.sh --help        print this header
 #
 # Honors CLAUDE_CONFIG_DIR, matching Claude Code's own override, and falls back
 # to $HOME/.claude.
@@ -41,8 +48,19 @@ STYLE_REL='docs/styl-kapitanski.md'
 
 usage() {
   cat >&2 <<'EOF'
-usage: fm-install-captain-style.sh [--dry-run|--check|--verify|--print-import|--uninstall]
+usage: fm-install-captain-style.sh [--dry-run|--check|--verify|--print-import|--uninstall|--help]
 EOF
+}
+
+# This script's header is its documentation, so --help prints the header on
+# stdout the way bin/fm-test-run.sh does. A usage error keeps the one-line form
+# on stderr and a non-zero exit.
+help_text() {
+  awk '
+    NR == 1 { next }
+    /^#/ { sub(/^# ?/, ""); print; next }
+    { exit }
+  ' "$0"
 }
 
 MODE=install
@@ -53,7 +71,7 @@ case "${1:-}" in
   --verify) MODE=verify ;;
   --print-import) MODE=print-import ;;
   --uninstall) MODE=uninstall ;;
-  -h|--help) usage; exit 0 ;;
+  -h|--help) help_text; exit 0 ;;
   *) usage; exit 1 ;;
 esac
 [ "$#" -le 1 ] || { usage; exit 1; }
@@ -129,31 +147,52 @@ render_block() {
 }
 
 # Body of the memory file with the managed block and any legacy unmanaged
-# import of this same style file removed. Trailing blank lines are trimmed so
-# repeated runs converge instead of growing the file.
+# import of this same style file removed. A "# Styl odpowiedzi" heading that the
+# removal leaves with no body of its own goes too, so the pre-installer layout
+# does not survive as an empty duplicate section. Trailing blank lines are
+# trimmed so repeated runs converge instead of growing the file.
+#
+# Returns non-zero when the memory file exists but cannot be read or parsed. An
+# empty stdout means "there is nothing to keep" only when this succeeds; every
+# caller must check, or an unreadable file reads as an empty one and its content
+# is lost on the next write.
 strip_managed() {
-  if [ ! -f "$MEMORY_FILE" ]; then
+  if [ ! -e "$MEMORY_FILE" ]; then
     return 0
   fi
+  [ -f "$MEMORY_FILE" ] && [ -r "$MEMORY_FILE" ] || return 1
   awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
     $0 == b { inblock = 1; next }
     $0 == e { inblock = 0; next }
     inblock { next }
     # The pre-installer wiring was a bare heading plus one absolute @import.
-    /^@.*\/docs\/styl-kapitanski\.md[[:space:]]*$/ { legacy = 1; next }
-    { print }
-  ' "$MEMORY_FILE" | awk '
-    { lines[NR] = $0 }
+    /^@.*\/docs\/styl-kapitanski\.md[[:space:]]*$/ { cut[n] = 1; next }
+    { out[++n] = $0 }
     END {
-      last = NR
-      while (last > 0 && lines[last] ~ /^[[:space:]]*$/) last--
-      for (i = 1; i <= last; i++) print lines[i]
+      # A legacy import removed after out[p] orphans the heading above it only
+      # when nothing but blank lines separated them and nothing but blank lines
+      # follows before the next heading or the end of the file.
+      for (p in cut) {
+        h = p + 0
+        while (h > 0 && out[h] ~ /^[[:space:]]*$/) h--
+        if (h == 0 || out[h] !~ /^#+[[:space:]]*Styl odpowiedzi[[:space:]]*$/) continue
+        j = p + 1
+        while (j <= n && out[j] ~ /^[[:space:]]*$/) j++
+        if (j <= n && out[j] !~ /^#/) continue
+        for (k = h; k <= p; k++) drop[k] = 1
+      }
+      last = n
+      while (last > 0 && (out[last] ~ /^[[:space:]]*$/ || (last in drop))) last--
+      for (k = 1; k <= last; k++) {
+        if (!(k in drop)) print out[k]
+      }
     }
-  '
+  ' "$MEMORY_FILE"
 }
 
 legacy_lines() {
-  [ -f "$MEMORY_FILE" ] || return 0
+  [ -e "$MEMORY_FILE" ] || return 0
+  [ -f "$MEMORY_FILE" ] && [ -r "$MEMORY_FILE" ] || return 1
   awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
     $0 == b { inblock = 1; next }
     $0 == e { inblock = 0; next }
@@ -177,6 +216,32 @@ report_status() {
   echo "hint: re-run fm-install-captain-style.sh from the current checkout" >&2
   return 1
 }
+
+# Refusing here keeps the "preserved byte for byte" promise: an existing memory
+# file this run cannot read is a file whose content this run cannot carry over,
+# so it is left exactly as it is and nothing is written anywhere.
+memory_unreadable() {
+  cat >&2 <<EOF
+error: $MEMORY_FILE exists but could not be read
+
+Nothing was written and the existing file is untouched, because its content
+cannot be carried over into the new memory file.
+
+Fix its permissions and re-run, or wire the rules by hand:
+
+  1. Make $MEMORY_FILE readable and writable, then re-run: $0
+  2. Or add these lines to it yourself:
+
+$(render_block | sed 's/^/     /')
+
+  3. Confirm with: $0 --verify
+EOF
+  exit 1
+}
+
+if [ -e "$MEMORY_FILE" ] && { [ ! -f "$MEMORY_FILE" ] || [ ! -r "$MEMORY_FILE" ]; }; then
+  memory_unreadable
+fi
 
 case "$MODE" in
   check|verify)
@@ -216,24 +281,38 @@ mkdir -p "$CONFIG_DIR" 2>/dev/null || manual_fallback
 TMP="$MEMORY_FILE.fm-style.$$"
 trap 'rm -f "$TMP"' EXIT
 
-REMOVED_LEGACY=$(legacy_lines || true)
+REMOVED_LEGACY=$(legacy_lines) || memory_unreadable
+
+report_removed_legacy() {
+  local label=$1 l
+  [ -n "$REMOVED_LEGACY" ] || return 0
+  printf '%s\n' "$REMOVED_LEGACY" | while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    echo "captain-style: $label legacy import: $l"
+  done
+}
+
+# Kept out of the redirected group below so a read failure is reported and
+# refused, never captured as an empty body that then overwrites the file.
+BODY=$(strip_managed) || memory_unreadable
 
 if [ "$MODE" = uninstall ]; then
-  { strip_managed; } >"$TMP" 2>/dev/null || manual_fallback
-  if [ -s "$TMP" ]; then
-    printf '\n' >>"$TMP"
+  if [ -n "$BODY" ]; then
+    printf '%s\n' "$BODY" >"$TMP" 2>/dev/null || manual_fallback
     mv "$TMP" "$MEMORY_FILE" 2>/dev/null || manual_fallback
   else
     rm -f "$TMP"
     rm -f "$MEMORY_FILE" 2>/dev/null || manual_fallback
   fi
   trap - EXIT
+  # --uninstall unwires completely, legacy lines included. Say which ones went,
+  # so removing content this script never wrote is never silent.
+  report_removed_legacy removed
   echo "captain-style: removed from $MEMORY_FILE"
   exit 0
 fi
 
 {
-  BODY=$(strip_managed)
   if [ -n "$BODY" ]; then
     printf '%s\n\n' "$BODY"
   fi
@@ -243,10 +322,5 @@ fi
 mv "$TMP" "$MEMORY_FILE" 2>/dev/null || manual_fallback
 trap - EXIT
 
-if [ -n "$REMOVED_LEGACY" ]; then
-  printf '%s\n' "$REMOVED_LEGACY" | while IFS= read -r l; do
-    [ -n "$l" ] || continue
-    echo "captain-style: replaced legacy import: $l"
-  done
-fi
+report_removed_legacy replaced
 report_status
