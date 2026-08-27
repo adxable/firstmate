@@ -17,16 +17,21 @@
 # different username or a relocated home directory, and falls back to an
 # absolute path for a clone outside $HOME. Run --verify after any move.
 #
-# Writes only its own marker-delimited block. Any other content in the memory
-# file is preserved byte for byte, and a repeat run replaces the block rather
-# than appending a second one. When the memory file cannot be read, nothing is
-# written at all; when it cannot be written, the exact import line and target
-# file are printed as an explicit manual step. Neither case is skipped quietly.
+# The memory file belongs to its owner, not to this script. Every line before
+# the BEGIN marker and after the END marker is passed through unchanged, the
+# block is refreshed where it already sits rather than moved to the end, and a
+# repeat run is byte-identical. The single deliberate exception is the legacy
+# machine-specific @import of this same style file, which is what this script
+# replaces, and every such line is named in the run output.
 #
-# The pre-installer wiring - a bare "# Styl odpowiedzi" heading plus one
-# machine-specific @import of the same style file - is replaced rather than
-# left beside the managed block, and the heading goes with it when the removal
-# leaves it with no body of its own.
+# Nothing is skipped quietly and the extent of the block is never guessed. When
+# the memory file cannot be read, when its BEGIN marker has no matching END
+# marker, or when the file cannot be written, nothing is written at all and the
+# exact import line and target file are printed as an explicit manual step.
+#
+# A memory file that is a symlink stays a symlink: the content is written to the
+# file the link resolves to, that real path is printed, and a dangling link is
+# refused rather than quietly replaced with a regular file.
 #
 # Usage:
 #   fm-install-captain-style.sh [--dry-run]   install or refresh the block
@@ -126,14 +131,20 @@ resolve_import() {
   esac
 }
 
-installed_import_line() {
-  [ -f "$MEMORY_FILE" ] || return 1
-  awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
-    $0 == b { inblock = 1; next }
-    $0 == e { inblock = 0; next }
-    inblock && /^@/ { print; found = 1 }
-    END { exit found ? 0 : 1 }
-  ' "$MEMORY_FILE"
+# Follow a symlink chain by hand: macOS ships no readlink -f, and the point is
+# to learn the real path so the write lands on it instead of on the link.
+resolve_link() {
+  local path=$1 target depth=0
+  while [ -L "$path" ]; do
+    depth=$((depth + 1))
+    [ "$depth" -le 40 ] || return 1
+    target=$(readlink "$path") || return 1
+    case "$target" in
+      /*) path=$target ;;
+      *) path="$(dirname "$path")/$target" ;;
+    esac
+  done
+  printf '%s\n' "$path"
 }
 
 render_block() {
@@ -146,94 +157,101 @@ render_block() {
   printf '%s\n' "$END_MARK"
 }
 
-# One awk program answers both questions the callers have about the memory file,
-# so the body that gets written and the list of lines the run silently would
-# have dropped can never disagree: mode=body prints what survives, mode=orphans
-# prints the headings the legacy-import removal leaves with nothing to label.
-#
-# Array subscripts are strings in awk, so every index taken back out of `cut`
-# is bound through `+ 0` before it is compared. Without that, `k <= p` is a
-# string comparison under POSIX typing (gawk, mawk) and the drop range either
-# runs away past the end of the file or collapses to nothing, depending on how
-# the two indices sort as text.
-# shellcheck disable=SC2016 # $0 and the rest belong to awk, not to this shell.
-STRIP_AWK='
-  $0 == b { inblock = 1; next }
-  $0 == e { inblock = 0; next }
-  inblock { next }
-  # The pre-installer wiring was a bare heading plus one absolute @import.
-  /^@.*\/docs\/styl-kapitanski\.md[[:space:]]*$/ { cut[n] = 1; next }
-  { out[++n] = $0 }
+installed_import_line() {
+  [ -f "$MEMORY_TARGET" ] || return 1
+  awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+    $0 == b { inblock = 1; next }
+    $0 == e { inblock = 0; next }
+    inblock && /^@/ { print; found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$MEMORY_TARGET"
+}
+
+# Report on the markers without changing anything. A BEGIN with no END means the
+# block has no knowable extent, so this prints why and exits non-zero rather
+# than letting a rewrite guess and swallow the rest of the file.
+# shellcheck disable=SC2016 # $0 and NR belong to awk, not to this shell.
+VALIDATE_AWK='
+  $0 == b {
+    if (inblock) {
+      bad = "a second BEGIN marker at line " NR " opens inside the block that began at line " bl
+      exit 2
+    }
+    inblock = 1
+    bl = NR
+    next
+  }
+  $0 == e {
+    if (!inblock) {
+      bad = "an END marker at line " NR " has no BEGIN marker above it"
+      exit 2
+    }
+    inblock = 0
+    next
+  }
   END {
-    # A legacy import removed after out[p] orphans the heading above it only
-    # when nothing but blank lines separated them and nothing but blank lines
-    # follows before the next heading or the end of the file.
-    for (key in cut) {
-      p = key + 0
-      h = p
-      while (h > 0 && out[h] ~ /^[[:space:]]*$/) h--
-      if (h == 0 || out[h] !~ /^#+[[:space:]]*Styl odpowiedzi[[:space:]]*$/) continue
-      j = p + 1
-      while (j <= n && out[j] ~ /^[[:space:]]*$/) j++
-      if (j <= n && out[j] !~ /^#/) continue
-      for (k = h; k <= p; k++) drop[k] = 1
+    if (bad == "" && inblock) {
+      bad = "the BEGIN marker at line " bl " has no matching END marker"
     }
-    if (mode == "orphans") {
-      for (k = 1; k <= n; k++) {
-        if ((k in drop) && out[k] !~ /^[[:space:]]*$/) print out[k]
-      }
-      exit 0
-    }
-    last = n
-    while (last > 0 && (out[last] ~ /^[[:space:]]*$/ || (last in drop))) last--
-    for (k = 1; k <= last; k++) {
-      if (!(k in drop)) print out[k]
+    if (bad != "") {
+      print bad
+      exit 2
     }
   }
 '
 
-# Body of the memory file with the managed block and any legacy unmanaged
-# import of this same style file removed. A "# Styl odpowiedzi" heading that the
-# removal leaves with no body of its own goes too, so the pre-installer layout
-# does not survive as an empty duplicate section. Trailing blank lines are
-# trimmed so repeated runs converge instead of growing the file.
-#
-# Returns non-zero when the memory file exists but cannot be read or parsed. An
-# empty stdout means "there is nothing to keep" only when this succeeds; every
-# caller must check, or an unreadable file reads as an empty one and its content
-# is lost on the next write.
-strip_managed() {
-  if [ ! -e "$MEMORY_FILE" ]; then
-    return 0
-  fi
-  [ -f "$MEMORY_FILE" ] && [ -r "$MEMORY_FILE" ] || return 1
-  awk -v b="$BEGIN_MARK" -v e="$END_MARK" -v mode=body "$STRIP_AWK" "$MEMORY_FILE"
-}
+# Rewrite the file as prefix + block + suffix. The block is re-rendered where it
+# already sits, so nothing outside the markers moves; with no block present it
+# is appended after the existing content. blockfile empty means uninstall: the
+# block region is dropped and nothing replaces it.
+# shellcheck disable=SC2016 # $0 and NR belong to awk, not to this shell.
+SPLICE_AWK='
+  function put_block(   line) {
+    if (blockfile == "") return
+    while ((getline line < blockfile) > 0) print line
+    close(blockfile)
+  }
+  $0 == b {
+    inblock = 1
+    if (!seen) {
+      seen = 1
+      put_block()
+    }
+    next
+  }
+  $0 == e { inblock = 0; next }
+  inblock { next }
+  # The pre-installer wiring was one machine-specific @import of this same file.
+  /^@.*\/docs\/styl-kapitanski\.md[[:space:]]*$/ { next }
+  { print }
+  END {
+    if (!seen && blockfile != "") {
+      if (NR > 0) print ""
+      put_block()
+    }
+  }
+'
 
-# The headings strip_managed drops along with a legacy import, so removing text
-# the installer never wrote is announced rather than done behind the operator's
-# back.
-orphan_headings() {
-  [ -e "$MEMORY_FILE" ] || return 0
-  [ -f "$MEMORY_FILE" ] && [ -r "$MEMORY_FILE" ] || return 1
-  awk -v b="$BEGIN_MARK" -v e="$END_MARK" -v mode=orphans "$STRIP_AWK" "$MEMORY_FILE"
+memory_readable() {
+  [ ! -e "$MEMORY_TARGET" ] && return 0
+  [ -f "$MEMORY_TARGET" ] && [ -r "$MEMORY_TARGET" ]
 }
 
 legacy_lines() {
-  [ -e "$MEMORY_FILE" ] || return 0
-  [ -f "$MEMORY_FILE" ] && [ -r "$MEMORY_FILE" ] || return 1
+  [ -e "$MEMORY_TARGET" ] || return 0
+  memory_readable || return 1
   awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
     $0 == b { inblock = 1; next }
     $0 == e { inblock = 0; next }
     inblock { next }
     /^@.*\/docs\/styl-kapitanski\.md[[:space:]]*$/ { print }
-  ' "$MEMORY_FILE"
+  ' "$MEMORY_TARGET"
 }
 
 report_status() {
   local line target
   if ! line=$(installed_import_line); then
-    echo "captain-style: NOT INSTALLED (no managed block in $MEMORY_FILE)"
+    echo "captain-style: NOT INSTALLED (no managed block in $MEMORY_TARGET)"
     return 1
   fi
   target=$(resolve_import "${line#@}")
@@ -246,30 +264,81 @@ report_status() {
   return 1
 }
 
-# Refusing here keeps the "preserved byte for byte" promise: an existing memory
-# file this run cannot read is a file whose content this run cannot carry over,
-# so it is left exactly as it is and nothing is written anywhere.
-memory_unreadable() {
+manual_step() {
   cat >&2 <<EOF
-error: $MEMORY_FILE exists but could not be read
 
-Nothing was written and the existing file is untouched, because its content
-cannot be carried over into the new memory file.
+Do this by hand instead - the style rules do not load until it is done:
 
-Fix its permissions and re-run, or wire the rules by hand:
-
-  1. Make $MEMORY_FILE readable and writable, then re-run: $0
-  2. Or add these lines to it yourself:
+  1. Create or open $MEMORY_TARGET
+  2. Add these lines:
 
 $(render_block | sed 's/^/     /')
 
   3. Confirm with: $0 --verify
 EOF
+}
+
+# Refusing here keeps the pass-through promise: a memory file this run cannot
+# read is a file whose content this run cannot carry over, so it is left exactly
+# as it is and nothing is written anywhere.
+memory_unreadable() {
+  echo "error: $MEMORY_TARGET exists but could not be read" >&2
+  echo "Nothing was written and the existing file is untouched." >&2
+  manual_step
   exit 1
 }
 
-if [ -e "$MEMORY_FILE" ] && { [ ! -f "$MEMORY_FILE" ] || [ ! -r "$MEMORY_FILE" ]; }; then
-  memory_unreadable
+memory_block_corrupt() {
+  cat >&2 <<EOF
+error: the managed block in $MEMORY_TARGET is corrupt: $1
+
+Nothing was written and the existing file is untouched. This script owns only
+the region between these two lines and refuses to guess where it ends:
+
+  $BEGIN_MARK
+  $END_MARK
+
+Fix it by hand - either restore the missing marker or delete the block and its
+body outright - then re-run: $0
+EOF
+  exit 1
+}
+
+memory_link_broken() {
+  cat >&2 <<EOF
+error: $MEMORY_FILE is a symlink that cannot be written through: $1
+
+Nothing was written. Replacing the link with a regular file would detach it from
+wherever it points, so this script refuses instead.
+EOF
+  manual_step
+  exit 1
+}
+
+memory_unwritable() {
+  echo "error: could not write $MEMORY_TARGET" >&2
+  manual_step
+  exit 1
+}
+
+# Writes land on the file the link resolves to, never on the link itself, so a
+# memory file kept in a dotfiles repo stays wired to that repo.
+MEMORY_TARGET=$MEMORY_FILE
+if [ -L "$MEMORY_FILE" ]; then
+  MEMORY_TARGET=$(resolve_link "$MEMORY_FILE") ||
+    memory_link_broken "the chain is unreadable or longer than 40 links"
+  LINK_DIR=$(cd "$(dirname "$MEMORY_TARGET")" 2>/dev/null && pwd -P) ||
+    memory_link_broken "it points into $(dirname "$MEMORY_TARGET"), which does not exist"
+  MEMORY_TARGET="$LINK_DIR/$(basename "$MEMORY_TARGET")"
+  [ -e "$MEMORY_TARGET" ] ||
+    memory_link_broken "it points at $MEMORY_TARGET, which does not exist"
+fi
+
+memory_readable || memory_unreadable
+
+if [ -e "$MEMORY_TARGET" ]; then
+  BLOCK_PROBLEM=$(awk -v b="$BEGIN_MARK" -v e="$END_MARK" "$VALIDATE_AWK" "$MEMORY_TARGET") ||
+    memory_block_corrupt "$BLOCK_PROBLEM"
 fi
 
 case "$MODE" in
@@ -279,88 +348,85 @@ case "$MODE" in
 esac
 
 if [ "$MODE" = dry-run ]; then
-  echo "would write to: $MEMORY_FILE"
+  echo "would write to: $MEMORY_TARGET"
+  if [ "$MEMORY_TARGET" != "$MEMORY_FILE" ]; then
+    echo "would write through the symlink at: $MEMORY_FILE"
+  fi
   legacy_lines | while IFS= read -r l; do
     [ -n "$l" ] || continue
     echo "would replace legacy import: $l"
-  done
-  orphan_headings | while IFS= read -r l; do
-    [ -n "$l" ] || continue
-    echo "would remove heading left with no content: $l"
   done
   echo "--- managed block ---"
   render_block
   exit 0
 fi
 
-manual_fallback() {
-  cat >&2 <<EOF
-error: could not write $MEMORY_FILE
+mkdir -p "$CONFIG_DIR" 2>/dev/null || memory_unwritable
 
-Do this by hand instead - the style rules do not load until it is done:
+if [ -e "$MEMORY_TARGET" ] && [ ! -w "$MEMORY_TARGET" ]; then
+  memory_unwritable
+fi
 
-  1. Create or open $MEMORY_FILE
-  2. Add these lines:
-
-$(render_block | sed 's/^/     /')
-
-  3. Confirm with: $0 --verify
-EOF
-  exit 1
-}
-
-mkdir -p "$CONFIG_DIR" 2>/dev/null || manual_fallback
-
-TMP="$MEMORY_FILE.fm-style.$$"
-trap 'rm -f "$TMP"' EXIT
+# Both temporaries sit beside the resolved target, so the rename that publishes
+# the new content stays within one filesystem.
+TMP="$MEMORY_TARGET.fm-style.$$"
+BLOCK_TMP="$MEMORY_TARGET.fm-style-block.$$"
+trap 'rm -f "$TMP" "$BLOCK_TMP"' EXIT
 
 REMOVED_LEGACY=$(legacy_lines) || memory_unreadable
-REMOVED_HEADINGS=$(orphan_headings) || memory_unreadable
 
-report_lines() {
-  local prefix=$1 lines=$2 l
-  [ -n "$lines" ] || return 0
-  printf '%s\n' "$lines" | while IFS= read -r l; do
+report_removed_legacy() {
+  local label=$1 l
+  [ -n "$REMOVED_LEGACY" ] || return 0
+  printf '%s\n' "$REMOVED_LEGACY" | while IFS= read -r l; do
     [ -n "$l" ] || continue
-    echo "captain-style: $prefix: $l"
+    echo "captain-style: $label legacy import: $l"
   done
 }
 
-# Both paths remove text this script never wrote, so both name it line by line.
-report_removed_legacy() {
-  report_lines "$1 legacy import" "$REMOVED_LEGACY"
-  report_lines "removed heading left with no content by that import" "$REMOVED_HEADINGS"
-}
-
-# Kept out of the redirected group below so a read failure is reported and
-# refused, never captured as an empty body that then overwrites the file.
-BODY=$(strip_managed) || memory_unreadable
-
 if [ "$MODE" = uninstall ]; then
-  if [ -n "$BODY" ]; then
-    printf '%s\n' "$BODY" >"$TMP" 2>/dev/null || manual_fallback
-    mv "$TMP" "$MEMORY_FILE" 2>/dev/null || manual_fallback
-  else
-    rm -f "$TMP"
-    rm -f "$MEMORY_FILE" 2>/dev/null || manual_fallback
-  fi
+  : >"$BLOCK_TMP" 2>/dev/null || memory_unwritable
+  BLOCK_ARG=
+else
+  render_block >"$BLOCK_TMP" 2>/dev/null || memory_unwritable
+  BLOCK_ARG=$BLOCK_TMP
+fi
+
+# An existing target seeds the temporary file so the rename keeps the mode the
+# operator gave it instead of resetting it to whatever the umask says.
+if [ -e "$MEMORY_TARGET" ]; then
+  cp "$MEMORY_TARGET" "$TMP" 2>/dev/null || memory_unwritable
+  awk -v b="$BEGIN_MARK" -v e="$END_MARK" -v blockfile="$BLOCK_ARG" \
+    "$SPLICE_AWK" "$MEMORY_TARGET" >"$TMP" 2>/dev/null || memory_unwritable
+else
+  awk -v b="$BEGIN_MARK" -v e="$END_MARK" -v blockfile="$BLOCK_ARG" \
+    "$SPLICE_AWK" /dev/null >"$TMP" 2>/dev/null || memory_unwritable
+fi
+
+if [ "$MODE" = uninstall ] && [ ! -s "$TMP" ] && [ "$MEMORY_TARGET" = "$MEMORY_FILE" ]; then
+  rm -f "$TMP" "$BLOCK_TMP"
+  rm -f "$MEMORY_TARGET" 2>/dev/null || memory_unwritable
   trap - EXIT
   # --uninstall unwires completely, legacy lines included. Say which ones went,
   # so removing content this script never wrote is never silent.
   report_removed_legacy removed
-  echo "captain-style: removed from $MEMORY_FILE"
+  echo "captain-style: removed from $MEMORY_TARGET"
   exit 0
 fi
 
-{
-  if [ -n "$BODY" ]; then
-    printf '%s\n\n' "$BODY"
-  fi
-  render_block
-} >"$TMP" 2>/dev/null || manual_fallback
-
-mv "$TMP" "$MEMORY_FILE" 2>/dev/null || manual_fallback
+mv "$TMP" "$MEMORY_TARGET" 2>/dev/null || memory_unwritable
+rm -f "$BLOCK_TMP"
 trap - EXIT
+
+if [ "$MEMORY_TARGET" != "$MEMORY_FILE" ]; then
+  echo "captain-style: wrote $MEMORY_TARGET through the symlink at $MEMORY_FILE"
+fi
+
+if [ "$MODE" = uninstall ]; then
+  report_removed_legacy removed
+  echo "captain-style: removed from $MEMORY_TARGET"
+  exit 0
+fi
 
 report_removed_legacy replaced
 report_status
