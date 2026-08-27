@@ -144,6 +144,9 @@ A crewmate using delegation tools inside its own task worktree is legitimate and
 A non-firstmate repo is out of scope.
 Any failure to confirm the home is inert, never a block, so a broken environment can never deny a tool call.
 
+The scope predicate runs before the payload is read, because it is the only step that needs no payload.
+An out-of-scope home therefore exits 0 without touching stdin, so a harness that holds its payload pipe open can never wedge a worker session on a guard that was always going to be inert there.
+
 A local Claude deny list is upstream of hook scope and removes known Claude delegation tools wherever Claude applies it.
 Do not put that list in tracked project settings, because linked worktrees inherit those settings and would lose legitimate delegation tools.
 The hook scope is the shipped enforcement boundary, and the linked-worktree negative case proves the script itself does not block legitimate crewmate delegation.
@@ -353,7 +356,7 @@ The live consequence is confirmed by the shipped-guard result above: Claude hono
 ## Automated validation
 
 `tests/fm-subagent-pretool-check.test.sh` owns the acceptance matrix and is registered in the `pure-contract-unit` family in `bin/fm-test-run.sh`.
-It covers the tracked Claude settings boundary that forbids a `permissions` key; the match-all Claude hook registration; denial of every work-creating delegation tool by shape; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop, plan-only, and MCP exclusions; the exactness of the plan-only exclusion against six near-miss names a substring or shorter-stem widening would release; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
+It covers the tracked Claude settings boundary that forbids a `permissions` key; the match-all Claude hook registration; denial of every work-creating delegation tool by shape; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop, plan-only, and MCP exclusions; the exactness of the plan-only exclusion against six near-miss names a substring or shorter-stem widening would release; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; the scope-before-stdin ordering, where an out-of-scope task worktree exits 0 within a bounded deadline against a stdin pipe that is never closed; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
 
 Run:
 

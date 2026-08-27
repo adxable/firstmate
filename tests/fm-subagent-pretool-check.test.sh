@@ -205,6 +205,23 @@ test_task_worktree_and_non_firstmate_repo_are_inert() {
   pass "the guard is inert in a crewmate task worktree and in a non-firstmate repo"
 }
 
+# A harness can hand a hook a payload pipe it never closes. An out-of-scope home
+# must decide it is inert without reading that pipe, or the guard wedges the
+# whole worker session on a call it was never going to deny. This pins the
+# ordering: scope first, payload second.
+test_out_of_scope_decided_without_reading_stdin() {
+  local base="$TMP_ROOT/stdin-order-base" child="$TMP_ROOT/stdin-order-wt" rc
+  fm_git_init_commit "$base"
+  git -C "$base" worktree add -q -b stdin-order-child "$child"
+  mkdir -p "$child/bin" "$child/state"
+  printf '# fixture\n' > "$child/AGENTS.md"
+  rc=$(FM_ROOT_OVERRIDE="$child" FM_HOME="$child" FM_STATE_OVERRIDE="$child/state" \
+    fm_run_open_stdin_deadline 5 "$CHECK" --claude)
+  [ "$rc" != 124 ] || fail "the guard blocked on an open stdin pipe in an out-of-scope task worktree"
+  [ "$rc" -eq 0 ] || fail "the guard must exit 0 in an out-of-scope task worktree without reading stdin, got exit $rc"
+  pass "an out-of-scope task worktree exits 0 without waiting on an unclosed stdin pipe"
+}
+
 test_secondmate_home_is_in_scope() {
   local second="$TMP_ROOT/second" rc=0
   git -C "$PRIMARY" worktree add -q -b fixture-second "$second"
@@ -260,12 +277,16 @@ test_malformed_transport_fails_open() {
 }
 
 test_missing_jq_stdin_transport_fails_open() {
-  local fakebin="$TMP_ROOT/no-jq-bin" bash_bin cat_bin rc=0
-  bash_bin=$(command -v bash) || fail "test needs bash to simulate the hook shebang"
-  cat_bin=$(command -v cat) || fail "test needs cat to feed stdin without jq"
+  local fakebin="$TMP_ROOT/no-jq-bin" tool tool_path rc=0
   mkdir -p "$fakebin"
-  ln -sf "$bash_bin" "$fakebin/bash"
-  ln -sf "$cat_bin" "$fakebin/cat"
+  # dirname and git are required as well as bash and cat: the guard resolves its
+  # primary-home scope before it reads the payload, so a PATH without them would
+  # make this case exit on the scope check and never reach the jq transport it is
+  # pinning.
+  for tool in bash cat dirname git; do
+    tool_path=$(command -v "$tool") || fail "test needs $tool on PATH"
+    ln -sf "$tool_path" "$fakebin/$tool"
+  done
   : > "$OUT"; : > "$ERR"
   printf '%s' '{"tool_name":"Agent"}' \
     | env PATH="$fakebin" FM_ROOT_OVERRIDE="$PRIMARY" FM_HOME="$PRIMARY" FM_STATE_OVERRIDE="$STATE" \
@@ -286,6 +307,7 @@ test_deny_message_defers_to_intake_classification
 test_escape_hatch_allows_deliberate_use
 test_task_worktree_and_non_firstmate_repo_are_inert
 test_secondmate_home_is_in_scope
+test_out_of_scope_decided_without_reading_stdin
 test_stdin_transports_and_output_shapes
 test_malformed_transport_fails_open
 test_missing_jq_stdin_transport_fails_open
