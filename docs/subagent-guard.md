@@ -146,6 +146,7 @@ Any failure to confirm the home is inert, never a block, so a broken environment
 
 The scope predicate runs before the payload is read, because it is the only step that needs no payload.
 An out-of-scope home therefore exits 0 without touching stdin, so a harness that holds its payload pipe open can never wedge a worker session on a guard that was always going to be inert there.
+Because that predicate is loaded on every tool call rather than only on a delegation-shaped one, an unreadable or unsourceable `bin/fm-primary-scope-lib.sh` counts as one more unconfirmable home: inert, silent, and never a block.
 
 A local Claude deny list is upstream of hook scope and removes known Claude delegation tools wherever Claude applies it.
 Do not put that list in tracked project settings, because linked worktrees inherit those settings and would lose legitimate delegation tools.

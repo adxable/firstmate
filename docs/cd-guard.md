@@ -84,6 +84,7 @@ It does not permit `cd /home/project`, because an absolute-path `cd` remains a p
 
 Processing order is the primary-checkout scope, then a strict-superset prefilter, then the Node policy owner.
 The scope test comes first because it is the only step that needs no payload: an out-of-scope checkout exits 0 without reading stdin at all, so a harness that holds its payload pipe open can never wedge a worker session on a guard that was always going to be inert there.
+The order costs a primary checkout two `git rev-parse` calls on every Bash tool call, before the prefilter can fast-allow anything: that is latency only, never a different decision, and it is unavoidable while scope must precede the payload read.
 The prefilter removes ordinary single quotes, double quotes, backslashes, carriage returns, and newlines before fast-allowing any command that carries no `cd`, `pushd`, or `popd` substring and no quoting-decoder marker (`$'` ANSI-C or `$"` locale), so quoted or escaped command-word fragments delegate to the policy while most in-scope commands never pay for the Node process.
 The quoting-decoder marker set is coupled to the classifier's decoder set in `bin/fm-arm-command-policy.mjs`: adding any new quote or expansion form the classifier decodes requires extending the prefilter marker set in the same change, or it stops being a strict superset.
 
