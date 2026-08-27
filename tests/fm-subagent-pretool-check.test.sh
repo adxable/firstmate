@@ -283,7 +283,9 @@ test_missing_jq_stdin_transport_fails_open() {
   # primary-home scope before it reads the payload, so a PATH without them would
   # make this case exit on the scope check and never reach the jq transport it is
   # pinning.
-  for tool in bash cat dirname git; do
+  # tr and sed belong to the deny path the paired control below drives; they are
+  # never reached while jq is absent.
+  for tool in bash cat dirname git tr sed; do
     tool_path=$(command -v "$tool") || fail "test needs $tool on PATH"
     ln -sf "$tool_path" "$fakebin/$tool"
   done
@@ -294,7 +296,28 @@ test_missing_jq_stdin_transport_fails_open() {
   [ "$rc" -eq 0 ] || fail "missing jq transport must fail open, got exit $rc: $(cat "$ERR")"
   [ ! -s "$OUT" ] || fail "missing jq fail-open path wrote stdout: $(cat "$OUT")"
   [ ! -s "$ERR" ] || fail "missing jq fail-open path wrote stderr: $(cat "$ERR")"
-  pass "missing jq for stdin transport fails open rather than denying every tool call"
+
+  # Positive control on the same stripped PATH plus jq. Without it the case above
+  # would still report green if this PATH ever stopped resolving git, because the
+  # guard would exit at the scope check with both streams empty and exit 0 - the
+  # very shape the fail-open assertions accept. The control denies only if scope
+  # really resolves and classification really runs, so the pair fails loudly
+  # instead of passing vacuously.
+  rc=0
+  tool_path=$(command -v jq) || fail "test needs jq on PATH"
+  ln -sf "$tool_path" "$fakebin/jq"
+  : > "$OUT"; : > "$ERR"
+  printf '%s' '{"tool_name":"Agent"}' \
+    | env PATH="$fakebin" FM_ROOT_OVERRIDE="$PRIMARY" FM_HOME="$PRIMARY" FM_STATE_OVERRIDE="$STATE" \
+      "$CHECK" --claude > "$OUT" 2> "$ERR" || rc=$?
+  [ "$rc" -eq 2 ] || fail "control: the same PATH with jq must deny, got exit $rc: $(cat "$ERR")"
+  [ ! -s "$OUT" ] || fail "control: Claude deny wrote stdout: $(cat "$OUT")"
+  jq -e '.hookSpecificOutput.hookEventName == "PreToolUse" and .hookSpecificOutput.permissionDecision == "deny"' "$ERR" >/dev/null 2>&1 \
+    || fail "control: deny omitted Claude's permission decision: $(cat "$ERR")"
+  jq -e '.systemMessage | startswith("[subagent-dispatch]") and contains("blocked tool: Agent")' "$ERR" >/dev/null 2>&1 \
+    || fail "control: deny message lost its code or tool name: $(cat "$ERR")"
+  rm -f "$fakebin/jq"
+  pass "missing jq for stdin transport fails open while the same PATH with jq still denies"
 }
 
 test_guard_denies_every_currently_known_delegation_tool
