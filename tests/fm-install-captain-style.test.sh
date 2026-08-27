@@ -4,7 +4,7 @@
 # machine's real user-level memory file is never read or written.
 set -u
 
-# shellcheck source=tests/lib.sh
+# shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-install-captain-style)
@@ -59,6 +59,10 @@ test_install_inside_home_writes_home_relative_import() {
   assert_no_grep "$home" "$memory" \
     "the import line hardcoded this machine's absolute home path"
   assert_contains "$out" "captain-style: installed" "install did not report success"
+  # The written file is the one path an operator has to inspect or undo, so a
+  # plain install names it too, not only the symlink case.
+  assert_contains "$out" "wrote $(real_path "$memory")" \
+    "a plain install did not print the file it wrote"
   pass "fm-install-captain-style.sh: a checkout under HOME gets a home-relative import"
 }
 

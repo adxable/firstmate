@@ -10,10 +10,11 @@
 # location instead, so setting firstmate up on a new machine never involves
 # guessing one.
 #
-# Measured against Claude Code 2.1.220: ~/.claude/CLAUDE.md resolves an @import
-# written as an absolute path, as a ~/-relative path, and as a path relative to
-# the importing file's own directory. This script prefers the ~/-relative form
-# whenever the repo sits under $HOME, because that form also survives a
+# Measured against Claude Code 2.1.220 and re-measured on 2.1.247, where the two
+# mechanisms this wiring rests on were confirmed separately: an @import path is
+# followed after ~ expansion, and user-level memory follows an import whose
+# target lives outside the config directory. This script prefers the ~/-relative
+# form whenever the repo sits under $HOME, because that form also survives a
 # different username or a relocated home directory, and falls back to an
 # absolute path for a clone outside $HOME. Run --verify after any move.
 #
@@ -418,8 +419,16 @@ mv "$TMP" "$MEMORY_TARGET" 2>/dev/null || memory_unwritable
 rm -f "$BLOCK_TMP"
 trap - EXIT
 
+# Always name the file this run actually wrote. Without this, a plain install
+# reported only the import line and the style file it resolves to, leaving the
+# one path the operator has to inspect or undo unnamed. The directory exists by
+# now, so the name is resolved physically and matches the symlink branch instead
+# of echoing whatever separators and unresolved links $HOME happened to carry.
+WROTE_PATH="$(cd "$(dirname "$MEMORY_TARGET")" && pwd -P)/$(basename "$MEMORY_TARGET")"
 if [ "$MEMORY_TARGET" != "$MEMORY_FILE" ]; then
-  echo "captain-style: wrote $MEMORY_TARGET through the symlink at $MEMORY_FILE"
+  echo "captain-style: wrote $WROTE_PATH through the symlink at $MEMORY_FILE"
+else
+  echo "captain-style: wrote $WROTE_PATH"
 fi
 
 if [ "$MODE" = uninstall ]; then
