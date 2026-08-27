@@ -167,6 +167,133 @@ test_a_legacy_heading_that_still_has_content_is_kept() {
   pass "fm-install-captain-style.sh: a legacy heading that still has content is kept"
 }
 
+# Legacy wiring placed deep enough in the file that the heading and the import
+# straddle the 9-to-10 boundary where index-as-text ordering stops agreeing with
+# index-as-number ordering. <shift> moves the whole layout by that many lines,
+# which is what selects the two failure directions the review named.
+write_deep_legacy_fixture() {
+  local memory=$1 shift_by=$2 i
+  : >"$memory"
+  i=0
+  while [ "$i" -lt "$shift_by" ]; do
+    i=$((i + 1))
+    printf 'note %s\n' "$i" >>"$memory"
+  done
+  printf '# Styl odpowiedzi\n\n@/Users/someone-else/Projects/firstmate/docs/styl-kapitanski.md\n\n# My own notes\n\nKeep me.\n' \
+    >>"$memory"
+}
+
+assert_deep_legacy_fixture_survived() {
+  local memory=$1 shift_by=$2 label=$3 outside i
+  outside=$(memory_outside_block "$memory")
+  i=0
+  while [ "$i" -lt "$shift_by" ]; do
+    i=$((i + 1))
+    assert_contains "$outside" "note $i" "$label: 'note $i' was deleted with the legacy import"
+  done
+  assert_contains "$outside" '# My own notes' \
+    "$label: the heading after the legacy import was deleted"
+  assert_contains "$outside" 'Keep me.' \
+    "$label: content after the legacy import was deleted"
+  assert_not_contains "$outside" 'Styl odpowiedzi' \
+    "$label: the orphaned legacy heading survived its import"
+  assert_no_grep 'someone-else' "$memory" "$label: the stale machine-specific import survived"
+}
+
+test_deep_legacy_import_drops_only_its_own_heading() {
+  local home checkout memory out shift_by
+  # Seven leading notes put the import at kept-index 9 and the heading at 8:
+  # as text, every later index still sorts below "9", so a string-typed drop
+  # range runs past the end of the file and eats the notes underneath.
+  shift_by=7
+  home="$TMP_ROOT/deep-legacy/home"
+  checkout="$home/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  write_deep_legacy_fixture "$memory" "$shift_by"
+
+  out=$(run_install "$checkout" "$home") || fail "install failed: $out"
+  assert_deep_legacy_fixture_survived "$memory" "$shift_by" "import at kept-index 9"
+  pass "fm-install-captain-style.sh: a legacy import at kept-index 9 drops only its own heading"
+}
+
+test_legacy_import_past_the_two_digit_boundary_drops_its_heading() {
+  local home checkout memory out shift_by
+  # Eight leading notes put the heading at kept-index 9 and the import at 10:
+  # the mirror case, where a string-typed range is empty and the orphaned
+  # heading would survive instead.
+  shift_by=8
+  home="$TMP_ROOT/deep-legacy-mirror/home"
+  checkout="$home/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  write_deep_legacy_fixture "$memory" "$shift_by"
+
+  out=$(run_install "$checkout" "$home") || fail "install failed: $out"
+  assert_deep_legacy_fixture_survived "$memory" "$shift_by" "heading at kept-index 9"
+  pass "fm-install-captain-style.sh: a legacy import at kept-index 10 still drops its orphaned heading"
+}
+
+test_deep_legacy_fixture_holds_under_a_posix_awk() {
+  local home checkout memory shim out alt cand shift_by
+  alt=""
+  for cand in gawk mawk; do
+    if command -v "$cand" >/dev/null 2>&1; then
+      alt=$(command -v "$cand")
+      break
+    fi
+  done
+  if [ -z "$alt" ]; then
+    # Never silent: without this line a missing interpreter is indistinguishable
+    # from real coverage of POSIX array-subscript typing.
+    printf 'skip: POSIX-awk leg needs gawk or mawk, neither is installed (one-true-awk only)\n'
+    return 0
+  fi
+
+  shift_by=7
+  home="$TMP_ROOT/posix-awk/home"
+  checkout="$home/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  write_deep_legacy_fixture "$memory" "$shift_by"
+
+  shim="$TMP_ROOT/posix-awk/shim"
+  mkdir -p "$shim"
+  printf '#!/bin/sh\nexec %s "$@"\n' "$alt" >"$shim/awk"
+  chmod +x "$shim/awk"
+
+  out=$(env PATH="$shim:$PATH" HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" \
+    "$checkout/bin/fm-install-captain-style.sh" 2>&1) \
+    || fail "install under $alt failed: $out"
+  assert_deep_legacy_fixture_survived "$memory" "$shift_by" "under $alt"
+  pass "fm-install-captain-style.sh: the orphan-heading range holds under $alt"
+}
+
+test_orphaned_heading_removal_is_reported_on_both_paths() {
+  local home checkout memory out
+  home="$TMP_ROOT/heading-report/home"
+  checkout="$home/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  printf '# Styl odpowiedzi\n\n@/Users/someone-else/Projects/firstmate/docs/styl-kapitanski.md\n\n# My own notes\n\nKeep me.\n' \
+    >"$memory"
+
+  out=$(run_install "$checkout" "$home") || fail "install failed: $out"
+  assert_contains "$out" "heading left with no content by that import: # Styl odpowiedzi" \
+    "install removed the orphaned heading without reporting it"
+
+  # Same layout again, taken straight to --uninstall, which never wrote a block.
+  write_deep_legacy_fixture "$memory" 2
+  out=$(run_install "$checkout" "$home" --uninstall) || fail "--uninstall failed: $out"
+  assert_contains "$out" "heading left with no content by that import: # Styl odpowiedzi" \
+    "--uninstall removed the orphaned heading without reporting it"
+  pass "fm-install-captain-style.sh: a dropped orphaned heading is reported on both paths"
+}
+
 test_unreadable_memory_file_is_refused_without_losing_content() {
   local home checkout memory out rc before
   home="$TMP_ROOT/unreadable/home"
@@ -313,6 +440,10 @@ test_home_relative_import_survives_a_relocated_home
 test_repeat_run_is_idempotent_and_keeps_other_content
 test_legacy_absolute_import_is_replaced_not_duplicated
 test_a_legacy_heading_that_still_has_content_is_kept
+test_deep_legacy_import_drops_only_its_own_heading
+test_legacy_import_past_the_two_digit_boundary_drops_its_heading
+test_deep_legacy_fixture_holds_under_a_posix_awk
+test_orphaned_heading_removal_is_reported_on_both_paths
 test_unreadable_memory_file_is_refused_without_losing_content
 test_help_documents_the_modes_and_a_bad_flag_fails
 test_check_reports_missing_and_broken_wiring

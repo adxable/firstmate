@@ -146,6 +146,52 @@ render_block() {
   printf '%s\n' "$END_MARK"
 }
 
+# One awk program answers both questions the callers have about the memory file,
+# so the body that gets written and the list of lines the run silently would
+# have dropped can never disagree: mode=body prints what survives, mode=orphans
+# prints the headings the legacy-import removal leaves with nothing to label.
+#
+# Array subscripts are strings in awk, so every index taken back out of `cut`
+# is bound through `+ 0` before it is compared. Without that, `k <= p` is a
+# string comparison under POSIX typing (gawk, mawk) and the drop range either
+# runs away past the end of the file or collapses to nothing, depending on how
+# the two indices sort as text.
+# shellcheck disable=SC2016 # $0 and the rest belong to awk, not to this shell.
+STRIP_AWK='
+  $0 == b { inblock = 1; next }
+  $0 == e { inblock = 0; next }
+  inblock { next }
+  # The pre-installer wiring was a bare heading plus one absolute @import.
+  /^@.*\/docs\/styl-kapitanski\.md[[:space:]]*$/ { cut[n] = 1; next }
+  { out[++n] = $0 }
+  END {
+    # A legacy import removed after out[p] orphans the heading above it only
+    # when nothing but blank lines separated them and nothing but blank lines
+    # follows before the next heading or the end of the file.
+    for (key in cut) {
+      p = key + 0
+      h = p
+      while (h > 0 && out[h] ~ /^[[:space:]]*$/) h--
+      if (h == 0 || out[h] !~ /^#+[[:space:]]*Styl odpowiedzi[[:space:]]*$/) continue
+      j = p + 1
+      while (j <= n && out[j] ~ /^[[:space:]]*$/) j++
+      if (j <= n && out[j] !~ /^#/) continue
+      for (k = h; k <= p; k++) drop[k] = 1
+    }
+    if (mode == "orphans") {
+      for (k = 1; k <= n; k++) {
+        if ((k in drop) && out[k] !~ /^[[:space:]]*$/) print out[k]
+      }
+      exit 0
+    }
+    last = n
+    while (last > 0 && (out[last] ~ /^[[:space:]]*$/ || (last in drop))) last--
+    for (k = 1; k <= last; k++) {
+      if (!(k in drop)) print out[k]
+    }
+  }
+'
+
 # Body of the memory file with the managed block and any legacy unmanaged
 # import of this same style file removed. A "# Styl odpowiedzi" heading that the
 # removal leaves with no body of its own goes too, so the pre-installer layout
@@ -161,33 +207,16 @@ strip_managed() {
     return 0
   fi
   [ -f "$MEMORY_FILE" ] && [ -r "$MEMORY_FILE" ] || return 1
-  awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
-    $0 == b { inblock = 1; next }
-    $0 == e { inblock = 0; next }
-    inblock { next }
-    # The pre-installer wiring was a bare heading plus one absolute @import.
-    /^@.*\/docs\/styl-kapitanski\.md[[:space:]]*$/ { cut[n] = 1; next }
-    { out[++n] = $0 }
-    END {
-      # A legacy import removed after out[p] orphans the heading above it only
-      # when nothing but blank lines separated them and nothing but blank lines
-      # follows before the next heading or the end of the file.
-      for (p in cut) {
-        h = p + 0
-        while (h > 0 && out[h] ~ /^[[:space:]]*$/) h--
-        if (h == 0 || out[h] !~ /^#+[[:space:]]*Styl odpowiedzi[[:space:]]*$/) continue
-        j = p + 1
-        while (j <= n && out[j] ~ /^[[:space:]]*$/) j++
-        if (j <= n && out[j] !~ /^#/) continue
-        for (k = h; k <= p; k++) drop[k] = 1
-      }
-      last = n
-      while (last > 0 && (out[last] ~ /^[[:space:]]*$/ || (last in drop))) last--
-      for (k = 1; k <= last; k++) {
-        if (!(k in drop)) print out[k]
-      }
-    }
-  ' "$MEMORY_FILE"
+  awk -v b="$BEGIN_MARK" -v e="$END_MARK" -v mode=body "$STRIP_AWK" "$MEMORY_FILE"
+}
+
+# The headings strip_managed drops along with a legacy import, so removing text
+# the installer never wrote is announced rather than done behind the operator's
+# back.
+orphan_headings() {
+  [ -e "$MEMORY_FILE" ] || return 0
+  [ -f "$MEMORY_FILE" ] && [ -r "$MEMORY_FILE" ] || return 1
+  awk -v b="$BEGIN_MARK" -v e="$END_MARK" -v mode=orphans "$STRIP_AWK" "$MEMORY_FILE"
 }
 
 legacy_lines() {
@@ -255,6 +284,10 @@ if [ "$MODE" = dry-run ]; then
     [ -n "$l" ] || continue
     echo "would replace legacy import: $l"
   done
+  orphan_headings | while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    echo "would remove heading left with no content: $l"
+  done
   echo "--- managed block ---"
   render_block
   exit 0
@@ -282,14 +315,21 @@ TMP="$MEMORY_FILE.fm-style.$$"
 trap 'rm -f "$TMP"' EXIT
 
 REMOVED_LEGACY=$(legacy_lines) || memory_unreadable
+REMOVED_HEADINGS=$(orphan_headings) || memory_unreadable
 
-report_removed_legacy() {
-  local label=$1 l
-  [ -n "$REMOVED_LEGACY" ] || return 0
-  printf '%s\n' "$REMOVED_LEGACY" | while IFS= read -r l; do
+report_lines() {
+  local prefix=$1 lines=$2 l
+  [ -n "$lines" ] || return 0
+  printf '%s\n' "$lines" | while IFS= read -r l; do
     [ -n "$l" ] || continue
-    echo "captain-style: $label legacy import: $l"
+    echo "captain-style: $prefix: $l"
   done
+}
+
+# Both paths remove text this script never wrote, so both name it line by line.
+report_removed_legacy() {
+  report_lines "$1 legacy import" "$REMOVED_LEGACY"
+  report_lines "removed heading left with no content by that import" "$REMOVED_HEADINGS"
 }
 
 # Kept out of the redirected group below so a read failure is reported and
