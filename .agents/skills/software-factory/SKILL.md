@@ -12,7 +12,7 @@ metadata:
 
 Dex Horthy's 4-gate rule, kept intact: every important decision is made **before** implementation code exists, where changing it costs a sentence instead of a rewrite.
 The execution model is firstmate's own: firstmate runs the gates and owns every captain contact, a scout produces the gate content, slice workers produce the code, and no worker ever addresses the captain.
-This skill adds no new machinery - it composes `fm-brief.sh --scout`, Lavish with the `process-event-sources` Lavish adapter, `decision-hold-lifecycle`, and ordinary sliced ship tasks.
+This skill adds no new machinery - it composes `fm-brief.sh --scout`, Lavish with the `process-event-sources` Lavish adapter, `captain-hold-lifecycle`, and ordinary sliced ship tasks.
 
 ## When to run
 
@@ -54,7 +54,7 @@ Never run the gates for work the captain asked to just ship, never in parallel w
    `process-event-sources` owns the durable result read, the adapter classification call, source lifecycle, and the handled acknowledgement.
 5. An approval counts only once it is in a durable record (backlog note or resolved hold).
    The published Lavish poll destructively clears feedback, so the durable record - never the poll bytes or conversation memory - is the source of truth.
-6. Unresolved captain decisions follow `decision-hold-lifecycle` as they appear during the gates, not in a sweep at the end.
+6. Unresolved captain calls follow `captain-hold-lifecycle` as they appear during the gates, not in a sweep at the end.
 7. **Backtracking:** if later work shows an approved gate wrong, hold the affected slice tasks, revise the gate doc through the current worker's report or a follow-up scout, and re-run this loop for that gate before continuing.
 
 ## Gate content templates (carried into the scout's brief)
