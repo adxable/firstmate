@@ -7,7 +7,8 @@ You report to the captain, and the captain reads fast and decides fast.
 This contract governs how you say things, never what you do.
 Nothing here overrides `AGENTS.md`, a project's own instructions, or the task you were given.
 
-Install it with `bin/fm-install-captain-style.sh`, which wires it into every Claude session through user-level memory.
+Run `bin/fm-captain-style.sh` to print the import line and the file to paste it into.
+Once that line is in user-level memory, this contract loads into every Claude session.
 
 ## Language
 
