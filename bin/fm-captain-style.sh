@@ -40,8 +40,8 @@
 # --check follows those measurements. A line carrying trailing spaces or a CR
 # from a CRLF editor is reported as wired, and the indentation diagnosis is kept
 # for a line that really does start off column zero. An @import inside a fenced
-# code block or a code span is a documentation example rather than wiring, so it
-# is never counted as an import and never pads the competing-imports count.
+# code block is a documentation example rather than wiring, so it is never
+# counted as an import and never pads the competing-imports count.
 #
 # Exit status is 0 when the wiring is in place (or, in the default mode, when
 # the instructions were printed and nothing else needs attention), and non-zero
@@ -49,6 +49,12 @@
 # those states: the default mode still prints the line and the file to paste it
 # into, because neither needs that file read, while --check refuses rather than
 # reporting an unreadable file as an empty one.
+#
+# A checkout missing its own copy of the style file is reported where that
+# changes the advice - beside an import line this checkout could not supply, in
+# the default mode and in a --check that is already failing. A --check that ends
+# in working wiring stays silent on stderr and exits 0, mentioning the local gap
+# only as context on the note about which checkout the line reaches.
 #
 # Honors CLAUDE_CONFIG_DIR, matching Claude Code's own override, and falls back
 # to $HOME/.claude.
@@ -147,10 +153,12 @@ physical_path() {
 
 # Every import of this style file, whatever path form it uses. Leading
 # whitespace is matched deliberately so an indented paste is found and named
-# rather than silently reported as absent. Lines inside a fenced code block, and
-# lines carrying a backtick code span, are documentation examples the loader does
-# not evaluate, so they are not candidates: counting one would report wiring that
-# loads nothing. An unterminated fence opens a block that runs to end of file.
+# rather than silently reported as absent. A candidate line holds nothing but
+# the import, so prose that merely quotes one is never a candidate; a line inside
+# a fenced code block can hold nothing else and still be an example the loader
+# does not evaluate, so fenced lines are skipped - counting one would report
+# wiring that loads nothing. An unterminated fence opens a block that runs to
+# end of file.
 style_imports() {
   [ -f "$MEMORY_FILE" ] || return 0
   awk '
@@ -181,7 +189,6 @@ style_imports() {
       }
 
       if (in_fence) next
-      if (probe ~ /`/) next
       if (probe ~ /^[ \t]*@.*styl-kapitanski\.md[ \t]*$/) print $0
     }
   ' "$MEMORY_FILE" 2>/dev/null || true
@@ -198,12 +205,20 @@ instructions() {
 }
 
 if [ ! -f "$STYLE_ABS" ]; then
-  echo "error: style file not found: $STYLE_ABS" >&2
-  echo "hint: run this script from a complete firstmate checkout" >&2
   STYLE_MISSING=1
 else
   STYLE_MISSING=0
 fi
+
+# Said only where it changes what the operator is being told to do: alongside an
+# import line that would name a file this checkout cannot supply. A --check that
+# ends in working wiring is not such a place.
+report_style_missing() {
+  if [ "$STYLE_MISSING" -eq 1 ]; then
+    echo "error: style file not found: $STYLE_ABS" >&2
+    echo "hint: run this script from a complete firstmate checkout" >&2
+  fi
+}
 
 if [ -e "$MEMORY_FILE" ] && { [ ! -f "$MEMORY_FILE" ] || [ ! -r "$MEMORY_FILE" ]; }; then
   echo "error: $MEMORY_FILE exists but could not be read" >&2
@@ -234,6 +249,7 @@ if [ "$MODE" = print ]; then
   fi
   # Both printed values come from this script's own location, so a memory file
   # that cannot be read still gets the line and the path it needs.
+  report_style_missing
   instructions
   { [ "$STYLE_MISSING" -eq 0 ] && [ "$MEMORY_UNREADABLE" -eq 0 ]; } || exit 1
   exit 0
@@ -246,12 +262,14 @@ fi
 
 if [ ! -e "$MEMORY_FILE" ]; then
   echo "captain-style: NOT WIRED  $MEMORY_FILE does not exist" >&2
+  report_style_missing
   instructions >&2
   exit 1
 fi
 
 if [ "$IMPORT_COUNT" -eq 0 ]; then
   echo "captain-style: NOT WIRED  no import of the style file in $MEMORY_FILE" >&2
+  report_style_missing
   instructions >&2
   exit 1
 fi

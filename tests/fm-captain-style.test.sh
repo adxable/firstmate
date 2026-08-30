@@ -355,8 +355,8 @@ test_a_fenced_example_does_not_compete_with_a_real_import() {
   pass "fm-captain-style.sh: a fenced example does not compete with a real import"
 }
 
-# Same treatment for a ~~~ fence and for a backtick code span on the line.
-test_tilde_fences_and_code_spans_are_not_wiring() {
+# Same treatment for a ~~~ fence.
+test_tilde_fences_are_not_wiring() {
   local home checkout memory line out rc
   home="$TMP_ROOT/fence-forms/home"
   checkout="$home/src/firstmate"
@@ -370,14 +370,7 @@ test_tilde_fences_and_code_spans_are_not_wiring() {
   rc=$?
   [ "$rc" -ne 0 ] || fail "--check reported a ~~~-fenced example as wiring: $out"
   assert_contains "$out" "NOT WIRED" "a tilde fence was not treated like a backtick fence"
-
-  # shellcheck disable=SC2016 # A literal code span, not an expansion.
-  printf 'Paste `%s` into the file.\n' "$line" >"$memory"
-  out=$(run_style "$checkout" "$home" --check)
-  rc=$?
-  [ "$rc" -ne 0 ] || fail "--check reported a code span as wiring: $out"
-  assert_contains "$out" "NOT WIRED" "an import inside a code span was counted as wiring"
-  pass "fm-captain-style.sh: ~~~ fences and code spans are examples, not wiring"
+  pass "fm-captain-style.sh: a tilde fence is an example, not wiring"
 }
 
 # An unterminated fence has no closing line to guess at, so it opens a block
@@ -489,6 +482,33 @@ test_a_missing_style_file_does_not_block_the_check() {
   pass "fm-captain-style.sh: a missing style file is reported, not a refusal to look"
 }
 
+# A run that ends in working wiring must not narrate an error on the way there.
+# This checkout has no style file of its own, but the memory file reaches a
+# complete one, so the local gap is context on the note - not a failure.
+test_a_working_check_says_nothing_on_stderr() {
+  local home complete bare memory errfile out rc
+  home="$TMP_ROOT/quiet/home"
+  complete="$home/src/firstmate"
+  bare="$home/src/firstmate-bare"
+  mkdir -p "$home/.claude"
+  make_checkout "$complete"
+  make_checkout "$bare"
+  rm "$bare/docs/styl-kapitanski.md"
+  memory="$home/.claude/CLAUDE.md"
+  errfile="$TMP_ROOT/quiet/err"
+  printf '@~/src/firstmate/docs/styl-kapitanski.md\n' >"$memory"
+
+  out=$(run_style_split "$bare" "$home" "$errfile" --check)
+  rc=$?
+  expect_code 0 "$rc" "a --check that found working wiring"
+  assert_contains "$out" "wired" "--check did not report the resolving import as wired"
+  assert_contains "$out" "different checkout" \
+    "--check did not say which checkout the working line reaches"
+  [ ! -s "$errfile" ] \
+    || fail "a --check that succeeded wrote to stderr: $(cat "$errfile")"
+  pass "fm-captain-style.sh: a --check that succeeds writes nothing to stderr"
+}
+
 test_success_goes_to_stdout_and_diagnostics_go_to_stderr() {
   local home checkout memory line errfile out
   home="$TMP_ROOT/streams/home"
@@ -559,12 +579,13 @@ test_the_different_checkout_note_follows_the_target_not_the_spelling
 test_an_unreadable_memory_file_still_prints_the_wiring
 test_a_fenced_import_is_not_wiring
 test_a_fenced_example_does_not_compete_with_a_real_import
-test_tilde_fences_and_code_spans_are_not_wiring
+test_tilde_fences_are_not_wiring
 test_an_unterminated_fence_runs_to_end_of_file
 test_more_than_one_import_is_reported_as_ambiguous
 test_no_mode_ever_writes_to_the_memory_file
 test_a_symlinked_memory_file_is_never_touched
 test_a_missing_style_file_does_not_block_the_check
+test_a_working_check_says_nothing_on_stderr
 test_success_goes_to_stdout_and_diagnostics_go_to_stderr
 test_help_documents_the_modes_and_a_bad_flag_fails
 test_printed_import_matches_the_check_resolution
