@@ -210,6 +210,109 @@ test_an_indented_import_is_diagnosed_as_indentation() {
   pass "fm-captain-style.sh: an indented import is diagnosed as indentation"
 }
 
+# Trailing whitespace does not stop the loader from following the import, so it
+# must not be reported as the one thing that does: indentation.
+test_a_trailing_space_is_not_reported_as_indentation() {
+  local home checkout memory line before out
+  home="$TMP_ROOT/trailing/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  printf '%s \n' "$line" >"$memory"
+  before=$(cat "$memory")
+
+  out=$(run_style "$checkout" "$home" --check) \
+    || fail "--check rejected a wired line carrying one trailing space: $out"
+  assert_contains "$out" "wired" "--check did not report the trailing-space line as wired"
+  assert_not_contains "$out" "INDENTED" "trailing whitespace was misreported as indentation"
+  assert_memory_untouched "$memory" "$before" "trailing-space"
+  pass "fm-captain-style.sh: a trailing space leaves a wired import wired"
+}
+
+# Same reasoning for the CR a CRLF editor leaves at the end of the line.
+test_a_cr_terminated_import_is_reported_as_wired() {
+  local home checkout memory line before out
+  home="$TMP_ROOT/crlf/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  printf '%s\r\n' "$line" >"$memory"
+  before=$(cat "$memory")
+
+  out=$(run_style "$checkout" "$home" --check) \
+    || fail "--check rejected a CR-terminated wired line: $out"
+  assert_contains "$out" "wired" "--check did not report the CR-terminated line as wired"
+  assert_not_contains "$out" "INDENTED" "a CR was misreported as indentation"
+  assert_contains "$out" "$(real_dir "$checkout")/docs/styl-kapitanski.md" \
+    "--check resolved the CR-terminated line to something other than the style file"
+  assert_memory_untouched "$memory" "$before" "crlf"
+  pass "fm-captain-style.sh: a CR-terminated import is wired, not indented"
+}
+
+# The ~/-relative and absolute spellings of one file are one target, so only a
+# line reaching a different file earns the different-checkout note.
+test_the_different_checkout_note_follows_the_target_not_the_spelling() {
+  local home checkout other memory out
+  home="$TMP_ROOT/spelling/home"
+  checkout="$home/src/firstmate"
+  other="$home/src/other-firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  make_checkout "$other"
+  memory="$home/.claude/CLAUDE.md"
+
+  printf '@%s/docs/styl-kapitanski.md\n' "$(real_dir "$checkout")" >"$memory"
+  out=$(run_style "$checkout" "$home" --check) \
+    || fail "--check rejected an absolute import of this very checkout: $out"
+  assert_contains "$out" "wired" "--check did not report the absolute-form line as wired"
+  assert_not_contains "$out" "different checkout" \
+    "an absolute import of this checkout was annotated as another checkout"
+
+  printf '@~/src/other-firstmate/docs/styl-kapitanski.md\n' >"$memory"
+  out=$(run_style "$checkout" "$home" --check) \
+    || fail "--check rejected a working import of another checkout: $out"
+  assert_contains "$out" "wired" "--check did not report the other checkout's line as wired"
+  assert_contains "$out" "different checkout" \
+    "--check stayed silent about a line reaching a different checkout"
+  pass "fm-captain-style.sh: the different-checkout note follows the resolved target"
+}
+
+# Computing the line and the path to paste it into reads nothing, so bad
+# permissions on the memory file must not cost the operator the instructions.
+test_an_unreadable_memory_file_still_prints_the_wiring() {
+  local home checkout memory out rc
+  if [ "$(id -u)" = "0" ]; then
+    pass "fm-captain-style.sh: unreadable memory file (skipped: root reads anything)"
+    return 0
+  fi
+  home="$TMP_ROOT/unreadable/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  printf '# My own notes\n' >"$memory"
+  chmod 000 "$memory"
+
+  out=$(run_style "$checkout" "$home") || true
+  assert_contains "$out" '@~/src/firstmate/docs/styl-kapitanski.md' \
+    "print mode withheld the import line over a permissions problem"
+  assert_contains "$out" "$memory" "print mode withheld the file to paste into"
+  assert_contains "$out" "could not be read" "print mode hid the permissions problem"
+
+  out=$(run_style "$checkout" "$home" --check)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "--check reported on a memory file it could not read: $out"
+  assert_not_contains "$out" "NOT WIRED" \
+    "--check treated an unreadable memory file as one with no import"
+  chmod 600 "$memory"
+  assert_grep '# My own notes' "$memory" "the runs modified the unreadable memory file"
+  pass "fm-captain-style.sh: an unreadable memory file still yields the wiring, and --check refuses"
+}
+
 test_more_than_one_import_is_reported_as_ambiguous() {
   local home checkout memory line before out rc
   home="$TMP_ROOT/ambiguous/home"
@@ -363,6 +466,10 @@ test_check_reports_a_broken_import_and_names_the_replacement
 test_check_reports_a_missing_import_and_prints_the_instructions
 test_check_reports_an_absent_memory_file
 test_an_indented_import_is_diagnosed_as_indentation
+test_a_trailing_space_is_not_reported_as_indentation
+test_a_cr_terminated_import_is_reported_as_wired
+test_the_different_checkout_note_follows_the_target_not_the_spelling
+test_an_unreadable_memory_file_still_prints_the_wiring
 test_more_than_one_import_is_reported_as_ambiguous
 test_no_mode_ever_writes_to_the_memory_file
 test_a_symlinked_memory_file_is_never_touched

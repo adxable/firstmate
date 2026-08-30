@@ -33,9 +33,16 @@
 #   fm-captain-style.sh --print-import  print the import line alone
 #   fm-captain-style.sh --help          print this header
 #
+# Only whitespace before the @ breaks an import, so --check treats a line
+# carrying trailing spaces or a CR from a CRLF editor as wired, and reserves the
+# indentation diagnosis for a line that really does start off column zero.
+#
 # Exit status is 0 when the wiring is in place (or, in the default mode, when
-# the instructions were printed), and non-zero for every state that needs a
-# human to act.
+# the instructions were printed and nothing else needs attention), and non-zero
+# for every state that needs a human to act. An unreadable memory file is one of
+# those states: the default mode still prints the line and the file to paste it
+# into, because neither needs that file read, while --check refuses rather than
+# reporting an unreadable file as an empty one.
 #
 # Honors CLAUDE_CONFIG_DIR, matching Claude Code's own override, and falls back
 # to $HOME/.claude.
@@ -114,6 +121,24 @@ resolve_import() {
   esac
 }
 
+# Reduce a path to what it physically is, so two spellings of one file compare
+# equal. Read-only, and no readlink -f, which macOS does not ship: the directory
+# is resolved by entering it, and an unreachable one falls back to the path as
+# written.
+physical_path() {
+  local dir base real
+  case "$1" in
+    */*) dir=${1%/*}; base=${1##*/} ;;
+    *) dir=.; base=$1 ;;
+  esac
+  [ -n "$dir" ] || dir=/
+  if real=$(cd "$dir" 2>/dev/null && pwd -P); then
+    printf '%s\n' "${real%/}/$base"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
 # Every import of this style file, whatever path form it uses. Leading
 # whitespace is matched deliberately so an indented paste is found and named
 # rather than silently reported as absent.
@@ -143,10 +168,18 @@ fi
 if [ -e "$MEMORY_FILE" ] && { [ ! -f "$MEMORY_FILE" ] || [ ! -r "$MEMORY_FILE" ]; }; then
   echo "error: $MEMORY_FILE exists but could not be read" >&2
   echo "hint: fix its permissions, then re-run this script" >&2
-  exit 1
+  MEMORY_UNREADABLE=1
+else
+  MEMORY_UNREADABLE=0
 fi
 
-IMPORTS=$(style_imports)
+# An unreadable file is never scanned, so its imports stay unknown rather than
+# being reported as none.
+if [ "$MEMORY_UNREADABLE" -eq 0 ]; then
+  IMPORTS=$(style_imports)
+else
+  IMPORTS=''
+fi
 if [ -z "$IMPORTS" ]; then
   IMPORT_COUNT=0
 else
@@ -159,12 +192,18 @@ if [ "$MODE" = print ]; then
     printf 'Run %s --check to see whether it still reaches the file.\n' "$0"
     printf '\n'
   fi
+  # Both printed values come from this script's own location, so a memory file
+  # that cannot be read still gets the line and the path it needs.
   instructions
-  [ "$STYLE_MISSING" -eq 0 ] || exit 1
+  { [ "$STYLE_MISSING" -eq 0 ] && [ "$MEMORY_UNREADABLE" -eq 0 ]; } || exit 1
   exit 0
 fi
 
 # --check from here down. Read-only in every branch.
+if [ "$MEMORY_UNREADABLE" -eq 1 ]; then
+  exit 1
+fi
+
 if [ ! -e "$MEMORY_FILE" ]; then
   echo "captain-style: NOT WIRED  $MEMORY_FILE does not exist" >&2
   instructions >&2
@@ -184,16 +223,19 @@ if [ "$IMPORT_COUNT" -gt 1 ]; then
   exit 1
 fi
 
-# Exactly one. Strip surrounding whitespace so an indented paste is diagnosed
-# as indentation rather than as a broken path.
+# Exactly one. The two kinds of surrounding whitespace are not the same fault:
+# whitespace before the @ stops the import from loading and is named as
+# indentation, while whitespace after the path - including the CR a CRLF editor
+# leaves - does not, and is trimmed before resolving.
 FOUND_RAW=$IMPORTS
-FOUND=$(printf '%s\n' "$FOUND_RAW" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-if [ "$FOUND_RAW" != "$FOUND" ]; then
+FOUND_UNINDENTED=$(printf '%s\n' "$FOUND_RAW" | sed 's/^[[:space:]]*//')
+if [ "$FOUND_RAW" != "$FOUND_UNINDENTED" ]; then
   echo "captain-style: INDENTED  the import line in $MEMORY_FILE is not at the start of its line:" >&2
   printf '%s\n' "$FOUND_RAW" | sed 's/^/  /' >&2
   echo "hint: remove the leading whitespace so the line begins with @" >&2
   exit 1
 fi
+FOUND=$(printf '%s\n' "$FOUND_UNINDENTED" | sed 's/[[:space:]]*$//')
 
 TARGET=$(resolve_import "${FOUND#@}")
 if [ ! -f "$TARGET" ]; then
@@ -210,10 +252,16 @@ if [ ! -f "$TARGET" ]; then
   exit 1
 fi
 
-if [ "$FOUND" = "$IMPORT_LINE" ]; then
-  echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
-else
-  echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
-  echo "note: that line points at a different checkout than this one; this checkout would use $IMPORT_LINE"
+echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
+
+# Which checkout the line names is a question about the file it reaches, not
+# about how the path is spelled: the ~/-relative and absolute forms of one file
+# are the same target and get no note.
+if [ "$(physical_path "$TARGET")" != "$(physical_path "$STYLE_ABS")" ]; then
+  if [ "$STYLE_MISSING" -eq 0 ]; then
+    echo "note: that line points at a different checkout than this one; this checkout would use $IMPORT_LINE"
+  else
+    echo "note: that line points at a different checkout than this one, which has no $STYLE_REL to offer"
+  fi
 fi
 exit 0
