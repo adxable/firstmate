@@ -16,12 +16,16 @@
 # location removes the guessing, and --check turns that silent failure into a
 # visible one.
 #
-# Measured against Claude Code 2.1.247, confirming the two mechanisms this wiring
-# rests on: an @import path is followed after ~ expansion, and user-level memory
-# follows an import whose target lives outside the config directory. The
-# ~/-relative form is preferred whenever the repo sits under $HOME, because it
-# also survives a different username or a relocated home directory; a clone
-# outside $HOME gets an absolute path. Re-run --check after moving either.
+# Measured against Claude Code 2.1.247, confirming the mechanisms this wiring
+# rests on: an @import path is followed after ~ expansion; user-level memory
+# follows an import whose target lives outside the config directory; an import
+# line carrying one trailing space is followed, and so is a CR-terminated one;
+# and an import fenced in a ``` code block is not followed, while removing that
+# fence in the same directory makes it load. Each of those is a tested case, not
+# a general rule about whitespace or markdown. The ~/-relative form is preferred
+# whenever the repo sits under $HOME, because it also survives a different
+# username or a relocated home directory; a clone outside $HOME gets an absolute
+# path. Re-run --check after moving either.
 #
 # Usage:
 #   fm-captain-style.sh                 print the line, the file to paste it
@@ -33,9 +37,11 @@
 #   fm-captain-style.sh --print-import  print the import line alone
 #   fm-captain-style.sh --help          print this header
 #
-# Only whitespace before the @ breaks an import, so --check treats a line
-# carrying trailing spaces or a CR from a CRLF editor as wired, and reserves the
-# indentation diagnosis for a line that really does start off column zero.
+# --check follows those measurements. A line carrying trailing spaces or a CR
+# from a CRLF editor is reported as wired, and the indentation diagnosis is kept
+# for a line that really does start off column zero. An @import inside a fenced
+# code block or a code span is a documentation example rather than wiring, so it
+# is never counted as an import and never pads the competing-imports count.
 #
 # Exit status is 0 when the wiring is in place (or, in the default mode, when
 # the instructions were printed and nothing else needs attention), and non-zero
@@ -141,10 +147,44 @@ physical_path() {
 
 # Every import of this style file, whatever path form it uses. Leading
 # whitespace is matched deliberately so an indented paste is found and named
-# rather than silently reported as absent.
+# rather than silently reported as absent. Lines inside a fenced code block, and
+# lines carrying a backtick code span, are documentation examples the loader does
+# not evaluate, so they are not candidates: counting one would report wiring that
+# loads nothing. An unterminated fence opens a block that runs to end of file.
 style_imports() {
   [ -f "$MEMORY_FILE" ] || return 0
-  grep -E '^[[:space:]]*@.*styl-kapitanski\.md[[:space:]]*$' "$MEMORY_FILE" 2>/dev/null || true
+  awk '
+    {
+      probe = $0
+      sub(/\r$/, "", probe)
+      marker = probe
+      sub(/^[ \t]*/, "", marker)
+
+      fence = ""
+      if (marker ~ /^```/) fence = "`"
+      else if (marker ~ /^~~~/) fence = "~"
+
+      if (fence != "") {
+        run = 0
+        while (substr(marker, run + 1, 1) == fence) run++
+        rest = substr(marker, run + 1)
+        if (in_fence) {
+          # A closing fence repeats the opening character, is at least as long,
+          # and carries no info string; anything else is block content.
+          if (fence == fence_char && run >= fence_len && rest ~ /^[ \t]*$/) in_fence = 0
+        } else {
+          in_fence = 1
+          fence_char = fence
+          fence_len = run
+        }
+        next
+      }
+
+      if (in_fence) next
+      if (probe ~ /`/) next
+      if (probe ~ /^[ \t]*@.*styl-kapitanski\.md[ \t]*$/) print $0
+    }
+  ' "$MEMORY_FILE" 2>/dev/null || true
 }
 
 instructions() {

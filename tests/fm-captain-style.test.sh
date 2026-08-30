@@ -313,6 +313,93 @@ test_an_unreadable_memory_file_still_prints_the_wiring() {
   pass "fm-captain-style.sh: an unreadable memory file still yields the wiring, and --check refuses"
 }
 
+# Measured on Claude Code 2.1.247: an import fenced in ``` is not followed, and
+# unfencing the same line in the same directory makes it load. So a fenced line
+# is a documentation example, and reporting it as wiring would manufacture the
+# silent non-loading this script exists to expose.
+test_a_fenced_import_is_not_wiring() {
+  local home checkout memory line out rc
+  home="$TMP_ROOT/fenced/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  # shellcheck disable=SC2016 # Literal markdown fences, not an expansion.
+  printf '# how to wire it\n\n```\n%s\n```\n' "$line" >"$memory"
+
+  out=$(run_style "$checkout" "$home" --check)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "--check reported a fenced example as wiring: $out"
+  assert_contains "$out" "NOT WIRED" "--check did not report the fenced-only file as unwired"
+  pass "fm-captain-style.sh: an import inside a code fence is not wiring"
+}
+
+# The compound case: a documentation example beside the real thing must not
+# turn one working import into two competing ones.
+test_a_fenced_example_does_not_compete_with_a_real_import() {
+  local home checkout memory line out
+  home="$TMP_ROOT/fenced-plus/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  # shellcheck disable=SC2016 # Literal markdown fences, not an expansion.
+  printf 'For example:\n\n```text\n%s\n```\n\n%s\n' "$line" "$line" >"$memory"
+
+  out=$(run_style "$checkout" "$home" --check) \
+    || fail "--check rejected a real import sitting beside a fenced example: $out"
+  assert_contains "$out" "wired" "--check did not report the real import as wired"
+  assert_not_contains "$out" "AMBIGUOUS" "a fenced example was counted as a competing import"
+  pass "fm-captain-style.sh: a fenced example does not compete with a real import"
+}
+
+# Same treatment for a ~~~ fence and for a backtick code span on the line.
+test_tilde_fences_and_code_spans_are_not_wiring() {
+  local home checkout memory line out rc
+  home="$TMP_ROOT/fence-forms/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+
+  printf '~~~\n%s\n~~~\n' "$line" >"$memory"
+  out=$(run_style "$checkout" "$home" --check)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "--check reported a ~~~-fenced example as wiring: $out"
+  assert_contains "$out" "NOT WIRED" "a tilde fence was not treated like a backtick fence"
+
+  # shellcheck disable=SC2016 # A literal code span, not an expansion.
+  printf 'Paste `%s` into the file.\n' "$line" >"$memory"
+  out=$(run_style "$checkout" "$home" --check)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "--check reported a code span as wiring: $out"
+  assert_contains "$out" "NOT WIRED" "an import inside a code span was counted as wiring"
+  pass "fm-captain-style.sh: ~~~ fences and code spans are examples, not wiring"
+}
+
+# An unterminated fence has no closing line to guess at, so it opens a block
+# that runs to end of file - and must not swallow what came before it.
+test_an_unterminated_fence_runs_to_end_of_file() {
+  local home checkout memory line out
+  home="$TMP_ROOT/unterminated/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  printf '%s\n\n```\n%s\n' "$line" "$line" >"$memory"
+
+  out=$(run_style "$checkout" "$home" --check) \
+    || fail "--check lost a real import sitting above an unterminated fence: $out"
+  assert_contains "$out" "wired" "--check did not see the import above the unterminated fence"
+  assert_not_contains "$out" "AMBIGUOUS" \
+    "an example below an unterminated fence was counted as a second import"
+  pass "fm-captain-style.sh: an unterminated fence runs to end of file"
+}
+
 test_more_than_one_import_is_reported_as_ambiguous() {
   local home checkout memory line before out rc
   home="$TMP_ROOT/ambiguous/home"
@@ -470,6 +557,10 @@ test_a_trailing_space_is_not_reported_as_indentation
 test_a_cr_terminated_import_is_reported_as_wired
 test_the_different_checkout_note_follows_the_target_not_the_spelling
 test_an_unreadable_memory_file_still_prints_the_wiring
+test_a_fenced_import_is_not_wiring
+test_a_fenced_example_does_not_compete_with_a_real_import
+test_tilde_fences_and_code_spans_are_not_wiring
+test_an_unterminated_fence_runs_to_end_of_file
 test_more_than_one_import_is_reported_as_ambiguous
 test_no_mode_ever_writes_to_the_memory_file
 test_a_symlinked_memory_file_is_never_touched
