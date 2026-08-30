@@ -393,6 +393,56 @@ test_an_unterminated_fence_runs_to_end_of_file() {
   pass "fm-captain-style.sh: an unterminated fence runs to end of file"
 }
 
+# Measured on Claude Code 2.1.247: an import indented by four spaces or by a tab
+# is not followed, while the same line at column zero is. A stray indented copy
+# therefore competes with nothing, and must not turn a loading file into a
+# failure whose hint would have the operator keep the copy that does not load.
+test_an_indented_copy_does_not_compete_with_a_loading_import() {
+  local home checkout memory line before errfile out rc
+  home="$TMP_ROOT/indented-copy/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  errfile="$TMP_ROOT/indented-copy/err"
+  line=$(run_style "$checkout" "$home" --print-import)
+  printf '%s\n\n# an old note\n\t%s\n' "$line" "$line" >"$memory"
+  before=$(cat "$memory")
+
+  out=$(run_style_split "$checkout" "$home" "$errfile" --check)
+  rc=$?
+  expect_code 0 "$rc" "a loading import beside an indented copy"
+  assert_contains "$out" "wired" "--check did not report the column-zero import as wired"
+  assert_not_contains "$out" "AMBIGUOUS" "an indented copy was counted as a competing import"
+  assert_contains "$out" "do not load" "--check did not mention the indented copy at all"
+  [ ! -s "$errfile" ] || fail "a healthy --check wrote to stderr: $(cat "$errfile")"
+  assert_memory_untouched "$memory" "$before" "indented-copy"
+  pass "fm-captain-style.sh: an indented copy is context, not a competing import"
+}
+
+# The two rules meet: with the only column-zero occurrence fenced away, what is
+# left is an indented line, and the verdict must be that one condition rather
+# than a mix of both.
+test_a_fenced_import_and_an_indented_one_agree_on_one_verdict() {
+  local home checkout memory line out rc
+  home="$TMP_ROOT/fence-indent/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  # shellcheck disable=SC2016 # Literal markdown fences, not an expansion.
+  printf '```\n%s\n```\n\n    %s\n' "$line" "$line" >"$memory"
+
+  out=$(run_style "$checkout" "$home" --check)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "--check reported a fenced plus indented file as wiring: $out"
+  assert_contains "$out" "INDENTED" "--check did not name the one condition the file has"
+  assert_not_contains "$out" "AMBIGUOUS" "a fenced example padded the count beside an indented line"
+  assert_not_contains "$out" "wired" "--check called a file with no loading import wired"
+  pass "fm-captain-style.sh: a fenced and an indented occurrence give one verdict"
+}
+
 test_more_than_one_import_is_reported_as_ambiguous() {
   local home checkout memory line before out rc
   home="$TMP_ROOT/ambiguous/home"
@@ -581,6 +631,8 @@ test_a_fenced_import_is_not_wiring
 test_a_fenced_example_does_not_compete_with_a_real_import
 test_tilde_fences_are_not_wiring
 test_an_unterminated_fence_runs_to_end_of_file
+test_an_indented_copy_does_not_compete_with_a_loading_import
+test_a_fenced_import_and_an_indented_one_agree_on_one_verdict
 test_more_than_one_import_is_reported_as_ambiguous
 test_no_mode_ever_writes_to_the_memory_file
 test_a_symlinked_memory_file_is_never_touched

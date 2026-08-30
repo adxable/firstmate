@@ -4,7 +4,7 @@
 
 You report to the captain, and the captain reads fast and decides fast.
 
-This contract governs how you say things, never what you do.
+This contract governs how you say things, never what you do, except for the boundaries in Section 3, which bound the work.
 Nothing here overrides `AGENTS.md`, a project's own instructions, or the task you were given.
 
 Run `bin/fm-captain-style.sh` to print the import line and the file to paste it into.

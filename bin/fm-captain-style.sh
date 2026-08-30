@@ -20,9 +20,11 @@
 # rests on: an @import path is followed after ~ expansion; user-level memory
 # follows an import whose target lives outside the config directory; an import
 # line carrying one trailing space is followed, and so is a CR-terminated one;
-# and an import fenced in a ``` code block is not followed, while removing that
-# fence in the same directory makes it load. Each of those is a tested case, not
-# a general rule about whitespace or markdown. The ~/-relative form is preferred
+# an import fenced in a ``` code block is not followed, while removing that
+# fence in the same directory makes it load; and an import indented by four
+# spaces is not followed, nor is one indented by a tab, while the same line at
+# column zero is. Each of those is a tested case, not a general rule about
+# whitespace or markdown. The ~/-relative form is preferred
 # whenever the repo sits under $HOME, because it also survives a different
 # username or a relocated home directory; a clone outside $HOME gets an absolute
 # path. Re-run --check after moving either.
@@ -37,11 +39,13 @@
 #   fm-captain-style.sh --print-import  print the import line alone
 #   fm-captain-style.sh --help          print this header
 #
-# --check follows those measurements. A line carrying trailing spaces or a CR
-# from a CRLF editor is reported as wired, and the indentation diagnosis is kept
-# for a line that really does start off column zero. An @import inside a fenced
-# code block is a documentation example rather than wiring, so it is never
-# counted as an import and never pads the competing-imports count.
+# --check follows those measurements: it decides its verdict on the occurrences
+# that load, meaning the ones at column zero, outside any fenced code block. A
+# line carrying trailing spaces or a CR from a CRLF editor is one of them and is
+# reported as wired. An indented occurrence is not, so it never pads the
+# competing-imports count; it is named as indentation when it is all the file
+# has, and mentioned as context beside a working import otherwise. An @import
+# inside a fenced code block is a documentation example and counts for nothing.
 #
 # Exit status is 0 when the wiring is in place (or, in the default mode, when
 # the instructions were printed and nothing else needs attention), and non-zero
@@ -235,14 +239,29 @@ if [ "$MEMORY_UNREADABLE" -eq 0 ]; then
 else
   IMPORTS=''
 fi
+# Only a column-zero occurrence loads, so the two classes decide different
+# things: the loading ones decide the state, the indented ones are reported when
+# they are all there is and are context otherwise.
 if [ -z "$IMPORTS" ]; then
-  IMPORT_COUNT=0
+  LOADING=''
+  INDENTED=''
 else
-  IMPORT_COUNT=$(printf '%s\n' "$IMPORTS" | wc -l | tr -d ' ')
+  LOADING=$(printf '%s\n' "$IMPORTS" | grep -v '^[[:space:]]' || true)
+  INDENTED=$(printf '%s\n' "$IMPORTS" | grep '^[[:space:]]' || true)
+fi
+if [ -z "$LOADING" ]; then
+  LOADING_COUNT=0
+else
+  LOADING_COUNT=$(printf '%s\n' "$LOADING" | wc -l | tr -d ' ')
+fi
+if [ -z "$INDENTED" ]; then
+  INDENTED_COUNT=0
+else
+  INDENTED_COUNT=$(printf '%s\n' "$INDENTED" | wc -l | tr -d ' ')
 fi
 
 if [ "$MODE" = print ]; then
-  if [ "$IMPORT_COUNT" -ge 1 ]; then
+  if [ "$LOADING_COUNT" -ge 1 ]; then
     printf 'captain-style: an import of the style file is already in %s\n' "$MEMORY_FILE"
     printf 'Run %s --check to see whether it still reaches the file.\n' "$0"
     printf '\n'
@@ -267,33 +286,30 @@ if [ ! -e "$MEMORY_FILE" ]; then
   exit 1
 fi
 
-if [ "$IMPORT_COUNT" -eq 0 ]; then
+if [ "$LOADING_COUNT" -eq 0 ] && [ "$INDENTED_COUNT" -ge 1 ]; then
+  echo "captain-style: INDENTED  the import line in $MEMORY_FILE is not at the start of its line:" >&2
+  printf '%s\n' "$INDENTED" | sed 's/^/  /' >&2
+  echo "hint: remove the leading whitespace so the line begins with @" >&2
+  exit 1
+fi
+
+if [ "$LOADING_COUNT" -eq 0 ]; then
   echo "captain-style: NOT WIRED  no import of the style file in $MEMORY_FILE" >&2
   report_style_missing
   instructions >&2
   exit 1
 fi
 
-if [ "$IMPORT_COUNT" -gt 1 ]; then
-  echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $IMPORT_COUNT imports of the style file:" >&2
-  printf '%s\n' "$IMPORTS" | sed 's/^/  /' >&2
+if [ "$LOADING_COUNT" -gt 1 ]; then
+  echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $LOADING_COUNT imports of the style file:" >&2
+  printf '%s\n' "$LOADING" | sed 's/^/  /' >&2
   echo "hint: keep exactly one of them and delete the rest" >&2
   exit 1
 fi
 
-# Exactly one. The two kinds of surrounding whitespace are not the same fault:
-# whitespace before the @ stops the import from loading and is named as
-# indentation, while whitespace after the path - including the CR a CRLF editor
-# leaves - does not, and is trimmed before resolving.
-FOUND_RAW=$IMPORTS
-FOUND_UNINDENTED=$(printf '%s\n' "$FOUND_RAW" | sed 's/^[[:space:]]*//')
-if [ "$FOUND_RAW" != "$FOUND_UNINDENTED" ]; then
-  echo "captain-style: INDENTED  the import line in $MEMORY_FILE is not at the start of its line:" >&2
-  printf '%s\n' "$FOUND_RAW" | sed 's/^/  /' >&2
-  echo "hint: remove the leading whitespace so the line begins with @" >&2
-  exit 1
-fi
-FOUND=$(printf '%s\n' "$FOUND_UNINDENTED" | sed 's/[[:space:]]*$//')
+# Exactly one line loads. Whitespace after the path - including the CR a CRLF
+# editor leaves - does not stop it, and is trimmed before resolving.
+FOUND=$(printf '%s\n' "$LOADING" | sed 's/[[:space:]]*$//')
 
 TARGET=$(resolve_import "${FOUND#@}")
 if [ ! -f "$TARGET" ]; then
@@ -311,6 +327,13 @@ if [ ! -f "$TARGET" ]; then
 fi
 
 echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
+
+# Context, not a verdict: these lines load nothing, so they change neither the
+# outcome nor the exit status.
+if [ "$INDENTED_COUNT" -ge 1 ]; then
+  echo "note: $MEMORY_FILE also holds indented occurrences of the import, which do not load:"
+  printf '%s\n' "$INDENTED" | sed 's/^/  /'
+fi
 
 # Which checkout the line names is a question about the file it reaches, not
 # about how the path is spelled: the ~/-relative and absolute forms of one file
