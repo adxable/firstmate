@@ -304,3 +304,49 @@ assert_absent() {
 assert_present() {
   [ -e "$1" ] || fail "$2"
 }
+
+# --- bounded runs against an open, empty stdin -------------------------------
+
+# fm_run_open_stdin_deadline <seconds> <command> [args...]
+# Run <command> with stdin attached to a pipe that stays OPEN and empty for the
+# whole window - the shape a PreToolUse hook gets when the harness never closes
+# its end of the payload pipe - and bound the run to <seconds>.
+# Echo the command's own exit status, or 124 when the deadline expired and the
+# command had to be killed. Output from the command is discarded.
+# Uses timeout or gtimeout when installed and an equivalent polling watchdog
+# otherwise, because neither ships with macOS.
+fm_run_open_stdin_deadline() {
+  local seconds=$1 dir fifo holder pid ticks waited rc=0
+  shift
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-open-stdin.XXXXXX") || return 1
+  fifo="$dir/stdin"
+  mkfifo "$fifo"
+  # A writer that never writes: the reader's open() succeeds and its read()
+  # blocks, exactly like a harness pipe held open by a live parent.
+  sleep "$((seconds * 4))" > "$fifo" &
+  holder=$!
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$seconds" "$@" < "$fifo" >/dev/null 2>&1 || rc=$?
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$seconds" "$@" < "$fifo" >/dev/null 2>&1 || rc=$?
+  else
+    "$@" < "$fifo" >/dev/null 2>&1 &
+    pid=$!
+    ticks=$((seconds * 10))
+    waited=0
+    while [ "$waited" -lt "$ticks" ] && kill -0 "$pid" 2>/dev/null; do
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null
+      rc=124
+    else
+      wait "$pid" || rc=$?
+    fi
+  fi
+  kill "$holder" 2>/dev/null
+  wait "$holder" 2>/dev/null
+  rm -rf "$dir"
+  printf '%s\n' "$rc"
+}

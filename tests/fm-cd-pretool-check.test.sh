@@ -250,6 +250,23 @@ test_inert_when_not_a_git_repo() {
   pass "cd-guard: inert when not inside a git repo"
 }
 
+# --- inert scoping resolves before the stdin read ---------------------------
+
+# A harness can hand a hook a payload pipe it never closes. An inert checkout
+# must decide it is inert without reading that pipe, or the guard wedges the
+# whole worker session on a call it was never going to deny. This pins the
+# ordering: scope first, payload second.
+test_inert_scope_decided_without_reading_stdin() {
+  local base dir rc
+  base="$TMP_ROOT/stdin-order-base"
+  dir="$TMP_ROOT/stdin-order-wt"
+  make_child_worktree_fixture "$base" "$dir" >/dev/null
+  rc=$(fm_run_open_stdin_deadline 5 "$dir/bin/fm-cd-pretool-check.sh")
+  [ "$rc" != 124 ] || fail "cd-guard blocked on an open stdin pipe in an inert linked worktree"
+  expect_code 0 "$rc" "cd-guard must exit 0 in an inert linked worktree without reading stdin"
+  pass "cd-guard: inert linked worktree exits 0 without waiting on an unclosed stdin pipe"
+}
+
 # --- end-to-end cwd-leak regression ----------------------------------------
 
 test_e2e_cwd_leak_regression() {
@@ -346,8 +363,8 @@ test_prefilter_skips_node_without_cd_substring() {
 exit 0
 EOF
   chmod +x "$fakebin/node"
-  # No cd/pushd/popd substring: the prefilter must fast-allow before scoping or
-  # the policy runtime is ever consulted.
+  # No cd/pushd/popd substring: the prefilter must fast-allow before the policy
+  # runtime is ever consulted.
   out=$(PATH="$fakebin" "$dir/bin/fm-cd-pretool-check.sh" --command 'git status' 2>&1); rc=$?
   expect_code 0 "$rc" "prefilter must fast-allow a command with no cd/pushd/popd substring"
   [ -z "$out" ] || fail "prefilter fast-allow produced output: $out"
@@ -390,6 +407,7 @@ test_fires_in_secondmate_home
 test_inert_in_child_worktree
 test_inert_when_not_firstmate_repo
 test_inert_when_not_a_git_repo
+test_inert_scope_decided_without_reading_stdin
 test_e2e_cwd_leak_regression
 test_fail_open_empty_stdin
 test_fail_open_unparseable_json
