@@ -269,8 +269,11 @@ RECORDED_WORKTREES=""
 LOCK_CONTENTION_OWNER_PID=
 # Releasing this file ends every fixture worktree occupant (see
 # occupy_task_worktree); cleanup does it before returning worktrees so no
-# occupant outlives the suite.
-WORKTREE_OCCUPANT_RELEASE="$TMP_ROOT/worktree-occupants-released"
+# occupant outlives the suite. It sits BESIDE $TMP_ROOT rather than inside it,
+# because cleanup deletes that tree - a release signal the same function erases
+# is one an occupant can miss between two polls.
+WORKTREE_OCCUPANT_RELEASE="$TMP_ROOT.released"
+SUITE_PID=$$
 cleanup_all() {
   local wt
   : > "$WORKTREE_OCCUPANT_RELEASE" 2>/dev/null || true
@@ -292,6 +295,7 @@ EOF
     LAB_READY=0
   fi
   rm -rf "$TMP_ROOT"
+  rm -f "$WORKTREE_OCCUPANT_RELEASE"
 }
 trap cleanup_all EXIT
 
@@ -401,6 +405,15 @@ make_project() {  # <dir>
 # own worktree, outside the lab session, for as long as the task is meant to be
 # live. `treehouse return`, which both teardown and cleanup use, terminates
 # lingering processes, so returning a slot still frees it exactly as before.
+#
+# An occupant holds a pool slot, so its release must not depend on the suite
+# reaching its own cleanup: a SIGKILL or a harness timeout skips that entirely,
+# and every slot would then read as occupied for half an hour of unrelated later
+# runs on this machine. So the poll exits on the FIRST of four conditions - the
+# release file, the suite process being gone, its worktree no longer existing,
+# and the standing 30-minute bound - and only the first of those needs the suite
+# to still be running. $$ is the suite's pid inside this subshell too, which is
+# what keeps the parent check available on bash 3.2 without BASHPID.
 occupy_task_worktree() {  # <meta>
   local meta=$1 wt
   [ -f "$meta" ] || return 0
@@ -409,7 +422,10 @@ occupy_task_worktree() {  # <meta>
   (
     cd "$wt" || exit 0
     waited=0
-    while [ ! -e "$WORKTREE_OCCUPANT_RELEASE" ] && [ "$waited" -lt 1800 ]; do
+    while [ ! -e "$WORKTREE_OCCUPANT_RELEASE" ] \
+      && kill -0 "$SUITE_PID" 2>/dev/null \
+      && [ -d "$wt" ] \
+      && [ "$waited" -lt 1800 ]; do
       sleep 1
       waited=$((waited + 1))
     done

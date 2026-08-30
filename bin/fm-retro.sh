@@ -42,9 +42,11 @@
 #                        recurrence answerable for finished tasks at all.
 #
 # Defensive by contract: the status format and bin/fm-classify-lib.sh belong to
-# upstream and may change. Everything this tool could not parse is reported in the
-# final section instead of being silently dropped, and no number is printed whose
-# coverage is not stated.
+# upstream and may change. That is why the status stream is parsed by SOURCING
+# that library and calling its parsers rather than by restating its grammar here -
+# a private copy of the grammar drifts silently, dropping real rounds. Everything
+# this tool could not parse is reported in the final section instead of being
+# silently dropped, and no number is printed whose coverage is not stated.
 #
 # Environment:
 #   FM_HOME              fleet home (default: this repo)
@@ -92,9 +94,45 @@ esac
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-retro.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
+# The status-line grammar has exactly ONE owner, bin/fm-classify-lib.sh, and this
+# tool reads the very same stream. So it calls that owner's parsers instead of
+# restating the grammar: a second statement of it drifts the moment upstream
+# widens the format, and the drift is invisible - rounds silently stop being
+# counted rather than failing loudly. The library is pure function and constant
+# definitions, so sourcing it costs nothing but the read.
+#
+# Sourced HERE, before this file defines any of its own helpers, so that a name
+# this tool owns always wins over a same-named one in the library.
+CLASSIFY_LIB="$SCRIPT_DIR/fm-classify-lib.sh"
+CLASSIFY_OK=0
+CLASSIFY_ERR=''
+if [ ! -r "$CLASSIFY_LIB" ]; then
+  CLASSIFY_ERR="nie ma go pod $CLASSIFY_LIB"
+else
+  # shellcheck source=bin/fm-classify-lib.sh
+  # shellcheck disable=SC1091
+  . "$CLASSIFY_LIB" 2> "$TMP/liberr" || true
+  CLASSIFY_OK=1
+  for _fn in status_line_verb _fm_key_before_colon _fm_key_at_note_head _fm_decision_key; do
+    command -v "$_fn" >/dev/null 2>&1 && continue
+    CLASSIFY_OK=0
+    CLASSIFY_ERR="po wczytaniu nie ma funkcji $_fn"
+    break
+  done
+  [ "$CLASSIFY_OK" -eq 1 ] || [ ! -s "$TMP/liberr" ] \
+    || CLASSIFY_ERR="$CLASSIFY_ERR ($(tr '\n' ' ' < "$TMP/liberr"))"
+fi
+
 WARN="$TMP/warn"
 : > "$WARN"
 warn() { printf '%s\n' "$1" >> "$WARN"; }
+
+# Without the owner's parsers this tool has no grammar at all. Reading the stream
+# with a guessed one is exactly the drift the delegation above exists to prevent,
+# so the status source is declared unread instead - a stated zero, never a silent
+# one.
+[ "$CLASSIFY_OK" -eq 1 ] \
+  || warn "bin/fm-classify-lib.sh - właściciela gramatyki statusu - nie da się użyć ($CLASSIFY_ERR), więc dzienników statusu NIE CZYTAM; ich pokrycie jest zerowe, nie puste."
 
 # --- source 1: the no-mistakes database -------------------------------------
 #
@@ -227,6 +265,7 @@ for f in "$DATA"/*/decision-*.md; do
 done
 
 for f in "$STATE"/*.status; do
+  [ "$CLASSIFY_OK" -eq 1 ] || break
   [ -f "$f" ] || continue
   if [ -L "$f" ]; then
     warn "dziennik statusu jest dowiązaniem, więc go nie czytam: $f"
@@ -235,46 +274,43 @@ for f in "$STATE"/*.status; do
   task=$(basename "$f" .status)
   STATUS_FILES=$((STATUS_FILES + 1))
   while IFS= read -r line || [ -n "$line" ]; do
-    # The line grammar is upstream's, not this tool's: bin/fm-classify-lib.sh
-    # takes the verb from what stands before the first colon with the key token
-    # removed, tolerates leading whitespace, and opens a keyed decision on
-    # `blocked` exactly as on `needs-decision`. Reading it more strictly than its
-    # owner does would drop real rounds without a word.
-    prefix=${line%%:*}
-    verb=${prefix%%\[key=*}
-    verb=${verb#"${verb%%[![:space:]]*}"}
-    verb=${verb%"${verb##*[![:space:]]}"}
+    # A permissive prefilter, and nothing more: a line holding neither verb
+    # anywhere cannot be a decision round under ANY grammar, so skipping it here
+    # cannot drop a round, and the owner's parsers - a subshell apiece - then run
+    # only on the handful of lines that could be one.
+    case $line in
+      *needs-decision*|*blocked*) ;;
+      *) continue ;;
+    esac
+    # From here the grammar is the owner's, verb and key alike. It ends the verb
+    # at the first bracketed tag, reads through the unbracketed correlation token
+    # a secondmate echoes, tolerates leading whitespace, opens a keyed decision on
+    # `blocked` exactly as on `needs-decision`, and accepts the `[key=...]` token
+    # on EITHER side of the colon. Re-deriving any of that here would read the
+    # stream more strictly than its owner and drop real rounds without a word.
+    verb=$(status_line_verb "$line")
     case $verb in
       needs-decision|blocked) ;;
       *) continue ;;
     esac
     STATUS_LINES=$((STATUS_LINES + 1))
-    key=''
-    case $prefix in
-      *\[key=*\]*)
-        key=${prefix#*\[key=}
-        key=${key%%\]*}
-        case $key in
-          ''|*[!A-Za-z0-9._-]*) key='' ;;
-        esac
-        ;;
-    esac
-    if [ -n "$key" ]; then
-      printf '%s\t%s\tdziennik-statusu\t%s\n' "$task" "$key" "$line" >> "$TMP/decisions.tsv"
-      continue
-    fi
-    # Defensive: the key belongs BEFORE the colon. A key after the colon is the
-    # known malformed shape and stays VISIBLE rather than being normalised away
-    # into the unkeyed bucket.
-    case $line in
-      *:*\[key=*)
+    # A token in either accepted position is a STATED key, so the round has an
+    # identity the owner honours. A token deeper in the note is prose to the
+    # owner and must stay prose here: that round is unkeyed, not malformed.
+    if _fm_key_before_colon "$line" || _fm_key_at_note_head "$line" >/dev/null; then
+      # The one shape the owner also rejects: a stated key whose slug is outside
+      # the allowed charset. The owner's folds skip such a line entirely rather
+      # than rewrite the slug, so the round really has no usable identity - and
+      # it stays VISIBLE instead of being normalised into the unkeyed bucket.
+      if key=$(_fm_decision_key "$line"); then
+        printf '%s\t%s\tdziennik-statusu\t%s\n' "$task" "$key" "$line" >> "$TMP/decisions.tsv"
+      else
         STATUS_MALFORMED=$((STATUS_MALFORMED + 1))
-        warn "$task: klucz zapisany PO dwukropku, więc runda nie ma czytelnej tożsamości: $(printf '%.90s' "$line")"
-        ;;
-      *)
-        STATUS_UNKEYED=$((STATUS_UNKEYED + 1))
-        ;;
-    esac
+        warn "$task: klucz rundy ma znaki, których gramatyka nie dopuszcza, więc upstream odrzuca tę linię i runda nie ma czytelnej tożsamości: $(printf '%.90s' "$line")"
+      fi
+    else
+      STATUS_UNKEYED=$((STATUS_UNKEYED + 1))
+    fi
   done < "$f"
 done
 
@@ -469,7 +505,7 @@ if [ "$STATUS_UNKEYED" -gt 0 ]; then
   printf '  rundy bez klucza   : %s - nie wchodzą do analizy nawrotowości\n' "$STATUS_UNKEYED"
 fi
 if [ "$STATUS_MALFORMED" -gt 0 ]; then
-  printf '  rundy z klucz. po dwukropku: %s - wypisane niżej\n' "$STATUS_MALFORMED"
+  printf '  rundy z błędnym kluczem: %s - wypisane niżej\n' "$STATUS_MALFORMED"
 fi
 printf '\n'
 
