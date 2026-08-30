@@ -133,6 +133,31 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 0
+FM_ROOT=${FM_ROOT_OVERRIDE:-$(CDPATH='' cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd -P)} || exit 0
+FM_HOME=${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}
+STATE=${FM_STATE_OVERRIDE:-$FM_HOME/state}
+
+# Scope to a genuine primary home, exactly as the session-start nudge and the
+# turn-end guard do. fm_primary_scope_matches accepts a plain checkout or a
+# marked secondmate home - both operate a fleet and must dispatch through it -
+# and rejects a linked task worktree, which is the shape bin/fm-spawn.sh always
+# hands a crewmate. A crewmate using delegation tools inside its own task
+# worktree is legitimate and stays allowed. Any failure to confirm the home is
+# inert (exit 0), never a block, so a broken environment never denies a call.
+#
+# This scope test runs BEFORE the stdin payload read below, so an inert home
+# never blocks on a harness pipe that stays open. A crewmate worktree inherits
+# the tracked hook and is the common case, and a guard that reads stdin first
+# would stall that whole session waiting for a payload it would then discard.
+# Because the predicate therefore runs on every tool call rather than only on a
+# delegation-shaped one, an unresolvable library counts as one more unconfirmable
+# environment: inert and silent, never a block and never stderr noise.
+[ -f "$SCRIPT_DIR/fm-primary-scope-lib.sh" ] || exit 0
+# shellcheck source=bin/fm-primary-scope-lib.sh
+. "$SCRIPT_DIR/fm-primary-scope-lib.sh" 2>/dev/null || exit 0
+fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
+
 if [ "$TOOL_SET" -eq 0 ]; then
   PAYLOAD=$(cat 2>/dev/null || true)
   [ -n "$PAYLOAD" ] || exit 0
@@ -169,22 +194,6 @@ done
 # makes a genuinely intended use possible and an accidental one impossible: no
 # in-session tool call can set it for the call that follows.
 [ "${FM_ALLOW_SUBAGENT:-}" != "1" ] || exit 0
-
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 0
-FM_ROOT=${FM_ROOT_OVERRIDE:-$(CDPATH='' cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd -P)} || exit 0
-FM_HOME=${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}
-STATE=${FM_STATE_OVERRIDE:-$FM_HOME/state}
-
-# Scope to a genuine primary home, exactly as the session-start nudge and the
-# turn-end guard do. fm_primary_scope_matches accepts a plain checkout or a
-# marked secondmate home - both operate a fleet and must dispatch through it -
-# and rejects a linked task worktree, which is the shape bin/fm-spawn.sh always
-# hands a crewmate. A crewmate using delegation tools inside its own task
-# worktree is legitimate and stays allowed. Any failure to confirm the home is
-# inert (exit 0), never a block, so a broken environment never denies a call.
-# shellcheck source=bin/fm-primary-scope-lib.sh
-. "$SCRIPT_DIR/fm-primary-scope-lib.sh"
-fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
 # Name the dedicated scout entry point only when this home carries it; degrade
 # to the two-step brief-then-spawn path when it does not, rather than naming a
