@@ -221,6 +221,7 @@ On those surfaces the worktree-collision refusal therefore closes nothing and re
 It offers the operator no follow-up procedure, because no close of a herdr, zellij or cmux endpoint has been measured against this pool, and the one operator-typed termination that has been measured, the ordinary subshell exit on tmux, is the one that detaches the worktree.
 A default herdr spawn is projected, so that refusal also disarms the projection-abort cleanup that would otherwise close the same pane from the exit trap.
 The other spawn failures that reach that cleanup, the primary-checkout isolation refusal and the worktree settle timeout, still close a projected pane, and changing them is outside this change.
+Every arm above covers only an endpoint the spawn itself created: a `--relaunch` spawn adopts the task's recorded endpoint and worktree, so its ownership refusal closes nothing and names no residue on any backend, and `discard_refused_endpoint`'s header owns that exemption.
 
 The reset is owned by the acquire, not by anything firstmate does afterwards.
 Both the interactive `treehouse get` and the non-interactive `treehouse get --lease` detach the worktree they hand out before the caller can inspect it, so no ownership check placed after an acquire, and none placed before it that still has to ask the pool for a path, can prevent that first detach.
