@@ -1729,6 +1729,13 @@ real_path_or_raw() {  # <path>
 }
 
 # discard_refused_endpoint: take back the endpoint THIS spawn just created.
+# An adopted endpoint (SPAWN_ADOPTED_ENDPOINT=1, the --relaunch path) is left
+# strictly alone: it carries the task's previous agent's terminal and the
+# worktree that agent was already working in, so ending it would destroy a
+# surface this spawn never created and unlanded work it never acquired. The
+# refusal there is the whole remedy - nothing was created, so nothing is taken
+# back, and no residue is named either, because the endpoint and worktree are
+# exactly as the operator left them.
 # The ownership refusal fires after the task window already exists and after
 # `treehouse get` moved its pane into the contested worktree, so exiting bare
 # leaves an orphaned pane sitting in another task's worktree and poisons the
@@ -1764,6 +1771,7 @@ real_path_or_raw() {  # <path>
 # isolation refusal and the settle timeout - still close a projected pane, and
 # changing that is deliberately outside this change.
 discard_refused_endpoint() {
+  [ "${SPAWN_ADOPTED_ENDPOINT:-0}" -eq 0 ] || return 0
   [ "${BACKEND:-}" != orca ] || return 0
   [ -n "${T:-}" ] || return 0
   if [ "$BACKEND" = tmux ]; then
@@ -1847,7 +1855,7 @@ validate_spawn_worktree() {  # <source> <inspect-target>
 $conflict
 EOF
     detach_note=
-    if [ "${BACKEND:-}" != orca ]; then
+    if [ "${BACKEND:-}" != orca ] && [ "${SPAWN_ADOPTED_ENDPOINT:-0}" -eq 0 ]; then
       detach_note=" $source has already detached that worktree from its branch, so check $conflict_id's branch before restarting it."
     fi
     echo "error: $source yielded worktree '$wt_real', which task $conflict_id already owns (recorded worktree '$conflict_path') and whose agent endpoint still exists; refusing to launch $ID there so no second worker branches or works inside $conflict_id's worktree.$detach_note Inspect target $inspect_target" >&2
@@ -2020,12 +2028,18 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
 }
 
 W="fm-$ID"
+# SPAWN_ADOPTED_ENDPOINT: does $T name an endpoint that existed BEFORE this
+# spawn ran? An adoption reuses the task's recorded endpoint and its recorded
+# worktree untouched, so no acquisition of either happened here and neither may
+# be reclaimed or described as freshly detached when a later gate refuses.
+SPAWN_ADOPTED_ENDPOINT=0
 if [ "$RELAUNCH" -eq 1 ]; then
   # Adopt the recorded endpoint instead of creating one. This is what keeps a
   # relaunch a REPLACEMENT rather than a second copy of the task: no new
   # terminal, no second worktree, and every uncommitted change left exactly
   # where the previous agent left it.
   T=$RELAUNCH_TARGET
+  SPAWN_ADOPTED_ENDPOINT=1
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
   [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
