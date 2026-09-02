@@ -30,9 +30,9 @@
 # path. Re-run --check after moving either.
 #
 # Usage:
-#   fm-captain-style.sh                 print the line, the file to paste it
-#                                       into, and where in that file it goes,
-#                                       or report on the import already there
+#   fm-captain-style.sh                 report the memory file's state and, when
+#                                       it holds no import that loads, print the
+#                                       line and the file to paste it into
 #   fm-captain-style.sh --check         read-only: report whether the line is
 #                                       already wired in and whether it still
 #                                       reaches the style file; never writes
@@ -40,33 +40,36 @@
 #   fm-captain-style.sh --print-import  print the import line alone
 #   fm-captain-style.sh --help          print this header
 #
-# --check follows those measurements: it decides its verdict on the occurrences
-# that load, meaning the ones at column zero, outside any fenced code block. A
-# line carrying trailing spaces or a CR from a CRLF editor is one of them and is
+# One classification decides what is true about the memory file, and every mode
+# reads that same verdict: unreadable, absent, not wired, indented only, broken,
+# ambiguous, or wired. A mode chooses only how much of it to print and on which
+# stream, never what it says, so no two modes can report one file differently.
+#
+# That verdict follows the measurements above: it counts the occurrences that
+# load, meaning the ones at column zero, outside any fenced code block. A line
+# carrying trailing spaces or a CR from a CRLF editor is one of them and is
 # reported as wired. An indented occurrence is not, so it never pads the
 # competing-imports count; it is named as indentation when it is all the file
 # has, and mentioned as context beside a working import otherwise. An @import
 # inside a fenced code block is a documentation example and counts for nothing.
 #
-# Exit status is 0 when the wiring is in place (or, in the default mode, when
-# the instructions were printed and nothing else needs attention), and non-zero
-# for every state that needs a human to act. The default mode prints those
-# instructions only when the memory file holds no import that loads; when one is
-# already there it resolves that import before saying anything, so the two modes
-# never disagree about one file. An import that resolves means nothing to paste
-# and exit 0, because a second column-zero import would be the AMBIGUOUS state
-# rather than a repair; one that does not resolve, or more than one, is reported
-# the way --check reports it, with the line this checkout would use, and exits
-# non-zero. An unreadable memory file is one of the states needing a human: the
-# default mode still prints the line and the file to paste it into, because
-# neither needs that file read, while --check refuses rather than reporting an
-# unreadable file as an empty one.
+# Exit status follows the verdict alone: 0 when exactly one import loads and
+# reaches the style file, and non-zero for every other state, because every
+# other state needs a human to act. Both modes therefore exit the same way on
+# the same memory file, including on a fresh machine, where nothing is wired yet
+# and the default mode exits non-zero with the line and the file to paste it
+# into printed. The line is offered wherever no import loads; the broken and
+# ambiguous reports carry their own tailored replacement line instead, and
+# settled wiring is offered nothing. An unreadable memory file is the one place
+# the modes differ in how much they say: neither printed value needs that file
+# read, so the default mode still supplies them, while --check refuses to advise
+# on a file it could not measure.
 #
 # A checkout missing its own copy of the style file is reported where that
-# changes the advice - beside an import line this checkout could not supply, in
-# the default mode and in a --check that is already failing. A --check that ends
-# in working wiring stays silent on stderr and exits 0, mentioning the local gap
-# only as context on the note about which checkout the line reaches.
+# changes the advice - beside an import line this checkout could not supply. A
+# run that ends in working wiring stays silent on stderr and exits 0, mentioning
+# the local gap only as context on the note about which checkout the line
+# reaches.
 #
 # Honors CLAUDE_CONFIG_DIR, matching Claude Code's own override, and falls back
 # to $HOME/.claude.
@@ -268,9 +271,8 @@ else
   INDENTED_COUNT=$(printf '%s\n' "$INDENTED" | wc -l | tr -d ' ')
 fi
 
-# Both modes answer from one resolution of the same file, so neither can call
-# settled a state the other calls broken. Whitespace after the path - including
-# the CR a CRLF editor leaves - does not stop the loader, and is trimmed before
+# The one loading line, resolved once. Whitespace after the path - including the
+# CR a CRLF editor leaves - does not stop the loader, and is trimmed before
 # resolving.
 FOUND=''
 TARGET=''
@@ -279,28 +281,36 @@ if [ "$LOADING_COUNT" -eq 1 ]; then
   TARGET=$(resolve_import "${FOUND#@}")
 fi
 
-report_ambiguous() {
-  echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $LOADING_COUNT imports of the style file:" >&2
-  printf '%s\n' "$LOADING" | sed 's/^/  /' >&2
-  echo "hint: keep exactly one of them and delete the rest" >&2
-  if [ "$STYLE_MISSING" -eq 0 ]; then
-    echo "hint: this checkout would use:" >&2
-    printf '  %s\n' "$IMPORT_LINE" >&2
+# What is true about the memory file is decided here, once, for every mode. A
+# mode chooses how much of the verdict to print and on which stream; it decides
+# nothing about the verdict itself, and the exit status follows the verdict
+# alone, so no two modes can report one file differently.
+classify_memory() {
+  if [ "$MEMORY_UNREADABLE" -eq 1 ]; then
+    printf 'unreadable\n'
+  elif [ ! -e "$MEMORY_FILE" ]; then
+    printf 'absent\n'
+  elif [ "$LOADING_COUNT" -gt 1 ]; then
+    printf 'ambiguous\n'
+  elif [ "$LOADING_COUNT" -eq 1 ]; then
+    if [ -f "$TARGET" ]; then
+      printf 'wired\n'
+    else
+      printf 'broken\n'
+    fi
+  elif [ "$INDENTED_COUNT" -ge 1 ]; then
+    printf 'indented\n'
+  else
+    printf 'not-wired\n'
   fi
 }
 
-report_broken() {
-  echo "captain-style: BROKEN  import=$FOUND  resolves=$TARGET (missing)" >&2
-  if [ "$STYLE_MISSING" -eq 0 ]; then
-    echo "hint: the style file moved; replace that line with:" >&2
-    printf '  %s\n' "$IMPORT_LINE" >&2
-  else
-    # Pointing at this checkout's own copy would name a file that is equally
-    # absent, so say what is actually wrong instead of advising a dead path.
-    echo "hint: $STYLE_ABS is missing too, so this checkout cannot supply the" >&2
-    echo "      style file; restore it, or re-run from a complete checkout" >&2
-  fi
-}
+VERDICT=$(classify_memory)
+if [ "$VERDICT" = wired ]; then
+  STATUS=0
+else
+  STATUS=1
+fi
 
 # Context beside working wiring, never a verdict: these lines change neither the
 # outcome nor the exit status. Which checkout the line names is a question about
@@ -320,75 +330,85 @@ report_working_notes() {
   fi
 }
 
-if [ "$MODE" = print ]; then
-  # An import that is present decides nothing on its own: a line left behind by
-  # a moved checkout loads nothing, which is the silent failure this script
-  # exists to surface, so it is resolved here and reported the way --check
-  # reports it rather than announced as done.
-  if [ "$LOADING_COUNT" -gt 1 ]; then
-    report_ambiguous
-    exit 1
-  fi
-  if [ "$LOADING_COUNT" -eq 1 ] && [ ! -f "$TARGET" ]; then
-    report_broken
-    exit 1
-  fi
-  # A file that already holds a loading import needs no paste, and printing the
-  # paste instructions beside it invites a second column-zero occurrence - the
-  # AMBIGUOUS state above.
-  if [ "$LOADING_COUNT" -eq 1 ]; then
-    printf 'captain-style: an import of the style file is already in %s\n' "$MEMORY_FILE"
-    printf 'import=%s  resolves=%s\n' "$FOUND" "$TARGET"
-    printf 'Nothing to paste and nothing to change: the wiring is in place.\n'
-    printf 'Re-check it at any time with: %s --check\n' "$0"
-    report_working_notes
-    exit 0
-  fi
-  # Both printed values come from this script's own location, so a memory file
-  # that cannot be read still gets the line and the path it needs.
+# The diagnosis, said the same way in every mode: settled wiring is the answer
+# and goes to stdout, and every state that needs a human is a diagnostic and
+# goes to stderr.
+report_verdict() {
+  case "$VERDICT" in
+    unreadable)
+      # Already named on stderr where the file was found unreadable.
+      ;;
+    absent)
+      echo "captain-style: NOT WIRED  $MEMORY_FILE does not exist" >&2
+      ;;
+    not-wired)
+      echo "captain-style: NOT WIRED  no import of the style file in $MEMORY_FILE" >&2
+      ;;
+    indented)
+      echo "captain-style: INDENTED  the import line in $MEMORY_FILE is not at the start of its line:" >&2
+      printf '%s\n' "$INDENTED" | sed 's/^/  /' >&2
+      echo "hint: remove the leading whitespace so the line begins with @" >&2
+      ;;
+    ambiguous)
+      echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $LOADING_COUNT imports of the style file:" >&2
+      printf '%s\n' "$LOADING" | sed 's/^/  /' >&2
+      echo "hint: keep exactly one of them and delete the rest" >&2
+      if [ "$STYLE_MISSING" -eq 0 ]; then
+        echo "hint: this checkout would use:" >&2
+        printf '  %s\n' "$IMPORT_LINE" >&2
+      fi
+      ;;
+    broken)
+      echo "captain-style: BROKEN  the import in $MEMORY_FILE reaches nothing:" >&2
+      echo "  import=$FOUND  resolves=$TARGET (missing)" >&2
+      if [ "$STYLE_MISSING" -eq 0 ]; then
+        echo "hint: the style file moved; replace that line in $MEMORY_FILE with:" >&2
+        printf '  %s\n' "$IMPORT_LINE" >&2
+      else
+        # Pointing at this checkout's own copy would name a file that is equally
+        # absent, so say what is actually wrong instead of advising a dead path.
+        echo "hint: $STYLE_ABS is missing too, so this checkout cannot supply the" >&2
+        echo "      style file; restore it, or re-run from a complete checkout" >&2
+      fi
+      ;;
+    wired)
+      echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
+      report_working_notes
+      ;;
+  esac
+}
+
+# What the operator does next, which is the only thing a mode may vary: the
+# default mode is asked which line to paste and which file to paste it into, so
+# it answers on stdout, while --check keeps every unsettled report on stderr.
+# The broken and ambiguous reports carry their own tailored replacement line and
+# do not repeat this block.
+offer_next_step() {
+  case "$VERDICT" in
+    wired)
+      if [ "$MODE" = print ]; then
+        printf 'Nothing to paste and nothing to change: that import is already in %s.\n' "$MEMORY_FILE"
+        printf 'Re-check it at any time with: %s --check\n' "$0"
+      fi
+      return 0
+      ;;
+    absent|not-wired|indented) ;;
+    unreadable)
+      # Neither printed value needs the memory file read, so the default mode
+      # still supplies them; --check refuses to advise on a file it could not
+      # measure.
+      [ "$MODE" = print ] || return 0
+      ;;
+    *) return 0 ;;
+  esac
   report_style_missing
-  instructions
-  { [ "$STYLE_MISSING" -eq 0 ] && [ "$MEMORY_UNREADABLE" -eq 0 ]; } || exit 1
-  exit 0
-fi
+  if [ "$MODE" = check ]; then
+    instructions >&2
+  else
+    instructions
+  fi
+}
 
-# --check from here down. Read-only in every branch.
-if [ "$MEMORY_UNREADABLE" -eq 1 ]; then
-  exit 1
-fi
-
-if [ ! -e "$MEMORY_FILE" ]; then
-  echo "captain-style: NOT WIRED  $MEMORY_FILE does not exist" >&2
-  report_style_missing
-  instructions >&2
-  exit 1
-fi
-
-if [ "$LOADING_COUNT" -eq 0 ] && [ "$INDENTED_COUNT" -ge 1 ]; then
-  echo "captain-style: INDENTED  the import line in $MEMORY_FILE is not at the start of its line:" >&2
-  printf '%s\n' "$INDENTED" | sed 's/^/  /' >&2
-  echo "hint: remove the leading whitespace so the line begins with @" >&2
-  exit 1
-fi
-
-if [ "$LOADING_COUNT" -eq 0 ]; then
-  echo "captain-style: NOT WIRED  no import of the style file in $MEMORY_FILE" >&2
-  report_style_missing
-  instructions >&2
-  exit 1
-fi
-
-if [ "$LOADING_COUNT" -gt 1 ]; then
-  report_ambiguous
-  exit 1
-fi
-
-# Exactly one line loads, and it was resolved before the modes parted.
-if [ ! -f "$TARGET" ]; then
-  report_broken
-  exit 1
-fi
-
-echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
-report_working_notes
-exit 0
+report_verdict
+offer_next_step
+exit "$STATUS"

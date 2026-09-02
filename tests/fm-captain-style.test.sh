@@ -92,13 +92,15 @@ test_printed_line_pasted_verbatim_verifies() {
 }
 
 test_checkout_inside_home_prints_home_relative_import() {
-  local home checkout out
+  local home checkout out rc
   home="$TMP_ROOT/inside/home"
   checkout="$home/src/firstmate"
   mkdir -p "$home/.claude"
   make_checkout "$checkout"
 
-  out=$(run_style "$checkout" "$home") || fail "print mode failed: $out"
+  out=$(run_style "$checkout" "$home")
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "print mode exited 0 on a machine with nothing wired: $out"
   assert_contains "$out" '@~/src/firstmate/docs/styl-kapitanski.md' \
     "a checkout under HOME did not get a home-relative import line"
   assert_not_contains "$out" "$home/src/firstmate/docs" \
@@ -109,14 +111,16 @@ test_checkout_inside_home_prints_home_relative_import() {
 }
 
 test_checkout_outside_home_prints_absolute_import() {
-  local home checkout real out
+  local home checkout real out rc
   home="$TMP_ROOT/outside/home"
   checkout="$TMP_ROOT/outside/opt/firstmate"
   mkdir -p "$home/.claude"
   make_checkout "$checkout"
   real=$(cd "$checkout" && pwd -P)
 
-  out=$(run_style "$checkout" "$home") || fail "print mode failed: $out"
+  out=$(run_style "$checkout" "$home")
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "print mode exited 0 on a machine with nothing wired: $out"
   assert_contains "$out" "@$real/docs/styl-kapitanski.md" \
     "a checkout outside HOME did not fall back to an absolute import"
   pass "fm-captain-style.sh: a checkout outside HOME falls back to an absolute import"
@@ -512,10 +516,12 @@ test_print_mode_reports_an_import_left_behind_by_a_moved_checkout() {
   rc=$?
   [ "$rc" -ne 0 ] || fail "print mode exited 0 on an import that resolves to nothing: $out"
   assert_contains "$out" "BROKEN" "print mode did not report the stale import"
-  assert_not_contains "$out" "wiring is in place" \
+  assert_not_contains "$out" "Nothing to paste" \
     "print mode called a stale import working wiring"
   assert_contains "$out" '@~/src/firstmate-moved/docs/styl-kapitanski.md' \
     "print mode did not print the line this checkout would use"
+  assert_contains "$out" "$memory" \
+    "the BROKEN report never named the file holding the line to replace"
   assert_memory_untouched "$memory" "$before" "print-moved"
 
   check=$(run_style "$moved" "$home" --check)
@@ -553,6 +559,79 @@ test_print_mode_reports_competing_imports_instead_of_declaring_done() {
   expect_code "$crc" "$rc" "default mode and --check on competing imports"
   assert_contains "$check" "AMBIGUOUS" "--check disagreed with print mode about the competing imports"
   pass "fm-captain-style.sh: print mode reports competing imports instead of declaring done"
+}
+
+# An indented-only file is a broken paste, not a blank slate: the default mode
+# has to name it and fail on it exactly as --check does, while still supplying
+# the line to put at column zero.
+test_print_mode_reports_an_indented_only_memory_file() {
+  local home checkout memory line before out rc check crc
+  home="$TMP_ROOT/print-indented/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  printf '# notes\n    %s\n' "$line" >"$memory"
+  before=$(snapshot_file "$memory")
+
+  out=$(run_style "$checkout" "$home")
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "print mode exited 0 on a file whose only import is indented: $out"
+  assert_contains "$out" "INDENTED" "print mode did not name the indented occurrence"
+  assert_contains "$out" "$line" "print mode did not print the line to paste at column zero"
+  assert_memory_untouched "$memory" "$before" "print-indented"
+
+  check=$(run_style "$checkout" "$home" --check)
+  crc=$?
+  expect_code "$crc" "$rc" "default mode and --check on an indented-only file"
+  assert_contains "$check" "INDENTED" "--check disagreed with print mode about the indented line"
+  pass "fm-captain-style.sh: print mode reports an indented-only memory file"
+}
+
+# The parity itself, pinned state by state. One classification decides what is
+# true about the memory file, so the mode that reads it cannot change the
+# answer: same file, same exit status, whichever mode asked.
+test_every_memory_state_gets_the_same_exit_status_from_both_modes() {
+  local home checkout memory line state before pout prc cout crc
+  home="$TMP_ROOT/parity/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+
+  for state in absent not-wired indented broken ambiguous wired; do
+    case "$state" in
+      absent) rm -f "$memory" ;;
+      not-wired) printf '# only my own notes\n' >"$memory" ;;
+      indented) printf '# notes\n    %s\n' "$line" >"$memory" ;;
+      broken) printf '@~/gone/docs/styl-kapitanski.md\n' >"$memory" ;;
+      ambiguous) printf '%s\n@~/elsewhere/docs/styl-kapitanski.md\n' "$line" >"$memory" ;;
+      wired) printf '%s\n' "$line" >"$memory" ;;
+    esac
+    before=''
+    [ "$state" = absent ] || before=$(snapshot_file "$memory")
+
+    pout=$(run_style "$checkout" "$home")
+    prc=$?
+    cout=$(run_style "$checkout" "$home" --check)
+    crc=$?
+    expect_code "$crc" "$prc" "default mode and --check on a $state memory file"
+    if [ "$state" = wired ]; then
+      expect_code 0 "$prc" "both modes on a correctly wired memory file"
+    else
+      [ "$prc" -ne 0 ] \
+        || fail "both modes exited 0 on a $state memory file: $pout"
+    fi
+    if [ "$state" = absent ]; then
+      assert_absent "$memory" "a run created the memory file in the $state case"
+    else
+      assert_memory_untouched "$memory" "$before" "parity $state"
+    fi
+    [ -n "$cout" ] || fail "--check said nothing about a $state memory file"
+  done
+  pass "fm-captain-style.sh: both modes return one exit status per memory state"
 }
 
 test_more_than_one_import_is_reported_as_ambiguous() {
@@ -749,6 +828,8 @@ test_more_than_one_import_is_reported_as_ambiguous
 test_print_mode_asks_for_no_paste_when_the_import_is_already_there
 test_print_mode_reports_an_import_left_behind_by_a_moved_checkout
 test_print_mode_reports_competing_imports_instead_of_declaring_done
+test_print_mode_reports_an_indented_only_memory_file
+test_every_memory_state_gets_the_same_exit_status_from_both_modes
 test_no_mode_ever_writes_to_the_memory_file
 test_a_symlinked_memory_file_is_never_touched
 test_a_missing_style_file_does_not_block_the_check
