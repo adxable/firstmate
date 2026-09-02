@@ -582,25 +582,126 @@ test_print_mode_reports_an_indented_only_memory_file() {
   rc=$?
   [ "$rc" -ne 0 ] || fail "print mode exited 0 on a file whose only import is indented: $out"
   assert_contains "$out" "INDENTED" "print mode did not name the indented occurrence"
-  assert_contains "$out" "needed: $line" \
-    "print mode did not show the column-zero form that line should take"
-  assert_contains "$out" "strip the leading whitespace" \
-    "print mode did not offer the one remedy the state has"
-  # Two remedies in one run is the defect: unindenting the line AND pasting a
-  # fresh one leaves two competing imports, which is the AMBIGUOUS state.
-  assert_not_contains "$out" "Add the style rules" \
-    "print mode told the operator to add a second import beside the indented one"
+  assert_contains "$out" "  remove:     $line" \
+    "the remedy did not name the indented occurrence to remove"
+  assert_contains "$out" "  add: $line" \
+    "the remedy did not name the column-zero line to end up with"
   assert_memory_untouched "$memory" "$before" "print-indented"
 
   check=$(run_style "$checkout" "$home" --check)
   crc=$?
   expect_code "$crc" "$rc" "default mode and --check on an indented-only file"
   assert_contains "$check" "INDENTED" "--check disagreed with print mode about the indented line"
-  assert_contains "$check" "needed: $line" \
-    "--check did not show the column-zero form that line should take"
-  assert_not_contains "$check" "Add the style rules" \
-    "--check told the operator to add a second import beside the indented one"
+  assert_contains "$check" "  add: $line" \
+    "--check printed a different remedy than the default mode did"
   pass "fm-captain-style.sh: an indented-only memory file gets exactly one remedy"
+}
+
+# Carry out, mechanically, the operations a run printed. Nothing here decides
+# what the remedy should have been: it reads the operations out of that run's
+# own output and applies them, so the invariant test measures where the script's
+# own advice lands rather than restating it.
+apply_remedy() {
+  local out=$1 memory=$2
+  printf '%s\n' "$out" | sed -nE 's/^  (create|restore): //p' | while IFS= read -r path; do
+    mkdir -p "$(dirname "$path")"
+    [ -e "$path" ] || : >"$path"
+  done
+  printf '%s\n' "$out" | sed -nE 's/^  readable: //p' | while IFS= read -r path; do
+    chmod u+rw "$path"
+  done
+  printf '%s\n' "$out" | sed -nE 's/^  remove: //p' | while IFS= read -r victim; do
+    awk -v victim="$victim" '$0 != victim' "$memory" >"$memory.applied"
+    mv "$memory.applied" "$memory"
+  done
+  printf '%s\n' "$out" | sed -nE 's/^  add: //p' | while IFS= read -r addition; do
+    printf '%s\n' "$addition" >>"$memory"
+  done
+}
+
+# Build one memory-file state, by hand, the way an operator could have left it.
+build_memory_state() {
+  local state=$1 memory=$2 line=$3 checkout=$4
+  case "$state" in
+    absent) rm -f "$memory" ;;
+    not-wired) printf '# only my own notes\n' >"$memory" ;;
+    indented) printf '# notes\n    %s\n' "$line" >"$memory" ;;
+    indented-stale) printf '# notes\n    @~/old-checkout/docs/styl-kapitanski.md\n' >"$memory" ;;
+    two-indented) printf '    %s\n\t@~/other/docs/styl-kapitanski.md\n' "$line" >"$memory" ;;
+    broken) printf '@~/gone/docs/styl-kapitanski.md\n' >"$memory" ;;
+    ambiguous) printf '%s\n@~/elsewhere/docs/styl-kapitanski.md\n' "$line" >"$memory" ;;
+    broken-plus-indented)
+      printf '# notes\n    %s\n@~/gone/docs/styl-kapitanski.md\n' "$line" >"$memory"
+      ;;
+    style-missing)
+      printf '# only my own notes\n' >"$memory"
+      rm -f "$checkout/docs/styl-kapitanski.md"
+      ;;
+    unreadable)
+      printf '# notes nobody may read\n' >"$memory"
+      chmod 000 "$memory"
+      ;;
+  esac
+}
+
+# The invariant this script is held to: whatever the memory file holds, the
+# operations a run prints must, carried out literally, leave it wired. Five
+# earlier rounds fixed one state at a time; this fixes the rule, so a remedy
+# that is right for the common case and wrong for a stale path or a second
+# indented copy fails here rather than in a captain's terminal.
+test_the_printed_remedy_reaches_wired_from_every_state() {
+  local states state mode home checkout memory line out rc rounds
+  states='absent not-wired indented indented-stale two-indented broken ambiguous'
+  states="$states broken-plus-indented style-missing"
+  # Root reads anything, so the unmeasurable state only exists for a normal user.
+  if [ "$(id -u)" != "0" ]; then
+    states="$states unreadable"
+  fi
+
+  for state in $states; do
+    for mode in print check; do
+      home="$TMP_ROOT/remedy/$state-$mode/home"
+      checkout="$home/src/firstmate"
+      mkdir -p "$home/.claude"
+      make_checkout "$checkout"
+      memory="$home/.claude/CLAUDE.md"
+      line=$(run_style "$checkout" "$home" --print-import)
+      build_memory_state "$state" "$memory" "$line" "$checkout"
+
+      # Apply what the run printed, then run again, until it reports settled
+      # wiring. A remedy that needs more than the unreadable state's two passes
+      # is one that does not land where it says it does.
+      rounds=0
+      while :; do
+        if [ "$mode" = print ]; then
+          out=$(run_style "$checkout" "$home")
+        else
+          out=$(run_style "$checkout" "$home" --check)
+        fi
+        rc=$?
+        if [ "$rc" -eq 0 ]; then
+          break
+        fi
+        rounds=$((rounds + 1))
+        if [ "$rounds" -gt 2 ]; then
+          fail "$state/$mode: the printed remedy did not reach wired: $out"
+        fi
+        apply_remedy "$out" "$memory"
+      done
+
+      # Both modes have to agree the file is settled, not just the one that
+      # printed the remedy.
+      out=$(run_style "$checkout" "$home" --check)
+      rc=$?
+      expect_code 0 "$rc" "$state/$mode: --check after carrying out the printed remedy"
+      assert_contains "$out" "captain-style: wired" \
+        "$state/$mode: the remedy left the file in some state other than wired"
+      out=$(run_style "$checkout" "$home")
+      rc=$?
+      expect_code 0 "$rc" "$state/$mode: default mode after carrying out the printed remedy"
+    done
+  done
+  pass "fm-captain-style.sh: the printed remedy reaches wired from every state"
 }
 
 # The parity itself, pinned state by state. One classification decides what is
@@ -745,8 +846,8 @@ test_a_missing_style_file_does_not_block_the_check() {
   rc=$?
   [ "$rc" -ne 0 ] || fail "--check reported success with the style file gone: $out"
   assert_contains "$out" "BROKEN" "--check did not report the state it exists to report"
-  assert_not_contains "$out" "replace that line with" \
-    "--check advised pasting a line pointing at the same missing file"
+  assert_contains "$out" "  restore: $(real_dir "$checkout")/docs/styl-kapitanski.md" \
+    "the remedy named a line to add without restoring the file it would reach"
   pass "fm-captain-style.sh: a missing style file is reported, not a refusal to look"
 }
 
@@ -857,6 +958,7 @@ test_print_mode_reports_an_import_left_behind_by_a_moved_checkout
 test_print_mode_reports_competing_imports_instead_of_declaring_done
 test_print_mode_reports_an_indented_only_memory_file
 test_every_memory_state_gets_the_same_exit_status_from_both_modes
+test_the_printed_remedy_reaches_wired_from_every_state
 test_no_mode_ever_writes_to_the_memory_file
 test_a_symlinked_memory_file_is_never_touched
 test_a_missing_style_file_does_not_block_the_check

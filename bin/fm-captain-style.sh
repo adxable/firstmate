@@ -61,15 +61,17 @@
 # put it in. That first run is phrased as the step to take rather than as a
 # failure, and the exit status is stated here rather than in what it prints.
 #
-# Every state offers exactly one remedy, because two would let an operator
-# follow both and end with competing imports. The paste block is offered where
-# the file holds no import at all; an indented occurrence is shown beside the
-# column-zero form that same line should take, since the line is already there
-# and only its column is wrong; the broken and ambiguous reports carry their own
-# tailored replacement line; settled wiring is offered nothing. An unreadable
-# memory file is the one place the modes differ in how much they say: neither
-# printed value needs that file read, so the default mode still supplies them,
-# while --check refuses to advise on a file it could not measure.
+# Every state that needs a human prints exactly one remedy, and that remedy is
+# derived from the state the file has to end in rather than from the shape of
+# whatever was found: one import of the style file, at column zero, naming a
+# style file that exists. Carrying out its printed steps literally lands on the
+# wired verdict from every state, which is what stops a remedy from being right
+# for the common case and wrong for a stale path, a second indented copy, or a
+# checkout with no style file of its own. The steps are printed as operations -
+# restore, create, remove, add, readable - in the order they must be carried
+# out. Settled wiring is given no remedy at all, and an unreadable file is given
+# the single step that makes it measurable, because nothing else about it can be
+# decided.
 #
 # A checkout missing its own copy of the style file is reported where that
 # changes the advice - beside an import line this checkout could not supply. A
@@ -215,31 +217,11 @@ style_imports() {
   ' "$MEMORY_FILE" 2>/dev/null || true
 }
 
-instructions() {
-  printf 'Add the style rules to Claude by putting this line, unindented and on its\n'
-  printf 'own line, anywhere in %s:\n' "$MEMORY_FILE"
-  printf '\n'
-  printf '%s\n' "$IMPORT_LINE"
-  printf '\n'
-  printf 'Everything already in that file stays exactly as it is.\n'
-  printf 'Then confirm with: %s --check\n' "$0"
-}
-
 if [ ! -f "$STYLE_ABS" ]; then
   STYLE_MISSING=1
 else
   STYLE_MISSING=0
 fi
-
-# Said only where it changes what the operator is being told to do: alongside an
-# import line that would name a file this checkout cannot supply. A --check that
-# ends in working wiring is not such a place.
-report_style_missing() {
-  if [ "$STYLE_MISSING" -eq 1 ]; then
-    echo "error: style file not found: $STYLE_ABS" >&2
-    echo "hint: run this script from a complete firstmate checkout" >&2
-  fi
-}
 
 if [ -e "$MEMORY_FILE" ] && { [ ! -f "$MEMORY_FILE" ] || [ ! -r "$MEMORY_FILE" ]; }; then
   echo "error: $MEMORY_FILE exists but could not be read" >&2
@@ -336,9 +318,9 @@ report_working_notes() {
   fi
 }
 
-# The diagnosis, said the same way in every mode: settled wiring is the answer
-# and goes to stdout, and every state that needs a human is a diagnostic and
-# goes to stderr.
+# The diagnosis: what the file holds, said the same way in every mode. Settled
+# wiring is the answer and goes to stdout, and every state that needs a human is
+# a diagnostic and goes to stderr.
 report_verdict() {
   case "$VERDICT" in
     unreadable)
@@ -353,33 +335,16 @@ report_verdict() {
       [ "$MODE" = print ] || echo "captain-style: NOT WIRED  no import of the style file in $MEMORY_FILE" >&2
       ;;
     indented)
-      echo "captain-style: INDENTED  the import line in $MEMORY_FILE does not start at column zero:" >&2
-      printf '%s\n' "$INDENTED" |
-        awk '{ shape = $0; sub(/^[ \t]*/, "", shape); printf "  found:  %s\n  needed: %s\n", $0, shape }' >&2
-      echo "hint: strip the leading whitespace from that line so it begins with @" >&2
-      echo "hint: nothing has to be added, and adding a second copy would leave two competing imports" >&2
+      echo "captain-style: INDENTED  no import in $MEMORY_FILE starts at column zero:" >&2
+      printf '%s\n' "$INDENTED" | sed 's/^/  found: /' >&2
       ;;
     ambiguous)
       echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $LOADING_COUNT imports of the style file:" >&2
-      printf '%s\n' "$LOADING" | sed 's/^/  /' >&2
-      echo "hint: keep exactly one of them and delete the rest" >&2
-      if [ "$STYLE_MISSING" -eq 0 ]; then
-        echo "hint: this checkout would use:" >&2
-        printf '  %s\n' "$IMPORT_LINE" >&2
-      fi
+      printf '%s\n' "$LOADING" | sed 's/^/  found: /' >&2
       ;;
     broken)
       echo "captain-style: BROKEN  the import in $MEMORY_FILE reaches nothing:" >&2
-      echo "  import=$FOUND  resolves=$TARGET (missing)" >&2
-      if [ "$STYLE_MISSING" -eq 0 ]; then
-        echo "hint: the style file moved; replace that line in $MEMORY_FILE with:" >&2
-        printf '  %s\n' "$IMPORT_LINE" >&2
-      else
-        # Pointing at this checkout's own copy would name a file that is equally
-        # absent, so say what is actually wrong instead of advising a dead path.
-        echo "hint: $STYLE_ABS is missing too, so this checkout cannot supply the" >&2
-        echo "      style file; restore it, or re-run from a complete checkout" >&2
-      fi
+      echo "  found: $FOUND  resolves=$TARGET (missing)" >&2
       ;;
     wired)
       echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
@@ -388,40 +353,80 @@ report_verdict() {
   esac
 }
 
-# What the operator does next, which is the only thing a mode may vary: the
-# default mode is asked which line to paste and which file to paste it into, so
-# it answers on stdout, while --check keeps every unsettled report on stderr.
-# The broken and ambiguous reports carry their own tailored replacement line and
-# do not repeat this block.
-offer_next_step() {
-  case "$VERDICT" in
-    wired)
-      if [ "$MODE" = print ]; then
-        printf 'Nothing to paste and nothing to change: that import is already in %s.\n' "$MEMORY_FILE"
-        printf 'Re-check it at any time with: %s --check\n' "$0"
-      fi
-      return 0
-      ;;
-    absent|not-wired) ;;
-    unreadable)
-      # Neither printed value needs the memory file read, so the default mode
-      # still supplies them; --check refuses to advise on a file it could not
-      # measure.
-      [ "$MODE" = print ] || return 0
-      ;;
-    # The indented, broken and ambiguous states already hold the line; each
-    # carries its own single remedy, and repeating this block beside one would
-    # offer a second, competing import.
-    *) return 0 ;;
-  esac
-  report_style_missing
-  if [ "$MODE" = check ]; then
-    instructions >&2
-  else
-    instructions
+# The remedy, and there is only ever one: it is derived from the state the file
+# has to end in, never from the shape of whatever line was found, so carrying
+# out its steps literally leaves the file wired from any state. That target is
+# one import of the style file, at column zero, naming a style file that exists,
+# which is reached by removing every occurrence the scan found and adding the
+# line this checkout would use. An unmeasurable file gets the one step that
+# makes it measurable, because nothing else can be decided about it.
+#
+# Each step is printed as an operation on one path or line, in the order they
+# have to be carried out.
+report_remedy() {
+  local keeper
+  if [ "$VERDICT" = unreadable ]; then
+    printf 'remedy: make %s readable, then run this again.\n' "$MEMORY_FILE"
+    printf '  readable: %s\n' "$MEMORY_FILE"
+    printf 'note: the line this checkout would use is %s\n' "$IMPORT_LINE"
+    return 0
   fi
+  case "$VERDICT" in
+    absent)
+      printf 'Add the style rules to Claude: %s does not exist yet, so create it,\n' "$MEMORY_FILE"
+      printf 'along with the directory holding it, containing this one line.\n'
+      ;;
+    not-wired)
+      printf 'Add the style rules to Claude by putting this line in %s,\n' "$MEMORY_FILE"
+      printf 'unindented and on its own line.\n'
+      ;;
+    *)
+      printf 'remedy: leave %s holding exactly one import of the style file, at\n' "$MEMORY_FILE"
+      printf 'column zero, by carrying out these steps in order.\n'
+      ;;
+  esac
+  # A line naming this checkout reaches nothing while this checkout has no copy
+  # of the style file, so restoring it comes before anything written down.
+  if [ "$STYLE_MISSING" -eq 1 ]; then
+    printf '  restore: %s\n' "$STYLE_ABS"
+  fi
+  if [ "$VERDICT" = absent ]; then
+    printf '  create: %s\n' "$MEMORY_FILE"
+  fi
+  # An occurrence that is already the line this checkout would use, at column
+  # zero, is the one to keep: telling an operator to remove it and add it back
+  # would be a pair of steps whose order decides whether the file ends up wired.
+  keeper=0
+  if [ -n "$IMPORTS" ] && printf '%s\n' "$IMPORTS" | grep -qxF "$IMPORT_LINE"; then
+    keeper=1
+  fi
+  if [ -n "$IMPORTS" ]; then
+    printf '%s\n' "$IMPORTS" |
+      awk -v keep="$IMPORT_LINE" -v has="$keeper" '
+        has == 1 && kept == 0 && $0 == keep { kept = 1; next }
+        { print "  remove: " $0 }
+      '
+  fi
+  if [ "$keeper" -eq 0 ]; then
+    printf '  add: %s\n' "$IMPORT_LINE"
+  fi
+  if [ "$VERDICT" != absent ]; then
+    printf 'Everything else in that file stays exactly as it is.\n'
+  fi
+  printf 'Then confirm with: %s --check\n' "$0"
 }
 
 report_verdict
-offer_next_step
+# The mode decides where the remedy goes and whether settled wiring gets a
+# closing word, never what the remedy is.
+if [ "$VERDICT" = wired ]; then
+  if [ "$MODE" = print ]; then
+    printf 'Nothing to paste and nothing to change: that import is already in %s.\n' "$MEMORY_FILE"
+    printf 'Re-check it at any time with: %s --check\n' "$0"
+  fi
+elif [ "$MODE" = check ]; then
+  report_remedy >&2
+else
+  report_remedy
+fi
 exit "$STATUS"
