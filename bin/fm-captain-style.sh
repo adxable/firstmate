@@ -72,12 +72,16 @@
 # because nothing else about it can be decided.
 #
 # The steps are operations - restore file, create file, make readable, remove
-# line, append line at end of file - and every step that acts on a line names it
-# by number rather than by its content, because two occurrences can be the same
-# bytes and a content-named removal would take both. Line numbers are the ones
-# the file had when the run read it, so removals are printed from the highest
-# down: carried out in printed order, no step shifts a number a later step still
-# depends on.
+# line, insert line - and every step that acts on a line names it by number
+# rather than by its content, because two occurrences can be the same bytes and
+# a content-named removal would take both. A number names the line as the file
+# stands when that step is carried out: removals are printed from the highest
+# down, so none of them shifts a number a later removal depends on, and the
+# insert names its position in the file the removals leave behind. The insert
+# goes after the last line that sits outside every fenced block, which is the
+# one position where a new line both starts at column zero and is read: a file
+# whose last line has no newline, and a file that ends inside an unterminated
+# fence, both take it there rather than at the end.
 #
 # A checkout missing its own copy of the style file is reported where that
 # changes the advice - beside an import line this checkout could not supply. A
@@ -188,8 +192,12 @@ physical_path() {
 # does not evaluate, so fenced lines are skipped - counting one would report
 # wiring that loads nothing. An unterminated fence opens a block that runs to
 # end of file.
-style_imports() {
-  [ -f "$MEMORY_FILE" ] || return 0
+# The same pass also reports the last line after which a new line would sit
+# outside every fenced block, because that is where an inserted import both
+# starts at column zero and is seen by the loader. It is 0 when there is no such
+# line, meaning the file has to take the import as its first line.
+scan_memory() {
+  [ -f "$MEMORY_FILE" ] || { printf 'anchor\t0\n'; return 0; }
   awk '
     {
       probe = $0
@@ -214,15 +222,20 @@ style_imports() {
           fence_char = fence
           fence_len = run
         }
+        # A line that closes a block is followed by open ground; one that opens
+        # a block is not.
+        if (!in_fence) anchor = NR
         next
       }
 
       if (in_fence) next
+      anchor = NR
       # The line number travels with the line, tab-separated: a repair step has
       # to name which line it acts on, and two occurrences can be identical.
-      if (probe ~ /^[ \t]*@.*styl-kapitanski\.md[ \t]*$/) printf "%d\t%s\n", NR, $0
+      if (probe ~ /^[ \t]*@.*styl-kapitanski\.md[ \t]*$/) printf "import\t%d\t%s\n", NR, $0
     }
-  ' "$MEMORY_FILE" 2>/dev/null || true
+    END { printf "anchor\t%d\n", anchor + 0 }
+  ' "$MEMORY_FILE" 2>/dev/null || printf 'anchor\t0\n'
 }
 
 # The line number and the line itself, split on the first tab only, so a
@@ -261,10 +274,13 @@ fi
 # An unreadable file is never scanned, so its imports stay unknown rather than
 # being reported as none.
 if [ "$MEMORY_UNREADABLE" -eq 0 ]; then
-  IMPORTS=$(style_imports)
+  SCAN=$(scan_memory)
 else
-  IMPORTS=''
+  SCAN=''
 fi
+IMPORTS=$(printf '%s\n' "$SCAN" | awk '$1 == "import" { print substr($0, index($0, "\t") + 1) }')
+ANCHOR=$(printf '%s\n' "$SCAN" | awk '$1 == "anchor" { print $2 }')
+[ -n "$ANCHOR" ] || ANCHOR=0
 # Only a column-zero occurrence loads, so the two classes decide different
 # things: the loading ones decide the state, the indented ones are reported when
 # they are all there is and are context otherwise.
@@ -396,7 +412,7 @@ report_verdict() {
 # printed from the highest line number down, so carrying the list out in the
 # order it is printed never shifts a number a later step still depends on.
 report_remedy() {
-  local keeper
+  local keeper removed_before position
   if [ "$VERDICT" = unreadable ]; then
     printf 'remedy: make %s readable, then run this again, because nothing about\n' "$MEMORY_FILE"
     printf 'what it holds can be decided until then.\n'
@@ -434,7 +450,8 @@ report_remedy() {
     keeper=1
   fi
   if [ -n "$IMPORTS" ]; then
-    printf '%s\n' "$IMPORTS" | awk -v keep="$IMPORT_LINE" -v has="$keeper" '
+    printf '%s\n' "$IMPORTS" | FM_KEEP="$IMPORT_LINE" awk -v has="$keeper" '
+      BEGIN { keep = ENVIRON["FM_KEEP"] }
       {
         tab = index($0, "\t")
         count++
@@ -460,8 +477,26 @@ report_remedy() {
       }
     '
   fi
+  # The last step names a line number too, so it holds whether or not the file
+  # ends in a newline: appending would have joined the import onto an
+  # unterminated last line and left nothing that loads. The anchor is the last
+  # line outside every fenced block, counted in the file as it stands once the
+  # removals above are done, since each of those shifts what follows it.
   if [ "$keeper" -eq 0 ]; then
-    printf '  append line at end of file: %s\n' "$IMPORT_LINE"
+    removed_before=0
+    if [ -n "$IMPORTS" ]; then
+      removed_before=$(printf '%s\n' "$IMPORTS" |
+        awk -v anchor="$ANCHOR" '
+          substr($0, 1, index($0, "\t") - 1) + 0 <= anchor { n++ }
+          END { print n + 0 }
+        ')
+    fi
+    position=$((ANCHOR - removed_before))
+    if [ "$position" -le 0 ]; then
+      printf '  insert as the first line: %s\n' "$IMPORT_LINE"
+    else
+      printf '  insert as a new line after line %d: %s\n' "$position" "$IMPORT_LINE"
+    fi
   fi
   if [ "$VERDICT" != absent ]; then
     printf 'Everything else in that file stays exactly as it is.\n'

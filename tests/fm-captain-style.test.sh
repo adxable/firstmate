@@ -584,15 +584,15 @@ test_print_mode_reports_an_indented_only_memory_file() {
   assert_contains "$out" "INDENTED" "print mode did not name the indented occurrence"
   assert_contains "$out" "  remove line 2:     $line" \
     "the remedy did not name the indented occurrence by its line number"
-  assert_contains "$out" "  append line at end of file: $line" \
-    "the remedy did not name the column-zero line to end up with"
+  assert_contains "$out" "  insert as a new line after line 1: $line" \
+    "the remedy did not name where the column-zero line goes"
   assert_memory_untouched "$memory" "$before" "print-indented"
 
   check=$(run_style "$checkout" "$home" --check)
   crc=$?
   expect_code "$crc" "$rc" "default mode and --check on an indented-only file"
   assert_contains "$check" "INDENTED" "--check disagreed with print mode about the indented line"
-  assert_contains "$check" "  append line at end of file: $line" \
+  assert_contains "$check" "  insert as a new line after line 1: $line" \
     "--check printed a different remedy than the default mode did"
   pass "fm-captain-style.sh: an indented-only memory file gets exactly one remedy"
 }
@@ -604,6 +604,8 @@ test_print_mode_reports_an_indented_only_memory_file() {
 apply_remedy() {
   local out=$1 memory=$2
   printf '%s\n' "$out" | while IFS= read -r step; do
+    # Every step that touches a line is applied by the number it names, never by
+    # matching its text: two occurrences can be the same bytes.
     case "$step" in
       '  restore file: '*|'  create file: '*)
         path=${step#*: }
@@ -619,8 +621,21 @@ apply_remedy() {
         awk -v drop="$victim" 'NR != drop' "$memory" >"$memory.applied"
         mv "$memory.applied" "$memory"
         ;;
-      '  append line at end of file: '*)
-        printf '%s\n' "${step#*: }" >>"$memory"
+      '  insert as a new line after line '*)
+        rest=${step#'  insert as a new line after line '}
+        FM_ADD=${rest#*: } awk -v after="${rest%%:*}" '
+          BEGIN { add = ENVIRON["FM_ADD"] }
+          { print }
+          NR == after { print add }
+        ' "$memory" >"$memory.applied"
+        mv "$memory.applied" "$memory"
+        ;;
+      '  insert as the first line: '*)
+        FM_ADD=${step#*: } awk '
+          BEGIN { print ENVIRON["FM_ADD"] }
+          { print }
+        ' "$memory" >"$memory.applied"
+        mv "$memory.applied" "$memory"
         ;;
     esac
   done
@@ -642,6 +657,20 @@ build_memory_state() {
     duplicate-identical) printf '# notes\n%s\n%s\n' "$line" "$line" >"$memory" ;;
     duplicate-identical-stale)
       printf '@~/gone/docs/styl-kapitanski.md\n@~/gone/docs/styl-kapitanski.md\n' >"$memory"
+      ;;
+    # A hand-edited file whose last line was never terminated: a step that
+    # appended would have run the import onto the end of that line.
+    no-final-newline) printf '# notes with no closing newline' >"$memory" ;;
+    no-final-newline-indented) printf '# notes\n    %s' "$line" >"$memory" ;;
+    # Ends inside a block the loader reads to end of file, so a line added after
+    # it would be skipped as block content.
+    open-fence)
+      # shellcheck disable=SC2016 # A literal markdown fence, not an expansion.
+      printf '# notes\n```text\nsome example\n' >"$memory"
+      ;;
+    open-fence-with-indented)
+      # shellcheck disable=SC2016 # A literal markdown fence, not an expansion.
+      printf '    %s\n```text\nsome example\n' "$line" >"$memory"
       ;;
     broken-plus-indented)
       printf '# notes\n    %s\n@~/gone/docs/styl-kapitanski.md\n' "$line" >"$memory"
@@ -667,6 +696,8 @@ test_the_printed_remedy_reaches_wired_from_every_state() {
   local states state mode home checkout memory line out rc passes allowed
   states='absent not-wired indented indented-stale two-indented broken ambiguous'
   states="$states duplicate-identical duplicate-identical-stale"
+  states="$states no-final-newline no-final-newline-indented"
+  states="$states open-fence open-fence-with-indented"
   states="$states broken-plus-indented style-missing"
   # Root reads anything, so the unmeasurable state only exists for a normal user.
   if [ "$(id -u)" != "0" ]; then
