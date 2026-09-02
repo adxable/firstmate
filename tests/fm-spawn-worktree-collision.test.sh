@@ -80,6 +80,9 @@ case "${1:-}" in
   display-message)
     case "$*" in
       *'#S'*) printf 'firstmate\n' ;;
+      # The foreground command a relaunch's agent-free check reads; a shell name
+      # is what makes an adopted endpoint eligible for a replacement agent.
+      *'#{pane_current_command}'*) printf '%s\n' "${FM_FAKE_PANE_COMMAND:-zsh}" ;;
       *) printf '%%0\n' ;;
     esac
     exit 0
@@ -286,6 +289,68 @@ test_uncontested_spawn_is_unaffected() {
   pass "an uncontested spawn is unaffected by the ownership guard"
 }
 
+# run_collision_relaunch <id>: relaunch <id> onto its own recorded endpoint.
+run_collision_relaunch() {
+  local id=$1
+  FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_FAKE_PANE_PATH="$WT_DIR" FM_FAKE_WINDOWS="$WINDOWS" \
+    FM_FAKE_SENDLOG="$SENDLOG" \
+    PATH="$FAKEBIN_DIR:$PATH" \
+    "$SPAWN" "$id" --relaunch 2>&1
+}
+
+# A relaunch creates no endpoint and acquires no worktree: it adopts the ones
+# its own record already names, holding whatever the previous agent left there.
+# So when the ownership guard refuses on that path, the refusal is the whole
+# remedy - it must end nothing, because the endpoint under it belongs to the
+# task being relaunched, not to this spawn. That a kill IS visible through this
+# same window inventory is what test_live_owner_blocks_spawn pins on the fresh
+# path, where the guard does take its own pane back down.
+test_relaunch_refusal_leaves_the_adopted_endpoint_alone() {
+  local rec id holder out status
+  id=collide-relaunch-m4
+  holder=collide-relaunch-holder-m5
+  rec=$(make_collision_case collide-relaunch "$id" "$holder")
+  read_collision_record "$rec"
+  open_window "fm-$holder"
+  open_window "fm-$id"
+  # A refused relaunch sends nothing at all, so the log the send assertion below
+  # reads has to exist before the run for that assertion to be readable.
+  : > "$SENDLOG"
+  # The task being relaunched: same worktree as the holder, its own endpoint
+  # still standing, and no agent in it (the fake pane reports a bare shell).
+  fm_write_meta "$HOME_DIR/state/$id.meta" \
+    "window=firstmate:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$WT_DIR" \
+    "project=$PROJ_DIR" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off"
+
+  out=$(run_collision_relaunch "$id")
+  status=$?
+
+  expect_code 1 "$status" "relaunch onto a worktree another live task owns should refuse"
+  assert_contains "$out" "$holder" "relaunch refusal did not name the owning task"
+  assert_contains "$out" "$WT_DIR" "relaunch refusal did not name the contested worktree path"
+  window_is_open "fm-$id" \
+    || fail "the relaunch refusal ended the endpoint it had only adopted, killing the relaunched task's own terminal"
+  window_is_open "fm-$holder" || fail "the relaunch refusal killed the OWNING task's endpoint"
+  assert_no_grep "$HOME_DIR/data/$id/brief.md" "$SENDLOG" \
+    "refused relaunch still sent the launch command to the pane"
+  # No pool acquisition ran here, so the worktree stands on the branch the
+  # holder's agent left it on; a note telling the operator otherwise would send
+  # them to inspect a branch move that never happened.
+  assert_not_contains "$out" "already detached that worktree" \
+    "the relaunch refusal claimed a detach no acquisition on this path performed"
+  pass "the ownership refusal on a relaunch leaves the adopted endpoint and worktree exactly as they stood"
+}
+
 # --- herdr: the refusal closes nothing, and says so --------------------------
 #
 # The pool is the worktree provider for herdr too, and only tmux's pane
@@ -326,7 +391,12 @@ done
 
 case "${1:-} ${2:-}" in
   "status --json")
-    printf '{"client":{"version":"0.8.0","protocol":19},"server":{"running":true}}\n'
+    # A running server reports its OWN release, and the presentation floor is
+    # composed from both sides (bin/backends/herdr.sh
+    # fm_backend_herdr_presentation_release_supported): a server whose release
+    # cannot be read is indeterminate and drops the spawn to the flat layout,
+    # which would leave the projected scenes below testing nothing.
+    printf '{"client":{"version":"0.8.0","protocol":19},"server":{"running":true,"version":"0.8.0","protocol":19}}\n'
     ;;
   "session list")
     printf '{"sessions":[{"name":"%s","running":true,"socket_path":"%s"}]}\n' \
@@ -573,6 +643,7 @@ test_herdr_projected_isolation_refusal_still_closes() {
 test_live_owner_blocks_spawn
 test_dead_owner_does_not_block_spawn
 test_uncontested_spawn_is_unaffected
+test_relaunch_refusal_leaves_the_adopted_endpoint_alone
 
 # The herdr scenes speak the backend's JSON through the fake CLI, so without jq
 # they would fail on the ownership assertions rather than on the missing tool.

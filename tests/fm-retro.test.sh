@@ -297,11 +297,12 @@ test_unreadable_input_is_reported_instead_of_silently_dropped() {
   db="$home/state.sqlite"
   printf 'this is not a sqlite database at all\n' > "$db"
 
-  # The malformed shape: the key belongs BEFORE the colon, so a key written
-  # after it leaves the round without a readable identity.
+  # The malformed shape is the one the grammar's owner also rejects: a stated key
+  # whose slug is outside the allowed charset. Upstream's folds skip such a line
+  # rather than rewrite the slug, so the round really has no usable identity.
   cat > "$home/state/zadanie.status" <<'EOF'
 working: started
-needs-decision: [key=po-dwukropku] the key is on the wrong side of the colon
+needs-decision [key=zły klucz]: the stated slug carries characters the grammar rejects
 needs-decision: no key at all on this one
 EOF
 
@@ -310,7 +311,8 @@ EOF
   assert_contains "$out" 'CZEGO NIE UMIAŁEM ODCZYTAĆ' 'the report must always carry the unreadable section'
   assert_contains "$out" 'GRANICE TEGO POMIARU' 'standing limits must stay separate from this run failures'
   assert_not_contains "$out" 'Nic - każdy napotkany rekord' 'a run with parse failures must not claim a clean read'
-  assert_contains "$out" 'klucz zapisany PO dwukropku' 'a key after the colon must be reported, not folded into one bucket'
+  assert_contains "$out" 'klucz rundy ma znaki, których gramatyka nie dopuszcza' \
+    'a key upstream itself rejects must be reported, not folded into one bucket'
   assert_contains "$out" 'rundy bez klucza   : 1' 'an unkeyed decision round must be counted and disclosed'
   assert_contains "$out" 'nie dała się odczytać' 'a corrupt database must be reported'
   assert_contains "$out" '(pominięta - brak zapisów potoku)' 'classification must be refused, not guessed'
@@ -351,9 +353,46 @@ EOF
   printf '%s\n' "$out" | grep -F 'dwie-spacje' | grep -F '2 razy' >/dev/null \
     || fail "an indented round with extra spacing before the key must keep its key"$'\n'"--- output ---"$'\n'"$out"
   assert_contains "$out" 'rundy bez klucza   : 1' 'a keyless blocked round must be counted and disclosed'
-  assert_contains "$out" 'klucz zapisany PO dwukropku' \
-    'the malformed key-after-colon shape must stay visible, not be normalised away'
+  assert_not_contains "$out" 'rundy z błędnym kluczem' \
+    'a line upstream opens as a real keyed decision must never be reported as malformed'
   pass 'keyed blocked and indented rounds are read like upstream reads them'
+}
+
+# The grammar's owner (bin/fm-classify-lib.sh) accepts the "[key=...]" token on
+# EITHER side of the colon, and reads through the correlation token a secondmate
+# echoes ahead of it. Reading either shape more strictly costs the round twice:
+# it vanishes from the coverage count and from the recurrence signal, which is
+# the one question this tool exists to answer.
+test_rounds_upstream_keys_are_kept_whatever_token_shape_carries_them() {
+  local home db out
+  home=$(make_home tokens)
+  db="$home/state.sqlite"
+  make_db "$db"
+  add_run "$db" r1 fm/zadanie completed ''
+  add_step "$db" s1 r1 review completed 600000
+
+  cat > "$home/state/zadanie.status" <<'EOF'
+working: started
+needs-decision: [key=po-dwukropku] the key sits after the colon, which upstream accepts
+resolved [key=po-dwukropku]: settled for now
+needs-decision: [key=po-dwukropku] and the very same key had to be reopened
+needs-decision corr=0123456789abcdef [key=z-korelacja]: a secondmate echoed its correlation token
+needs-decision [corr=0123456789abcdef] [key=z-korelacja]: and here the bracketed form of it
+EOF
+
+  out=$(run_retro "$home" "$db")
+
+  assert_contains "$out" 'rund z decyzją: 4' \
+    'a correlation token before the key must not hide the verb and drop the round'
+  printf '%s\n' "$out" | grep -F 'po-dwukropku' | grep -F '2 razy' >/dev/null \
+    || fail "a key written after the colon must open a real keyed round"$'\n'"--- output ---"$'\n'"$out"
+  printf '%s\n' "$out" | grep -F 'z-korelacja' | grep -F '2 razy' >/dev/null \
+    || fail "a round carrying a correlation token must keep its key"$'\n'"--- output ---"$'\n'"$out"
+  assert_not_contains "$out" 'rundy bez klucza' \
+    'every round here states a key, so none may land in the unkeyed bucket'
+  assert_not_contains "$out" 'rundy z błędnym kluczem' \
+    'none of these shapes is malformed to the grammar owner'
+  pass 'rounds upstream keys are kept whatever token shape carries them'
 }
 
 # "I cannot read this right now" and "there is nothing recorded" are different
@@ -733,6 +772,7 @@ test_one_cause_is_found_across_three_differently_named_decision_keys
 test_self_reference_and_shared_key_naming_are_not_reported_as_recurrence
 test_unreadable_input_is_reported_instead_of_silently_dropped
 test_keyed_blocked_and_indented_rounds_are_read_like_upstream_reads_them
+test_rounds_upstream_keys_are_kept_whatever_token_shape_carries_them
 test_a_readable_database_with_no_records_reports_zero_coverage_not_a_failed_read
 test_a_wal_database_is_still_read_when_no_sidecar_allows_a_read_only_open
 test_a_wal_database_with_a_live_writer_is_read_directly
