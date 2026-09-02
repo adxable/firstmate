@@ -493,6 +493,68 @@ test_print_mode_asks_for_no_paste_when_the_import_is_already_there() {
   pass "fm-captain-style.sh: print mode asks for no paste when the import is already there"
 }
 
+# The state this whole change exists for: the checkout moved, so the recorded
+# import loads nothing. Default mode must not call that wiring in place, and
+# must not disagree with --check about the same memory file.
+test_print_mode_reports_an_import_left_behind_by_a_moved_checkout() {
+  local home checkout moved memory before out rc check crc
+  home="$TMP_ROOT/print-moved/home"
+  checkout="$home/src/firstmate"
+  moved="$home/src/firstmate-moved"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  printf '%s\n' "$(run_style "$checkout" "$home" --print-import)" >"$memory"
+  mv "$checkout" "$moved"
+  before=$(snapshot_file "$memory")
+
+  out=$(run_style "$moved" "$home")
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "print mode exited 0 on an import that resolves to nothing: $out"
+  assert_contains "$out" "BROKEN" "print mode did not report the stale import"
+  assert_not_contains "$out" "wiring is in place" \
+    "print mode called a stale import working wiring"
+  assert_contains "$out" '@~/src/firstmate-moved/docs/styl-kapitanski.md' \
+    "print mode did not print the line this checkout would use"
+  assert_memory_untouched "$memory" "$before" "print-moved"
+
+  check=$(run_style "$moved" "$home" --check)
+  crc=$?
+  expect_code "$crc" "$rc" "default mode and --check on a stale import"
+  assert_contains "$check" "BROKEN" "--check disagreed with print mode about the stale import"
+  pass "fm-captain-style.sh: print mode reports an import a moved checkout left behind"
+}
+
+# Two loading imports are the AMBIGUOUS state, whichever mode meets them.
+test_print_mode_reports_competing_imports_instead_of_declaring_done() {
+  local home checkout memory line before out rc check crc
+  home="$TMP_ROOT/print-ambiguous/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  printf '%s\n@~/elsewhere/docs/styl-kapitanski.md\n' "$line" >"$memory"
+  before=$(snapshot_file "$memory")
+
+  out=$(run_style "$checkout" "$home")
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "print mode exited 0 with two competing imports: $out"
+  assert_contains "$out" "AMBIGUOUS" "print mode did not report the competing imports"
+  assert_not_contains "$out" "nothing to change" \
+    "print mode declared a file with two imports settled"
+  assert_contains "$out" '@~/elsewhere/docs/styl-kapitanski.md' \
+    "print mode did not list the competing import"
+  assert_contains "$out" "$line" "print mode did not print the line this checkout would use"
+  assert_memory_untouched "$memory" "$before" "print-ambiguous"
+
+  check=$(run_style "$checkout" "$home" --check)
+  crc=$?
+  expect_code "$crc" "$rc" "default mode and --check on competing imports"
+  assert_contains "$check" "AMBIGUOUS" "--check disagreed with print mode about the competing imports"
+  pass "fm-captain-style.sh: print mode reports competing imports instead of declaring done"
+}
+
 test_more_than_one_import_is_reported_as_ambiguous() {
   local home checkout memory line before out rc
   home="$TMP_ROOT/ambiguous/home"
@@ -685,6 +747,8 @@ test_an_indented_copy_does_not_compete_with_a_loading_import
 test_a_fenced_import_and_an_indented_one_agree_on_one_verdict
 test_more_than_one_import_is_reported_as_ambiguous
 test_print_mode_asks_for_no_paste_when_the_import_is_already_there
+test_print_mode_reports_an_import_left_behind_by_a_moved_checkout
+test_print_mode_reports_competing_imports_instead_of_declaring_done
 test_no_mode_ever_writes_to_the_memory_file
 test_a_symlinked_memory_file_is_never_touched
 test_a_missing_style_file_does_not_block_the_check

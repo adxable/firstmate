@@ -32,7 +32,7 @@
 # Usage:
 #   fm-captain-style.sh                 print the line, the file to paste it
 #                                       into, and where in that file it goes,
-#                                       or say that the wiring is already there
+#                                       or report on the import already there
 #   fm-captain-style.sh --check         read-only: report whether the line is
 #                                       already wired in and whether it still
 #                                       reaches the style file; never writes
@@ -52,12 +52,15 @@
 # the instructions were printed and nothing else needs attention), and non-zero
 # for every state that needs a human to act. The default mode prints those
 # instructions only when the memory file holds no import that loads; when one is
-# already there it says so, names --check as the way to confirm it, and asks for
-# nothing to be pasted, because a second column-zero import is the AMBIGUOUS
-# state rather than a repair. An unreadable memory file is one of the states
-# needing a human: the default mode still prints the line and the file to paste
-# it into, because neither needs that file read, while --check refuses rather
-# than reporting an unreadable file as an empty one.
+# already there it resolves that import before saying anything, so the two modes
+# never disagree about one file. An import that resolves means nothing to paste
+# and exit 0, because a second column-zero import would be the AMBIGUOUS state
+# rather than a repair; one that does not resolve, or more than one, is reported
+# the way --check reports it, with the line this checkout would use, and exits
+# non-zero. An unreadable memory file is one of the states needing a human: the
+# default mode still prints the line and the file to paste it into, because
+# neither needs that file read, while --check refuses rather than reporting an
+# unreadable file as an empty one.
 #
 # A checkout missing its own copy of the style file is reported where that
 # changes the advice - beside an import line this checkout could not supply, in
@@ -265,16 +268,80 @@ else
   INDENTED_COUNT=$(printf '%s\n' "$INDENTED" | wc -l | tr -d ' ')
 fi
 
+# Both modes answer from one resolution of the same file, so neither can call
+# settled a state the other calls broken. Whitespace after the path - including
+# the CR a CRLF editor leaves - does not stop the loader, and is trimmed before
+# resolving.
+FOUND=''
+TARGET=''
+if [ "$LOADING_COUNT" -eq 1 ]; then
+  FOUND=$(printf '%s\n' "$LOADING" | sed 's/[[:space:]]*$//')
+  TARGET=$(resolve_import "${FOUND#@}")
+fi
+
+report_ambiguous() {
+  echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $LOADING_COUNT imports of the style file:" >&2
+  printf '%s\n' "$LOADING" | sed 's/^/  /' >&2
+  echo "hint: keep exactly one of them and delete the rest" >&2
+  if [ "$STYLE_MISSING" -eq 0 ]; then
+    echo "hint: this checkout would use:" >&2
+    printf '  %s\n' "$IMPORT_LINE" >&2
+  fi
+}
+
+report_broken() {
+  echo "captain-style: BROKEN  import=$FOUND  resolves=$TARGET (missing)" >&2
+  if [ "$STYLE_MISSING" -eq 0 ]; then
+    echo "hint: the style file moved; replace that line with:" >&2
+    printf '  %s\n' "$IMPORT_LINE" >&2
+  else
+    # Pointing at this checkout's own copy would name a file that is equally
+    # absent, so say what is actually wrong instead of advising a dead path.
+    echo "hint: $STYLE_ABS is missing too, so this checkout cannot supply the" >&2
+    echo "      style file; restore it, or re-run from a complete checkout" >&2
+  fi
+}
+
+# Context beside working wiring, never a verdict: these lines change neither the
+# outcome nor the exit status. Which checkout the line names is a question about
+# the file it reaches, not about how the path is spelled, so the ~/-relative and
+# absolute forms of one file are the same target and get no note.
+report_working_notes() {
+  if [ "$INDENTED_COUNT" -ge 1 ]; then
+    echo "note: $MEMORY_FILE also holds indented occurrences of the import, which do not load:"
+    printf '%s\n' "$INDENTED" | sed 's/^/  /'
+  fi
+  if [ "$(physical_path "$TARGET")" != "$(physical_path "$STYLE_ABS")" ]; then
+    if [ "$STYLE_MISSING" -eq 0 ]; then
+      echo "note: that line points at a different checkout than this one; this checkout would use $IMPORT_LINE"
+    else
+      echo "note: that line points at a different checkout than this one, which has no $STYLE_REL to offer"
+    fi
+  fi
+}
+
 if [ "$MODE" = print ]; then
+  # An import that is present decides nothing on its own: a line left behind by
+  # a moved checkout loads nothing, which is the silent failure this script
+  # exists to surface, so it is resolved here and reported the way --check
+  # reports it rather than announced as done.
+  if [ "$LOADING_COUNT" -gt 1 ]; then
+    report_ambiguous
+    exit 1
+  fi
+  if [ "$LOADING_COUNT" -eq 1 ] && [ ! -f "$TARGET" ]; then
+    report_broken
+    exit 1
+  fi
   # A file that already holds a loading import needs no paste, and printing the
   # paste instructions beside it invites a second column-zero occurrence - the
-  # AMBIGUOUS state this script exists to report.
-  if [ "$LOADING_COUNT" -ge 1 ]; then
+  # AMBIGUOUS state above.
+  if [ "$LOADING_COUNT" -eq 1 ]; then
     printf 'captain-style: an import of the style file is already in %s\n' "$MEMORY_FILE"
+    printf 'import=%s  resolves=%s\n' "$FOUND" "$TARGET"
     printf 'Nothing to paste and nothing to change: the wiring is in place.\n'
-    printf 'Confirm it still reaches the style file with: %s --check\n' "$0"
-    report_style_missing
-    [ "$STYLE_MISSING" -eq 0 ] || exit 1
+    printf 'Re-check it at any time with: %s --check\n' "$0"
+    report_working_notes
     exit 0
   fi
   # Both printed values come from this script's own location, so a memory file
@@ -312,48 +379,16 @@ if [ "$LOADING_COUNT" -eq 0 ]; then
 fi
 
 if [ "$LOADING_COUNT" -gt 1 ]; then
-  echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $LOADING_COUNT imports of the style file:" >&2
-  printf '%s\n' "$LOADING" | sed 's/^/  /' >&2
-  echo "hint: keep exactly one of them and delete the rest" >&2
+  report_ambiguous
   exit 1
 fi
 
-# Exactly one line loads. Whitespace after the path - including the CR a CRLF
-# editor leaves - does not stop it, and is trimmed before resolving.
-FOUND=$(printf '%s\n' "$LOADING" | sed 's/[[:space:]]*$//')
-
-TARGET=$(resolve_import "${FOUND#@}")
+# Exactly one line loads, and it was resolved before the modes parted.
 if [ ! -f "$TARGET" ]; then
-  echo "captain-style: BROKEN  import=$FOUND  resolves=$TARGET (missing)" >&2
-  if [ "$STYLE_MISSING" -eq 0 ]; then
-    echo "hint: the style file moved; replace that line with:" >&2
-    printf '  %s\n' "$IMPORT_LINE" >&2
-  else
-    # Pointing at this checkout's own copy would name a file that is equally
-    # absent, so say what is actually wrong instead of advising a dead path.
-    echo "hint: $STYLE_ABS is missing too, so this checkout cannot supply the" >&2
-    echo "      style file; restore it, or re-run from a complete checkout" >&2
-  fi
+  report_broken
   exit 1
 fi
 
 echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
-
-# Context, not a verdict: these lines load nothing, so they change neither the
-# outcome nor the exit status.
-if [ "$INDENTED_COUNT" -ge 1 ]; then
-  echo "note: $MEMORY_FILE also holds indented occurrences of the import, which do not load:"
-  printf '%s\n' "$INDENTED" | sed 's/^/  /'
-fi
-
-# Which checkout the line names is a question about the file it reaches, not
-# about how the path is spelled: the ~/-relative and absolute forms of one file
-# are the same target and get no note.
-if [ "$(physical_path "$TARGET")" != "$(physical_path "$STYLE_ABS")" ]; then
-  if [ "$STYLE_MISSING" -eq 0 ]; then
-    echo "note: that line points at a different checkout than this one; this checkout would use $IMPORT_LINE"
-  else
-    echo "note: that line points at a different checkout than this one, which has no $STYLE_REL to offer"
-  fi
-fi
+report_working_notes
 exit 0
