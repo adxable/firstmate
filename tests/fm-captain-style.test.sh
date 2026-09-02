@@ -302,7 +302,7 @@ test_the_different_checkout_note_follows_the_target_not_the_spelling() {
 # Computing the line and the path to paste it into reads nothing, so bad
 # permissions on the memory file must not cost the operator the instructions.
 test_an_unreadable_memory_file_still_prints_the_wiring() {
-  local home checkout memory out rc
+  local home checkout memory out rc prc
   if [ "$(id -u)" = "0" ]; then
     pass "fm-captain-style.sh: unreadable memory file (skipped: root reads anything)"
     return 0
@@ -315,7 +315,9 @@ test_an_unreadable_memory_file_still_prints_the_wiring() {
   printf '# My own notes\n' >"$memory"
   chmod 000 "$memory"
 
-  out=$(run_style "$checkout" "$home") || true
+  out=$(run_style "$checkout" "$home")
+  prc=$?
+  [ "$prc" -ne 0 ] || fail "print mode exited 0 on a memory file it could not read: $out"
   assert_contains "$out" '@~/src/firstmate/docs/styl-kapitanski.md' \
     "print mode withheld the import line over a permissions problem"
   assert_contains "$out" "$memory" "print mode withheld the file to paste into"
@@ -324,6 +326,7 @@ test_an_unreadable_memory_file_still_prints_the_wiring() {
   out=$(run_style "$checkout" "$home" --check)
   rc=$?
   [ "$rc" -ne 0 ] || fail "--check reported on a memory file it could not read: $out"
+  expect_code "$rc" "$prc" "default mode and --check on an unreadable memory file"
   assert_not_contains "$out" "NOT WIRED" \
     "--check treated an unreadable memory file as one with no import"
   chmod 600 "$memory"
@@ -481,9 +484,9 @@ test_print_mode_asks_for_no_paste_when_the_import_is_already_there() {
   assert_contains "$out" "already in $memory" \
     "print mode did not say the import is already there"
   assert_contains "$out" "Nothing to paste" "print mode did not say nothing needs doing"
-  assert_not_contains "$out" "Paste this line into" \
+  assert_not_contains "$out" "Add the style rules" \
     "print mode told the operator to paste a second import"
-  assert_not_contains "$out" "Put it on its own line" \
+  assert_not_contains "$out" "unindented and on its" \
     "print mode still printed the paste instructions"
   assert_contains "$out" "--check" "print mode did not point at --check for confirmation"
   assert_memory_untouched "$memory" "$before" "already-wired print"
@@ -579,21 +582,32 @@ test_print_mode_reports_an_indented_only_memory_file() {
   rc=$?
   [ "$rc" -ne 0 ] || fail "print mode exited 0 on a file whose only import is indented: $out"
   assert_contains "$out" "INDENTED" "print mode did not name the indented occurrence"
-  assert_contains "$out" "$line" "print mode did not print the line to paste at column zero"
+  assert_contains "$out" "needed: $line" \
+    "print mode did not show the column-zero form that line should take"
+  assert_contains "$out" "strip the leading whitespace" \
+    "print mode did not offer the one remedy the state has"
+  # Two remedies in one run is the defect: unindenting the line AND pasting a
+  # fresh one leaves two competing imports, which is the AMBIGUOUS state.
+  assert_not_contains "$out" "Add the style rules" \
+    "print mode told the operator to add a second import beside the indented one"
   assert_memory_untouched "$memory" "$before" "print-indented"
 
   check=$(run_style "$checkout" "$home" --check)
   crc=$?
   expect_code "$crc" "$rc" "default mode and --check on an indented-only file"
   assert_contains "$check" "INDENTED" "--check disagreed with print mode about the indented line"
-  pass "fm-captain-style.sh: print mode reports an indented-only memory file"
+  assert_contains "$check" "needed: $line" \
+    "--check did not show the column-zero form that line should take"
+  assert_not_contains "$check" "Add the style rules" \
+    "--check told the operator to add a second import beside the indented one"
+  pass "fm-captain-style.sh: an indented-only memory file gets exactly one remedy"
 }
 
 # The parity itself, pinned state by state. One classification decides what is
 # true about the memory file, so the mode that reads it cannot change the
 # answer: same file, same exit status, whichever mode asked.
 test_every_memory_state_gets_the_same_exit_status_from_both_modes() {
-  local home checkout memory line state before pout prc cout crc
+  local home checkout memory line states state before pout prc cout crc
   home="$TMP_ROOT/parity/home"
   checkout="$home/src/firstmate"
   mkdir -p "$home/.claude"
@@ -601,7 +615,13 @@ test_every_memory_state_gets_the_same_exit_status_from_both_modes() {
   memory="$home/.claude/CLAUDE.md"
   line=$(run_style "$checkout" "$home" --print-import)
 
-  for state in absent not-wired indented broken ambiguous wired; do
+  states='absent not-wired indented broken ambiguous wired'
+  # Root reads anything, so the unmeasurable state only exists for a normal user.
+  if [ "$(id -u)" != "0" ]; then
+    states="$states unreadable"
+  fi
+
+  for state in $states; do
     case "$state" in
       absent) rm -f "$memory" ;;
       not-wired) printf '# only my own notes\n' >"$memory" ;;
@@ -609,14 +629,21 @@ test_every_memory_state_gets_the_same_exit_status_from_both_modes() {
       broken) printf '@~/gone/docs/styl-kapitanski.md\n' >"$memory" ;;
       ambiguous) printf '%s\n@~/elsewhere/docs/styl-kapitanski.md\n' "$line" >"$memory" ;;
       wired) printf '%s\n' "$line" >"$memory" ;;
+      unreadable) printf '# notes nobody may read\n' >"$memory" ;;
     esac
     before=''
     [ "$state" = absent ] || before=$(snapshot_file "$memory")
+    if [ "$state" = unreadable ]; then
+      chmod 000 "$memory"
+    fi
 
     pout=$(run_style "$checkout" "$home")
     prc=$?
     cout=$(run_style "$checkout" "$home" --check)
     crc=$?
+    if [ "$state" = unreadable ]; then
+      chmod 600 "$memory"
+    fi
     expect_code "$crc" "$prc" "default mode and --check on a $state memory file"
     if [ "$state" = wired ]; then
       expect_code 0 "$prc" "both modes on a correctly wired memory file"

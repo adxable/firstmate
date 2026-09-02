@@ -57,13 +57,19 @@
 # reaches the style file, and non-zero for every other state, because every
 # other state needs a human to act. Both modes therefore exit the same way on
 # the same memory file, including on a fresh machine, where nothing is wired yet
-# and the default mode exits non-zero with the line and the file to paste it
-# into printed. The line is offered wherever no import loads; the broken and
-# ambiguous reports carry their own tailored replacement line instead, and
-# settled wiring is offered nothing. An unreadable memory file is the one place
-# the modes differ in how much they say: neither printed value needs that file
-# read, so the default mode still supplies them, while --check refuses to advise
-# on a file it could not measure.
+# and the default mode exits non-zero while printing the line and the file to
+# put it in. That first run is phrased as the step to take rather than as a
+# failure, and the exit status is stated here rather than in what it prints.
+#
+# Every state offers exactly one remedy, because two would let an operator
+# follow both and end with competing imports. The paste block is offered where
+# the file holds no import at all; an indented occurrence is shown beside the
+# column-zero form that same line should take, since the line is already there
+# and only its column is wrong; the broken and ambiguous reports carry their own
+# tailored replacement line; settled wiring is offered nothing. An unreadable
+# memory file is the one place the modes differ in how much they say: neither
+# printed value needs that file read, so the default mode still supplies them,
+# while --check refuses to advise on a file it could not measure.
 #
 # A checkout missing its own copy of the style file is reported where that
 # changes the advice - beside an import line this checkout could not supply. A
@@ -210,12 +216,12 @@ style_imports() {
 }
 
 instructions() {
-  printf 'Paste this line into: %s\n' "$MEMORY_FILE"
+  printf 'Add the style rules to Claude by putting this line, unindented and on its\n'
+  printf 'own line, anywhere in %s:\n' "$MEMORY_FILE"
   printf '\n'
   printf '%s\n' "$IMPORT_LINE"
   printf '\n'
-  printf 'Put it on its own line with no indentation. Anywhere in the file works,\n'
-  printf 'and everything already in that file can stay exactly as it is.\n'
+  printf 'Everything already in that file stays exactly as it is.\n'
   printf 'Then confirm with: %s --check\n' "$0"
 }
 
@@ -339,15 +345,19 @@ report_verdict() {
       # Already named on stderr where the file was found unreadable.
       ;;
     absent)
-      echo "captain-style: NOT WIRED  $MEMORY_FILE does not exist" >&2
+      # The default mode answers a first run with the step to take, not with a
+      # verdict label; --check is the mode asked for the label.
+      [ "$MODE" = print ] || echo "captain-style: NOT WIRED  $MEMORY_FILE does not exist" >&2
       ;;
     not-wired)
-      echo "captain-style: NOT WIRED  no import of the style file in $MEMORY_FILE" >&2
+      [ "$MODE" = print ] || echo "captain-style: NOT WIRED  no import of the style file in $MEMORY_FILE" >&2
       ;;
     indented)
-      echo "captain-style: INDENTED  the import line in $MEMORY_FILE is not at the start of its line:" >&2
-      printf '%s\n' "$INDENTED" | sed 's/^/  /' >&2
-      echo "hint: remove the leading whitespace so the line begins with @" >&2
+      echo "captain-style: INDENTED  the import line in $MEMORY_FILE does not start at column zero:" >&2
+      printf '%s\n' "$INDENTED" |
+        awk '{ shape = $0; sub(/^[ \t]*/, "", shape); printf "  found:  %s\n  needed: %s\n", $0, shape }' >&2
+      echo "hint: strip the leading whitespace from that line so it begins with @" >&2
+      echo "hint: nothing has to be added, and adding a second copy would leave two competing imports" >&2
       ;;
     ambiguous)
       echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $LOADING_COUNT imports of the style file:" >&2
@@ -392,13 +402,16 @@ offer_next_step() {
       fi
       return 0
       ;;
-    absent|not-wired|indented) ;;
+    absent|not-wired) ;;
     unreadable)
       # Neither printed value needs the memory file read, so the default mode
       # still supplies them; --check refuses to advise on a file it could not
       # measure.
       [ "$MODE" = print ] || return 0
       ;;
+    # The indented, broken and ambiguous states already hold the line; each
+    # carries its own single remedy, and repeating this block beside one would
+    # offer a second, competing import.
     *) return 0 ;;
   esac
   report_style_missing
