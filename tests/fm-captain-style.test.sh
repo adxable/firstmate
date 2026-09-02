@@ -582,9 +582,9 @@ test_print_mode_reports_an_indented_only_memory_file() {
   rc=$?
   [ "$rc" -ne 0 ] || fail "print mode exited 0 on a file whose only import is indented: $out"
   assert_contains "$out" "INDENTED" "print mode did not name the indented occurrence"
-  assert_contains "$out" "  remove:     $line" \
-    "the remedy did not name the indented occurrence to remove"
-  assert_contains "$out" "  add: $line" \
+  assert_contains "$out" "  remove line 2:     $line" \
+    "the remedy did not name the indented occurrence by its line number"
+  assert_contains "$out" "  append line at end of file: $line" \
     "the remedy did not name the column-zero line to end up with"
   assert_memory_untouched "$memory" "$before" "print-indented"
 
@@ -592,30 +592,37 @@ test_print_mode_reports_an_indented_only_memory_file() {
   crc=$?
   expect_code "$crc" "$rc" "default mode and --check on an indented-only file"
   assert_contains "$check" "INDENTED" "--check disagreed with print mode about the indented line"
-  assert_contains "$check" "  add: $line" \
+  assert_contains "$check" "  append line at end of file: $line" \
     "--check printed a different remedy than the default mode did"
   pass "fm-captain-style.sh: an indented-only memory file gets exactly one remedy"
 }
 
-# Carry out, mechanically, the operations a run printed. Nothing here decides
-# what the remedy should have been: it reads the operations out of that run's
-# own output and applies them, so the invariant test measures where the script's
-# own advice lands rather than restating it.
+# Carry out, mechanically, the operations a run printed, one at a time and in
+# printed order. Nothing here decides what the remedy should have been, and a
+# removal is applied by the line number the step names rather than by matching
+# its text, which is the only way two identical occurrences can be told apart.
 apply_remedy() {
   local out=$1 memory=$2
-  printf '%s\n' "$out" | sed -nE 's/^  (create|restore): //p' | while IFS= read -r path; do
-    mkdir -p "$(dirname "$path")"
-    [ -e "$path" ] || : >"$path"
-  done
-  printf '%s\n' "$out" | sed -nE 's/^  readable: //p' | while IFS= read -r path; do
-    chmod u+rw "$path"
-  done
-  printf '%s\n' "$out" | sed -nE 's/^  remove: //p' | while IFS= read -r victim; do
-    awk -v victim="$victim" '$0 != victim' "$memory" >"$memory.applied"
-    mv "$memory.applied" "$memory"
-  done
-  printf '%s\n' "$out" | sed -nE 's/^  add: //p' | while IFS= read -r addition; do
-    printf '%s\n' "$addition" >>"$memory"
+  printf '%s\n' "$out" | while IFS= read -r step; do
+    case "$step" in
+      '  restore file: '*|'  create file: '*)
+        path=${step#*: }
+        mkdir -p "$(dirname "$path")"
+        [ -e "$path" ] || : >"$path"
+        ;;
+      '  make readable: '*)
+        chmod u+rw "${step#*: }"
+        ;;
+      '  remove line '*)
+        victim=${step#'  remove line '}
+        victim=${victim%%:*}
+        awk -v drop="$victim" 'NR != drop' "$memory" >"$memory.applied"
+        mv "$memory.applied" "$memory"
+        ;;
+      '  append line at end of file: '*)
+        printf '%s\n' "${step#*: }" >>"$memory"
+        ;;
+    esac
   done
 }
 
@@ -630,6 +637,12 @@ build_memory_state() {
     two-indented) printf '    %s\n\t@~/other/docs/styl-kapitanski.md\n' "$line" >"$memory" ;;
     broken) printf '@~/gone/docs/styl-kapitanski.md\n' >"$memory" ;;
     ambiguous) printf '%s\n@~/elsewhere/docs/styl-kapitanski.md\n' "$line" >"$memory" ;;
+    # The likeliest way to reach two imports: the line pasted twice. No step
+    # naming content could tell these two apart.
+    duplicate-identical) printf '# notes\n%s\n%s\n' "$line" "$line" >"$memory" ;;
+    duplicate-identical-stale)
+      printf '@~/gone/docs/styl-kapitanski.md\n@~/gone/docs/styl-kapitanski.md\n' >"$memory"
+      ;;
     broken-plus-indented)
       printf '# notes\n    %s\n@~/gone/docs/styl-kapitanski.md\n' "$line" >"$memory"
       ;;
@@ -645,13 +658,15 @@ build_memory_state() {
 }
 
 # The invariant this script is held to: whatever the memory file holds, the
-# operations a run prints must, carried out literally, leave it wired. Five
+# operations a run prints must, carried out literally, leave it wired. Six
 # earlier rounds fixed one state at a time; this fixes the rule, so a remedy
-# that is right for the common case and wrong for a stale path or a second
-# indented copy fails here rather than in a captain's terminal.
+# that is right for the common case and wrong for a stale path, a second
+# indented copy or a line pasted twice fails here rather than in a captain's
+# terminal.
 test_the_printed_remedy_reaches_wired_from_every_state() {
-  local states state mode home checkout memory line out rc rounds
+  local states state mode home checkout memory line out rc passes allowed
   states='absent not-wired indented indented-stale two-indented broken ambiguous'
+  states="$states duplicate-identical duplicate-identical-stale"
   states="$states broken-plus-indented style-missing"
   # Root reads anything, so the unmeasurable state only exists for a normal user.
   if [ "$(id -u)" != "0" ]; then
@@ -668,10 +683,14 @@ test_the_printed_remedy_reaches_wired_from_every_state() {
       line=$(run_style "$checkout" "$home" --print-import)
       build_memory_state "$state" "$memory" "$line" "$checkout"
 
-      # Apply what the run printed, then run again, until it reports settled
-      # wiring. A remedy that needs more than the unreadable state's two passes
-      # is one that does not land where it says it does.
-      rounds=0
+      # One application of the printed list has to be enough. Only the
+      # unreadable state legitimately needs a second: its one step makes the
+      # file measurable, and what it holds is unknown until then.
+      allowed=1
+      if [ "$state" = unreadable ]; then
+        allowed=2
+      fi
+      passes=0
       while :; do
         if [ "$mode" = print ]; then
           out=$(run_style "$checkout" "$home")
@@ -682,9 +701,9 @@ test_the_printed_remedy_reaches_wired_from_every_state() {
         if [ "$rc" -eq 0 ]; then
           break
         fi
-        rounds=$((rounds + 1))
-        if [ "$rounds" -gt 2 ]; then
-          fail "$state/$mode: the printed remedy did not reach wired: $out"
+        passes=$((passes + 1))
+        if [ "$passes" -gt "$allowed" ]; then
+          fail "$state/$mode: the printed remedy did not reach wired in $allowed pass(es): $out"
         fi
         apply_remedy "$out" "$memory"
       done
@@ -846,7 +865,7 @@ test_a_missing_style_file_does_not_block_the_check() {
   rc=$?
   [ "$rc" -ne 0 ] || fail "--check reported success with the style file gone: $out"
   assert_contains "$out" "BROKEN" "--check did not report the state it exists to report"
-  assert_contains "$out" "  restore: $(real_dir "$checkout")/docs/styl-kapitanski.md" \
+  assert_contains "$out" "  restore file: $(real_dir "$checkout")/docs/styl-kapitanski.md" \
     "the remedy named a line to add without restoring the file it would reach"
   pass "fm-captain-style.sh: a missing style file is reported, not a refusal to look"
 }

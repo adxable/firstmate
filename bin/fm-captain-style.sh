@@ -67,11 +67,17 @@
 # style file that exists. Carrying out its printed steps literally lands on the
 # wired verdict from every state, which is what stops a remedy from being right
 # for the common case and wrong for a stale path, a second indented copy, or a
-# checkout with no style file of its own. The steps are printed as operations -
-# restore, create, remove, add, readable - in the order they must be carried
-# out. Settled wiring is given no remedy at all, and an unreadable file is given
-# the single step that makes it measurable, because nothing else about it can be
-# decided.
+# checkout with no style file of its own. Settled wiring is given no remedy at
+# all, and an unreadable file is given the single step that makes it measurable,
+# because nothing else about it can be decided.
+#
+# The steps are operations - restore file, create file, make readable, remove
+# line, append line at end of file - and every step that acts on a line names it
+# by number rather than by its content, because two occurrences can be the same
+# bytes and a content-named removal would take both. Line numbers are the ones
+# the file had when the run read it, so removals are printed from the highest
+# down: carried out in printed order, no step shifts a number a later step still
+# depends on.
 #
 # A checkout missing its own copy of the style file is reported where that
 # changes the advice - beside an import line this checkout could not supply. A
@@ -212,9 +218,31 @@ style_imports() {
       }
 
       if (in_fence) next
-      if (probe ~ /^[ \t]*@.*styl-kapitanski\.md[ \t]*$/) print $0
+      # The line number travels with the line, tab-separated: a repair step has
+      # to name which line it acts on, and two occurrences can be identical.
+      if (probe ~ /^[ \t]*@.*styl-kapitanski\.md[ \t]*$/) printf "%d\t%s\n", NR, $0
     }
   ' "$MEMORY_FILE" 2>/dev/null || true
+}
+
+# The line number and the line itself, split on the first tab only, so a
+# tab-indented occurrence keeps its indentation intact.
+occurrence_number() {
+  awk '{ print substr($0, 1, index($0, "\t") - 1) }'
+}
+
+occurrence_text() {
+  awk '{ print substr($0, index($0, "\t") + 1) }'
+}
+
+# How an occurrence is shown wherever it is named, verdict or repair step.
+show_occurrences() {
+  awk -v prefix="$1" '
+    {
+      tab = index($0, "\t")
+      printf "  %s line %s: %s\n", prefix, substr($0, 1, tab - 1), substr($0, tab + 1)
+    }
+  '
 }
 
 if [ ! -f "$STYLE_ABS" ]; then
@@ -225,7 +253,6 @@ fi
 
 if [ -e "$MEMORY_FILE" ] && { [ ! -f "$MEMORY_FILE" ] || [ ! -r "$MEMORY_FILE" ]; }; then
   echo "error: $MEMORY_FILE exists but could not be read" >&2
-  echo "hint: fix its permissions, then re-run this script" >&2
   MEMORY_UNREADABLE=1
 else
   MEMORY_UNREADABLE=0
@@ -245,8 +272,8 @@ if [ -z "$IMPORTS" ]; then
   LOADING=''
   INDENTED=''
 else
-  LOADING=$(printf '%s\n' "$IMPORTS" | grep -v '^[[:space:]]' || true)
-  INDENTED=$(printf '%s\n' "$IMPORTS" | grep '^[[:space:]]' || true)
+  LOADING=$(printf '%s\n' "$IMPORTS" | awk 'substr($0, index($0, "\t") + 1) !~ /^[ \t]/')
+  INDENTED=$(printf '%s\n' "$IMPORTS" | awk 'substr($0, index($0, "\t") + 1) ~ /^[ \t]/')
 fi
 if [ -z "$LOADING" ]; then
   LOADING_COUNT=0
@@ -263,9 +290,11 @@ fi
 # CR a CRLF editor leaves - does not stop the loader, and is trimmed before
 # resolving.
 FOUND=''
+FOUND_LINE=''
 TARGET=''
 if [ "$LOADING_COUNT" -eq 1 ]; then
-  FOUND=$(printf '%s\n' "$LOADING" | sed 's/[[:space:]]*$//')
+  FOUND=$(printf '%s\n' "$LOADING" | occurrence_text | sed 's/[[:space:]]*$//')
+  FOUND_LINE=$(printf '%s\n' "$LOADING" | occurrence_number)
   TARGET=$(resolve_import "${FOUND#@}")
 fi
 
@@ -307,7 +336,7 @@ fi
 report_working_notes() {
   if [ "$INDENTED_COUNT" -ge 1 ]; then
     echo "note: $MEMORY_FILE also holds indented occurrences of the import, which do not load:"
-    printf '%s\n' "$INDENTED" | sed 's/^/  /'
+    printf '%s\n' "$INDENTED" | show_occurrences found
   fi
   if [ "$(physical_path "$TARGET")" != "$(physical_path "$STYLE_ABS")" ]; then
     if [ "$STYLE_MISSING" -eq 0 ]; then
@@ -336,15 +365,15 @@ report_verdict() {
       ;;
     indented)
       echo "captain-style: INDENTED  no import in $MEMORY_FILE starts at column zero:" >&2
-      printf '%s\n' "$INDENTED" | sed 's/^/  found: /' >&2
+      printf '%s\n' "$INDENTED" | show_occurrences found >&2
       ;;
     ambiguous)
       echo "captain-style: AMBIGUOUS  $MEMORY_FILE has $LOADING_COUNT imports of the style file:" >&2
-      printf '%s\n' "$LOADING" | sed 's/^/  found: /' >&2
+      printf '%s\n' "$LOADING" | show_occurrences found >&2
       ;;
     broken)
       echo "captain-style: BROKEN  the import in $MEMORY_FILE reaches nothing:" >&2
-      echo "  found: $FOUND  resolves=$TARGET (missing)" >&2
+      echo "  found line $FOUND_LINE: $FOUND  resolves=$TARGET (missing)" >&2
       ;;
     wired)
       echo "captain-style: wired  import=$FOUND  resolves=$TARGET"
@@ -357,17 +386,21 @@ report_verdict() {
 # has to end in, never from the shape of whatever line was found, so carrying
 # out its steps literally leaves the file wired from any state. That target is
 # one import of the style file, at column zero, naming a style file that exists,
-# which is reached by removing every occurrence the scan found and adding the
+# which is reached by removing the occurrences that are not it and adding the
 # line this checkout would use. An unmeasurable file gets the one step that
-# makes it measurable, because nothing else can be decided about it.
+# makes it measurable, because nothing else about it can be decided.
 #
-# Each step is printed as an operation on one path or line, in the order they
-# have to be carried out.
+# A step that acts on a line names it by number, never by its content: two
+# occurrences can be the same bytes, and an instruction that says which text to
+# remove would then delete both and leave the file holding none. Removals are
+# printed from the highest line number down, so carrying the list out in the
+# order it is printed never shifts a number a later step still depends on.
 report_remedy() {
   local keeper
   if [ "$VERDICT" = unreadable ]; then
-    printf 'remedy: make %s readable, then run this again.\n' "$MEMORY_FILE"
-    printf '  readable: %s\n' "$MEMORY_FILE"
+    printf 'remedy: make %s readable, then run this again, because nothing about\n' "$MEMORY_FILE"
+    printf 'what it holds can be decided until then.\n'
+    printf '  make readable: %s\n' "$MEMORY_FILE"
     printf 'note: the line this checkout would use is %s\n' "$IMPORT_LINE"
     return 0
   fi
@@ -382,33 +415,53 @@ report_remedy() {
       ;;
     *)
       printf 'remedy: leave %s holding exactly one import of the style file, at\n' "$MEMORY_FILE"
-      printf 'column zero, by carrying out these steps in order.\n'
+      printf 'column zero, by carrying out these steps in the order they are printed.\n'
       ;;
   esac
   # A line naming this checkout reaches nothing while this checkout has no copy
   # of the style file, so restoring it comes before anything written down.
   if [ "$STYLE_MISSING" -eq 1 ]; then
-    printf '  restore: %s\n' "$STYLE_ABS"
+    printf '  restore file: %s\n' "$STYLE_ABS"
   fi
   if [ "$VERDICT" = absent ]; then
-    printf '  create: %s\n' "$MEMORY_FILE"
+    printf '  create file: %s\n' "$MEMORY_FILE"
   fi
   # An occurrence that is already the line this checkout would use, at column
-  # zero, is the one to keep: telling an operator to remove it and add it back
-  # would be a pair of steps whose order decides whether the file ends up wired.
+  # zero, is the one to keep: removing it and adding it back would be a pair of
+  # steps whose order decides whether the file ends up wired.
   keeper=0
-  if [ -n "$IMPORTS" ] && printf '%s\n' "$IMPORTS" | grep -qxF "$IMPORT_LINE"; then
+  if [ -n "$IMPORTS" ] && printf '%s\n' "$IMPORTS" | occurrence_text | grep -qxF "$IMPORT_LINE"; then
     keeper=1
   fi
   if [ -n "$IMPORTS" ]; then
-    printf '%s\n' "$IMPORTS" |
-      awk -v keep="$IMPORT_LINE" -v has="$keeper" '
-        has == 1 && kept == 0 && $0 == keep { kept = 1; next }
-        { print "  remove: " $0 }
-      '
+    printf '%s\n' "$IMPORTS" | awk -v keep="$IMPORT_LINE" -v has="$keeper" '
+      {
+        tab = index($0, "\t")
+        count++
+        num[count] = substr($0, 1, tab - 1)
+        text[count] = substr($0, tab + 1)
+        same[text[count]]++
+      }
+      END {
+        kept = 0
+        if (has == 1) {
+          for (i = 1; i <= count; i++) {
+            if (text[i] == keep) { kept = i; break }
+          }
+        }
+        for (i = count; i >= 1; i--) {
+          if (i == kept) continue
+          note = ""
+          if (same[text[i]] > 1) {
+            note = sprintf("  (one of %d identical occurrences)", same[text[i]])
+          }
+          printf "  remove line %s: %s%s\n", num[i], text[i], note
+        }
+      }
+    '
   fi
   if [ "$keeper" -eq 0 ]; then
-    printf '  add: %s\n' "$IMPORT_LINE"
+    printf '  append line at end of file: %s\n' "$IMPORT_LINE"
   fi
   if [ "$VERDICT" != absent ]; then
     printf 'Everything else in that file stays exactly as it is.\n'
