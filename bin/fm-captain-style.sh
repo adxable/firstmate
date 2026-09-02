@@ -31,7 +31,8 @@
 #
 # Usage:
 #   fm-captain-style.sh                 print the line, the file to paste it
-#                                       into, and where in that file it goes
+#                                       into, and where in that file it goes,
+#                                       or say that the wiring is already there
 #   fm-captain-style.sh --check         read-only: report whether the line is
 #                                       already wired in and whether it still
 #                                       reaches the style file; never writes
@@ -49,10 +50,14 @@
 #
 # Exit status is 0 when the wiring is in place (or, in the default mode, when
 # the instructions were printed and nothing else needs attention), and non-zero
-# for every state that needs a human to act. An unreadable memory file is one of
-# those states: the default mode still prints the line and the file to paste it
-# into, because neither needs that file read, while --check refuses rather than
-# reporting an unreadable file as an empty one.
+# for every state that needs a human to act. The default mode prints those
+# instructions only when the memory file holds no import that loads; when one is
+# already there it says so, names --check as the way to confirm it, and asks for
+# nothing to be pasted, because a second column-zero import is the AMBIGUOUS
+# state rather than a repair. An unreadable memory file is one of the states
+# needing a human: the default mode still prints the line and the file to paste
+# it into, because neither needs that file read, while --check refuses rather
+# than reporting an unreadable file as an empty one.
 #
 # A checkout missing its own copy of the style file is reported where that
 # changes the advice - beside an import line this checkout could not supply, in
@@ -261,10 +266,16 @@ else
 fi
 
 if [ "$MODE" = print ]; then
+  # A file that already holds a loading import needs no paste, and printing the
+  # paste instructions beside it invites a second column-zero occurrence - the
+  # AMBIGUOUS state this script exists to report.
   if [ "$LOADING_COUNT" -ge 1 ]; then
     printf 'captain-style: an import of the style file is already in %s\n' "$MEMORY_FILE"
-    printf 'Run %s --check to see whether it still reaches the file.\n' "$0"
-    printf '\n'
+    printf 'Nothing to paste and nothing to change: the wiring is in place.\n'
+    printf 'Confirm it still reaches the style file with: %s --check\n' "$0"
+    report_style_missing
+    [ "$STYLE_MISSING" -eq 0 ] || exit 1
+    exit 0
   fi
   # Both printed values come from this script's own location, so a memory file
   # that cannot be read still gets the line and the path it needs.

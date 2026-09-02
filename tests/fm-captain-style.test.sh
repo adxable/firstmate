@@ -49,11 +49,25 @@ real_dir() {
   (cd "$1" && pwd -P)
 }
 
+# A byte-exact copy of the memory file, taken before the run. Capturing the
+# content with command substitution would strip trailing newlines, so a run that
+# appended a blank line or dropped the final newline would compare equal.
+SNAPSHOT_DIR="$TMP_ROOT/snapshots"
+mkdir -p "$SNAPSHOT_DIR"
+SNAPSHOT_SEQ=0
+snapshot_file() {
+  local dest
+  SNAPSHOT_SEQ=$((SNAPSHOT_SEQ + 1))
+  dest="$SNAPSHOT_DIR/snapshot-$SNAPSHOT_SEQ"
+  cp "$1" "$dest" || fail "could not snapshot $1"
+  printf '%s\n' "$dest"
+}
+
 # The installer used to own this file. Nothing does now, so every case that
 # touches a memory file pins that it came back unchanged.
 assert_memory_untouched() {
   local file=$1 before=$2 label=$3
-  [ "$(cat "$file")" = "$before" ] || fail "$label: the run modified $file"
+  cmp -s "$file" "$before" || fail "$label: the run modified $file"
 }
 
 # The wiring a human is told to paste must be usable exactly as printed. This
@@ -161,7 +175,7 @@ test_check_reports_a_missing_import_and_prints_the_instructions() {
   make_checkout "$checkout"
   memory="$home/.claude/CLAUDE.md"
   printf '# Only my own notes\n' >"$memory"
-  before=$(cat "$memory")
+  before=$(snapshot_file "$memory")
 
   out=$(run_style "$checkout" "$home" --check)
   rc=$?
@@ -199,7 +213,7 @@ test_an_indented_import_is_diagnosed_as_indentation() {
   memory="$home/.claude/CLAUDE.md"
   line=$(run_style "$checkout" "$home" --print-import)
   printf '# notes\n    %s\n' "$line" >"$memory"
-  before=$(cat "$memory")
+  before=$(snapshot_file "$memory")
 
   out=$(run_style "$checkout" "$home" --check)
   rc=$?
@@ -221,7 +235,7 @@ test_a_trailing_space_is_not_reported_as_indentation() {
   memory="$home/.claude/CLAUDE.md"
   line=$(run_style "$checkout" "$home" --print-import)
   printf '%s \n' "$line" >"$memory"
-  before=$(cat "$memory")
+  before=$(snapshot_file "$memory")
 
   out=$(run_style "$checkout" "$home" --check) \
     || fail "--check rejected a wired line carrying one trailing space: $out"
@@ -241,7 +255,7 @@ test_a_cr_terminated_import_is_reported_as_wired() {
   memory="$home/.claude/CLAUDE.md"
   line=$(run_style "$checkout" "$home" --print-import)
   printf '%s\r\n' "$line" >"$memory"
-  before=$(cat "$memory")
+  before=$(snapshot_file "$memory")
 
   out=$(run_style "$checkout" "$home" --check) \
     || fail "--check rejected a CR-terminated wired line: $out"
@@ -407,7 +421,7 @@ test_an_indented_copy_does_not_compete_with_a_loading_import() {
   errfile="$TMP_ROOT/indented-copy/err"
   line=$(run_style "$checkout" "$home" --print-import)
   printf '%s\n\n# an old note\n\t%s\n' "$line" "$line" >"$memory"
-  before=$(cat "$memory")
+  before=$(snapshot_file "$memory")
 
   out=$(run_style_split "$checkout" "$home" "$errfile" --check)
   rc=$?
@@ -443,6 +457,42 @@ test_a_fenced_import_and_an_indented_one_agree_on_one_verdict() {
   pass "fm-captain-style.sh: a fenced and an indented occurrence give one verdict"
 }
 
+# Print mode against a file that is already wired: printing the paste
+# instructions here would walk the operator into a second column-zero import,
+# which is exactly the AMBIGUOUS state --check reports.
+test_print_mode_asks_for_no_paste_when_the_import_is_already_there() {
+  local home checkout memory line before out rc check
+  home="$TMP_ROOT/already-wired/home"
+  checkout="$home/src/firstmate"
+  mkdir -p "$home/.claude"
+  make_checkout "$checkout"
+  memory="$home/.claude/CLAUDE.md"
+  line=$(run_style "$checkout" "$home" --print-import)
+  printf '# My own notes\n\n%s\n' "$line" >"$memory"
+  before=$(snapshot_file "$memory")
+
+  out=$(run_style "$checkout" "$home")
+  rc=$?
+  expect_code 0 "$rc" "print mode against an already-wired memory file"
+  assert_contains "$out" "already in $memory" \
+    "print mode did not say the import is already there"
+  assert_contains "$out" "Nothing to paste" "print mode did not say nothing needs doing"
+  assert_not_contains "$out" "Paste this line into" \
+    "print mode told the operator to paste a second import"
+  assert_not_contains "$out" "Put it on its own line" \
+    "print mode still printed the paste instructions"
+  assert_contains "$out" "--check" "print mode did not point at --check for confirmation"
+  assert_memory_untouched "$memory" "$before" "already-wired print"
+
+  # Following that output must leave the wiring in the state --check calls
+  # wired, not the ambiguous one two imports produce.
+  check=$(run_style "$checkout" "$home" --check) \
+    || fail "--check rejected the memory file print mode declared done: $check"
+  assert_contains "$check" "wired" "--check disagreed with print mode about the wiring"
+  assert_not_contains "$check" "AMBIGUOUS" "print mode left a competing import behind"
+  pass "fm-captain-style.sh: print mode asks for no paste when the import is already there"
+}
+
 test_more_than_one_import_is_reported_as_ambiguous() {
   local home checkout memory line before out rc
   home="$TMP_ROOT/ambiguous/home"
@@ -452,7 +502,7 @@ test_more_than_one_import_is_reported_as_ambiguous() {
   memory="$home/.claude/CLAUDE.md"
   line=$(run_style "$checkout" "$home" --print-import)
   printf '%s\n@~/elsewhere/docs/styl-kapitanski.md\n' "$line" >"$memory"
-  before=$(cat "$memory")
+  before=$(snapshot_file "$memory")
 
   out=$(run_style "$checkout" "$home" --check)
   rc=$?
@@ -473,7 +523,7 @@ test_no_mode_ever_writes_to_the_memory_file() {
   make_checkout "$checkout"
   memory="$home/.claude/CLAUDE.md"
   printf '# My own notes\n\nKeep me.\n' >"$memory"
-  before=$(cat "$memory")
+  before=$(snapshot_file "$memory")
 
   for mode in "" --check --verify --print-import --help; do
     if [ -z "$mode" ]; then
@@ -501,7 +551,7 @@ test_a_symlinked_memory_file_is_never_touched() {
   target="$home/dotfiles/claude.md"
   printf '# Dotfiles notes\n\nKeep me.\n' >"$target"
   ln -s "$target" "$link"
-  before=$(cat "$target")
+  before=$(snapshot_file "$target")
 
   out=$(run_style "$checkout" "$home" --check) || true
   [ -L "$link" ] || fail "the memory file is no longer a symlink"
@@ -634,6 +684,7 @@ test_an_unterminated_fence_runs_to_end_of_file
 test_an_indented_copy_does_not_compete_with_a_loading_import
 test_a_fenced_import_and_an_indented_one_agree_on_one_verdict
 test_more_than_one_import_is_reported_as_ambiguous
+test_print_mode_asks_for_no_paste_when_the_import_is_already_there
 test_no_mode_ever_writes_to_the_memory_file
 test_a_symlinked_memory_file_is_never_touched
 test_a_missing_style_file_does_not_block_the_check
