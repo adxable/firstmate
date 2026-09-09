@@ -26,10 +26,10 @@
 # docs/verification/runtime-backends.md "Endpoint kill and worktree-pool safety".
 set -u
 
-if [ "${FM_TREEHOUSE_POOL_TERMINATION_DRIFT:-0}" != 1 ]; then
-  echo "skip: set FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 to run the installed-treehouse pool termination guard"
-  exit 0
-fi
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+fm_live_gate opt-in FM_TREEHOUSE_POOL_TERMINATION_DRIFT tmux treehouse jq
 
 REAL_TMUX=
 SOCKET="fm-pool-termination-$$"
@@ -46,9 +46,6 @@ fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 note() { printf '# %s\n' "$1"; }
 
-command -v tmux >/dev/null 2>&1 || fail "tmux not found; this guard cannot pass without checking a real tmux"
-command -v treehouse >/dev/null 2>&1 || fail "treehouse not found; this guard cannot pass without checking a real worktree pool"
-command -v jq >/dev/null 2>&1 || fail "jq not found; the pool's own status verdict cannot be read without it"
 REAL_TMUX=$(command -v tmux)
 TMUX_VERSION=$("$REAL_TMUX" -V 2>/dev/null || printf 'unknown')
 TREEHOUSE_VERSION=$(treehouse --version 2>/dev/null || printf 'unknown')

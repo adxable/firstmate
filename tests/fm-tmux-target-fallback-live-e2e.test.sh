@@ -22,10 +22,10 @@
 # absent and skipping is correct.
 set -u
 
-if [ "${FM_TMUX_TARGET_FALLBACK_DRIFT:-0}" != 1 ]; then
-  echo "skip: set FM_TMUX_TARGET_FALLBACK_DRIFT=1 to run the installed-tmux named-target fallback guard"
-  exit 0
-fi
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+fm_live_gate opt-in FM_TMUX_TARGET_FALLBACK_DRIFT tmux
 
 REAL_TMUX=
 SOCKET="fm-target-fallback-$$"
@@ -41,7 +41,6 @@ fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 note() { printf '# %s\n' "$1"; }
 
-command -v tmux >/dev/null 2>&1 || fail "tmux not found; this guard cannot pass without checking a real tmux"
 REAL_TMUX=$(command -v tmux)
 TMUX_VERSION=$("$REAL_TMUX" -V 2>/dev/null || printf 'unknown')
 
