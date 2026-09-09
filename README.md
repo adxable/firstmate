@@ -86,9 +86,11 @@ bin/fm-install.sh                 # from a checkout you already have
 
 ```sh
 # on a machine with no checkout, from a repository this account can read
-gh api repos/<owner>/<repo>/contents/bin/fm-install.sh \
+gh api repos/adxable/firstmate/contents/bin/fm-install.sh \
   -H 'Accept: application/vnd.github.raw' | bash
 ```
+
+What that command clones is the installer's own default repository, not whatever repository the script was fetched from; installing from a fork means passing `--repo` with that fork's clone URL.
 
 It asks before installing anything, upgrades tools that are installed but below the version firstmate requires, and is safe to run again: a second run over a finished machine changes nothing.
 `--yes` installs without asking, for unattended runs.

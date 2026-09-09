@@ -11,8 +11,12 @@
 #   bin/fm-install.sh
 #
 # On a machine with no checkout, piped from a repository this account can read:
-#   gh api repos/<owner>/<repo>/contents/bin/fm-install.sh \
+#   gh api repos/adxable/firstmate/contents/bin/fm-install.sh \
 #     -H 'Accept: application/vnd.github.raw' | bash
+#
+# What that command clones is DEFAULT_REPO below, not the repository the script
+# itself was fetched from: a piped run has no way to learn where it came from.
+# Installing from a fork means passing --repo with that fork's clone URL.
 #
 # Usage:
 #   fm-install.sh [--dir <path>] [--repo <url>] [--yes]
@@ -158,12 +162,28 @@ dir_is_empty() {
   ! find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .
 }
 
+# The nearest checkout at or above a directory, so a run standing anywhere
+# inside one finds it. Walking up rather than asking git keeps a checkout that
+# carries no .git of its own - a copy, an export - answering the same way.
+enclosing_checkout() {
+  local dir
+  dir=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+  while :; do
+    if is_checkout "$dir"; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    [ "$dir" != / ] || return 1
+    dir=$(dirname "$dir")
+  done
+}
+
 # The checkout this run is already standing in, if there is one: the one holding
-# this script when it was run from a file, and otherwise the working directory,
-# which is the only checkout a run piped into bash can see. Both are the same
-# starting state - a machine that already has firstmate on it - so both resolve
-# here rather than leaving the piped form to clone a second checkout inside the
-# first one.
+# this script when it was run from a file, and otherwise the one enclosing the
+# working directory, which is the only checkout a run piped into bash can see.
+# Both are the same starting state - a machine that already has firstmate on it
+# - so both resolve here rather than leaving the piped form to clone a second
+# checkout inside the first one.
 CONTAINING=
 if [ -n "$SELF_FILE" ]; then
   candidate=$(cd "$(dirname "$SELF_FILE")/.." 2>/dev/null && pwd -P) || candidate=
@@ -171,8 +191,8 @@ if [ -n "$SELF_FILE" ]; then
     CONTAINING=$candidate
   fi
 fi
-if [ -z "$CONTAINING" ] && is_checkout "$PWD"; then
-  CONTAINING=$PWD
+if [ -z "$CONTAINING" ]; then
+  CONTAINING=$(enclosing_checkout "$PWD") || CONTAINING=
 fi
 
 if [ -n "$DIR_ARG" ]; then
@@ -224,6 +244,7 @@ fi
 
 BOOTSTRAP="$TARGET/bin/fm-bootstrap.sh"
 STYLE="$TARGET/bin/fm-captain-style.sh"
+STYLE_MEMORY="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/CLAUDE.md"
 
 # --- the toolchain, as bootstrap reports it ----------------------------------
 
@@ -374,7 +395,7 @@ if [ "$STYLE_RC" -eq 0 ]; then
   add_done "captain style rules: ${STYLE_VERDICT#captain-style: wired  }"
   if [ -n "$STYLE_NOTES" ]; then
     if printf '%s\n' "$STYLE_NOTES" | grep -q 'different checkout'; then
-      add_todo "the captain style import in Claude's user-level memory points at a different checkout than $TARGET"
+      add_todo "the captain style import in $STYLE_MEMORY points at a different checkout than $TARGET"
     fi
     begin_notes
     add_note 'The captain style check reported this beside the wiring it found:'

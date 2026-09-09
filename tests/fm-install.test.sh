@@ -265,6 +265,30 @@ expect_code 0 "$code" \
   'piped run inside a finished checkout should have nothing outstanding'
 pass 'the script piped into bash inside an existing checkout reuses that checkout'
 
+# A subdirectory of that checkout is still inside it, and the piped form has
+# nothing but the working directory to go on, so the checkout enclosing it is
+# the one to use rather than a second one cloned underneath.
+case_dir=$(new_case private)
+wire_style "$case_dir"
+out=$( (cd "$case_dir/checkout/docs" && env -i \
+  PATH="$(cat "$case_dir/path")" \
+  HOME="$case_dir/home" \
+  CLAUDE_CONFIG_DIR="$case_dir/home/.claude" \
+  TMPDIR="${TMPDIR:-/tmp}" \
+  FM_FAKE_NPM_LOG="$case_dir/npm.log" \
+  FM_FAKE_QUOTA_AXI_VERSION=0.1.29 \
+  bash -s -- --yes < "$case_dir/checkout/$INSTALLER_REL" 2>&1) )
+code=$?
+assert_absent "$case_dir/checkout/docs/firstmate" \
+  'piped run in a subdirectory: a second checkout was cloned under the first'
+assert_not_contains "$out" 'Cloning' \
+  'piped run in a subdirectory: the run cloned instead of using the checkout it stands in'
+assert_contains "$out" "checkout: $(cd "$case_dir/checkout" && pwd -P) (already present)" \
+  'piped run in a subdirectory: the enclosing checkout was not the one used'
+expect_code 0 "$code" \
+  'piped run in a subdirectory of a finished checkout should have nothing outstanding'
+pass 'the script piped into bash in a subdirectory reuses the checkout enclosing it'
+
 # --- an existing checkout ----------------------------------------------------
 
 case_dir=$(new_case)
@@ -446,6 +470,8 @@ assert_not_contains "$done_block" 'different checkout' \
   'style pointing elsewhere: the mismatch was filed as a completed step'
 assert_contains "$todo_block" 'points at a different checkout' \
   'style pointing elsewhere: the mismatch was not left as an outstanding step'
+assert_contains "$todo_block" "$case_dir/home/.claude/CLAUDE.md" \
+  'style pointing elsewhere: the outstanding step does not name the file to edit'
 expect_code 1 "$code" 'style pointing elsewhere: the run must not report a finished machine'
 pass 'a style import reaching another checkout is an outstanding step, not a done one'
 
