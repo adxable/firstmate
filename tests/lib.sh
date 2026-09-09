@@ -260,6 +260,37 @@ fm_write_secondmate_meta() {
     "projects=$projects"
 }
 
+# --- run-time instants ------------------------------------------------------
+#
+# A fixture that means "this window is still open" must be computed from the
+# moment the test runs. A written-in instant silently turns a passing suite into
+# a failing one the day it goes by, with nothing in the code having changed.
+# A fixture that means "this already happened" - an intake time, or a window
+# that must read as closed - uses the past helper, so the intent is readable
+# without date-checking the constant by hand.
+
+# fm_test_instant <seconds-from-now>: that instant as RFC3339 UTC; a negative
+# argument is in the past. BSD and GNU date disagree on the flag, so try both.
+fm_test_instant() {
+  local at
+  at=$(( $(date -u +%s) + $1 ))
+  date -u -r "$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# fm_test_future_instant [days] / fm_test_past_instant [days]: the two intents a
+# window fixture actually expresses, both defaulting to 30 days. The future one
+# is far past any short "closing soon" threshold, so a reachable window never
+# reads as one about to close.
+fm_test_future_instant() { fm_test_instant "$(( ${1:-30} * 86400 ))"; }
+fm_test_past_instant() { fm_test_instant "-$(( ${1:-30} * 86400 ))"; }
+
+# fm_test_epoch <rfc3339-instant>: that instant as epoch seconds, for a case
+# that must drive a clock override to either side of a computed window.
+fm_test_epoch() {
+  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null || date -u -d "$1" +%s
+}
+
 # --- common assertions ------------------------------------------------------
 
 # assert_contains <haystack> <needle> <msg>

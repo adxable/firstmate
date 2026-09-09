@@ -761,14 +761,18 @@ assert_block_equals() {
 # unresolved commitment rather than a stub.
 seed_public_commitment() {
   local home=$1 obligation=$2 work_home=$3 work_id=$4
+  local received expires
+  received=$(fm_test_past_instant 7)
+  expires=$(fm_test_future_instant 30)
   printf 'FMX_PAIRING_TOKEN=test-token\n' > "$home/.env"
   cp "$ROOT/.tasks.toml" "$home/.tasks.toml"
-  jq -n '{request_id:"req-handoff", platform:"x",
-          context_binding:{version:"ctx1", value:"ctx1_req-handoff"},
-          public_safe_summary:"looking into the sign-in redirect",
-          received_at:"2026-07-30T10:00:00Z",
-          followup_expires_at:"2026-08-06T10:00:00Z",
-          reservation_expires_at:"2026-08-06T10:00:00Z"}' > "$home/request.json"
+  jq -n --arg at "$received" --arg exp "$expires" \
+    '{request_id:"req-handoff", platform:"x",
+      context_binding:{version:"ctx1", value:"ctx1_req-handoff"},
+      public_safe_summary:"looking into the sign-in redirect",
+      received_at:$at,
+      followup_expires_at:$exp,
+      reservation_expires_at:$exp}' > "$home/request.json"
   jq -n '{type:"pr-merged", project:"alpha",
           required_deliverables:["pr_url"], completion_policy:"all-required"}' \
     > "$home/expected.json"
@@ -777,7 +781,8 @@ seed_public_commitment() {
       role:"fulfills", required:true, generation:1}' > "$home/relation.json"
   (cd "$home" && tasks-axi public-followup add "$obligation" \
     --request-context-file "$home/request.json" --purpose promised-final \
-    --expected-final-file "$home/expected.json" --expires-at 2026-10-01T00:00:00Z) >/dev/null \
+    --expected-final-file "$home/expected.json" \
+    --expires-at "$(fm_test_future_instant 60)") >/dev/null \
     || fail "could not create the public commitment"
   (cd "$home" && tasks-axi public-followup bind-work "$obligation" \
     --relation-file "$home/relation.json") >/dev/null \
