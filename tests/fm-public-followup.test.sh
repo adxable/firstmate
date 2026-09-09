@@ -162,13 +162,16 @@ tasks_in() {  # <home> <tasks-axi args...>
 # bound, and the private request context is retained.
 seed_commitment() {
   local home=$1 obligation=$2 request=$3 platform=$4 work_home=$5 work_id=$6
-  jq -n --arg r "$request" --arg p "$platform" \
+  local received expires
+  received=$(fm_test_past_instant 7)
+  expires=$(fm_test_future_instant 30)
+  jq -n --arg r "$request" --arg p "$platform" --arg at "$received" --arg exp "$expires" \
     '{request_id:$r, platform:$p,
       context_binding:{version:"ctx1", value:("ctx1_" + $r)},
       public_safe_summary:"fix worker placement when two spaces share a name",
-      received_at:"2026-07-30T10:00:00Z",
-      followup_expires_at:"2026-08-06T10:00:00Z",
-      reservation_expires_at:"2026-08-06T10:00:00Z"}' > "$home/request.json"
+      received_at:$at,
+      followup_expires_at:$exp,
+      reservation_expires_at:$exp}' > "$home/request.json"
   jq -n '{type:"pr-merged", project:"firstmate",
           required_deliverables:["pr_url"], completion_policy:"all-required"}' \
     > "$home/expected.json"
@@ -178,7 +181,8 @@ seed_commitment() {
 
   tasks_in "$home" public-followup add "$obligation" \
     --request-context-file "$home/request.json" --purpose promised-final \
-    --expected-final-file "$home/expected.json" --expires-at 2026-10-01T00:00:00Z >/dev/null \
+    --expected-final-file "$home/expected.json" \
+    --expires-at "$(fm_test_future_instant 60)" >/dev/null \
     || fail "could not create the public commitment"
   tasks_in "$home" public-followup bind-work "$obligation" \
     --relation-file "$home/relation.json" >/dev/null \
@@ -204,13 +208,16 @@ seed_commitment() {
 # The pi-rearm shape: a report-ready promised-final bound to a secondmate.
 seed_repro_commitment() {   # <home> <obligation> <request> <work-home> <work-id>
   local home=$1 obligation=$2 request=$3 work_home=$4 work_id=$5
-  jq -n --arg r "$request" \
+  local received expires
+  received=$(fm_test_past_instant 7)
+  expires=$(fm_test_future_instant 30)
+  jq -n --arg r "$request" --arg at "$received" --arg exp "$expires" \
     '{request_id:$r, platform:"discord",
       context_binding:{version:"ctx1", value:("ctx1_" + $r)},
       public_safe_summary:"reproduce a Pi recovery notification loop",
-      received_at:"2026-08-21T01:12:00Z",
-      followup_expires_at:"2026-08-28T01:12:00Z",
-      reservation_expires_at:"2026-08-28T01:12:00Z"}' > "$home/request.json"
+      received_at:$at,
+      followup_expires_at:$exp,
+      reservation_expires_at:$exp}' > "$home/request.json"
   jq -n '{type:"report-ready", project:"firstmate",
           required_deliverables:["report_path"], completion_policy:"all-required"}' \
     > "$home/expected.json"
@@ -219,7 +226,7 @@ seed_repro_commitment() {   # <home> <obligation> <request> <work-home> <work-id
       role:"fulfills", required:true, generation:1}' > "$home/relation.json"
   tasks_in "$home" public-followup add "$obligation" --request-context-file "$home/request.json" \
     --purpose promised-final --expected-final-file "$home/expected.json" \
-    --expires-at 2026-10-01T00:00:00Z >/dev/null || fail "add failed"
+    --expires-at "$(fm_test_future_instant 60)" >/dev/null || fail "add failed"
   tasks_in "$home" public-followup bind-work "$obligation" --relation-file "$home/relation.json" >/dev/null \
     || fail "bind-work failed"
   FM_HOME="$home" FMX_NOW_OVERRIDE="$PF_TEST_NOW" bash -c \
@@ -464,6 +471,8 @@ test_invalid_events_are_refused_and_quarantined() {
     || fail "a refused event must leave the commitment untouched"
 
   # A hand-edited event whose id no longer matches its own identity fields.
+  # occurred_at is a recorded event time, not a window: nothing compares it to
+  # the clock, so it stays a written-in instant and cannot rot.
   jq -n '{schema_version:1, event_id:"forged", obligation_id:"pf-refuse",
           relation_id:"rel-code", work_id:"work-real", generation:1,
           source_home_id:"main", outcome_type:"pr-merged",
@@ -1929,7 +1938,8 @@ test_rechain_refuses_unclaimed_existing_destination() {
   tasks_in "$home" public-followup add public-final-existing-b \
     --request-context-file "$home/request.json" --purpose promised-final \
     --expected-final-file "$home/collision-expected.json" \
-    --expires-at 2026-08-28T01:12:00Z >/dev/null || fail "could not seed destination collision"
+    --expires-at "$(fm_test_future_instant 60)" >/dev/null \
+    || fail "could not seed destination collision"
 
   expect_failure "a first rechain must not adopt an unrelated existing obligation" \
     run_pf "$home" rechain public-final-existing-b --from public-final-existing-a \
@@ -1968,6 +1978,7 @@ test_pending_skips_concurrent_retirement() {
     while [ ! -e "$FM_RACE_HOME/release-lock" ]; do sleep 0.02; done
     sleep 0.1
     mkdir -p "$FM_RACE_HOME/state/public-followup/retired"
+    # retired_at records when the close happened; it is never clock-compared.
     printf "reason=concurrent close\nretired_at=2026-08-01T00:00:00Z\n" \
       > "$FM_RACE_HOME/state/public-followup/retired/pf-race"
     chmod 600 "$FM_RACE_HOME/state/public-followup/retired/pf-race"
@@ -2112,8 +2123,7 @@ test_expiry_escalation_uses_now_override() {
   local home out exp now_closing now_expired registry tmp
   home=$(make_home expiry-window)
   seed_repro_commitment "$home" pf-exp req-exp main work-exp
-  exp=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' '2026-08-28T01:12:00Z' +%s 2>/dev/null) \
-    || exp=$(date -u -d '2026-08-28T01:12:00Z' +%s)
+  exp=$(fm_test_epoch "$(jq -r '.followup_expires_at' "$home/request.json")")
   now_closing=$((exp - 3600))
   now_expired=$((exp + 60))
   out=$(FMX_NOW_OVERRIDE="$now_expired" run_pf "$home" pending)
@@ -2211,6 +2221,7 @@ test_prechange_registration_is_open_and_unrechainable() {
     *'not state=delivered'*) ;;
     *) fail "rechain must refuse a pre-change record without crashing: $EXPECT_OUT" ;;
   esac
+  # delivered_at records when the reply landed; it is never clock-compared.
   printf 'state=delivered\ndelivered_at=2026-08-21T00:00:00Z\n' >> "$file"
   expect_failure "delivered pre-change record without context is un-rechainable" \
     run_pf "$home" rechain pf-new --from pf-legacy --work-home main --work-id work-next --expected pr-merged
