@@ -18,6 +18,11 @@
 # checked and never written: the memory-file case holds content the installer
 # does not own and is compared byte for byte afterwards.
 #
+# Bootstrap reports fleet facts beside setup steps, so two cases pin which of
+# its lines may hold the run back from reporting a finished machine: a pending
+# secondmate handoff is relayed and still exits 0, and a checkout stranded on a
+# feature branch is an outstanding step carrying a command an operator can run.
+#
 # Every case runs against a throwaway HOME, CLAUDE_CONFIG_DIR, PATH, and
 # checkout, so the machine's real toolchain, memory file, and firstmate home are
 # never read or written.
@@ -319,6 +324,58 @@ assert_not_contains "$second" 'Still to do on this machine' \
 assert_contains "$second" 'Nothing on this machine is outstanding.' \
   'idempotency: a finished machine should say so'
 pass 'a second run over a finished machine changes nothing and exits 0'
+
+# --- a finished machine that is also running a fleet -------------------------
+
+# Bootstrap reports fleet-operational facts beside the setup ones, and a
+# secondmate handoff waiting to be delivered is reported even in the read-only
+# detection this run uses. That says nothing about whether the machine is stood
+# up, so it must not hold the run back from reporting a finished one - it is
+# relayed as a note instead.
+case_dir=$(new_case private)
+wire_style "$case_dir"
+mkdir -p "$case_dir/checkout/data/handoff"
+cat > "$case_dir/checkout/data/handoff/fm-2.outbox.md" <<'EOF'
+- [ ] first pending item
+- [ ] second pending item
+EOF
+run_installer "$case_dir" '' >/dev/null
+out=$(run_installer "$case_dir" '')
+code=$?
+todo_block=$(printf '%s\n' "$out" \
+  | awk '/^Still to do on this machine:$/ { f = 1; next } f && /^$/ { exit } f')
+assert_not_contains "$todo_block" 'SECONDMATE_HANDOFF' \
+  'fleet fact: a pending handoff was filed as a step that stands the machine up'
+assert_contains "$out" 'SECONDMATE_HANDOFF: secondmate fm-2: pending delivery: 2 item(s)' \
+  'fleet fact: the line bootstrap reported was swallowed instead of relayed'
+assert_contains "$out" 'Nothing on this machine is outstanding.' \
+  'fleet fact: a finished machine was not reported as finished'
+expect_code 0 "$code" 'fleet fact: a finished machine carrying a fleet fact must exit 0'
+pass 'a fleet fact on a finished machine is relayed as a note and still exits 0'
+
+# --- a checkout stranded on a feature branch ---------------------------------
+
+# The read-only detection this run uses prints the advisory tangle wording, which
+# leaves the repair to the session holding the fleet lock and names no command.
+# This run does not hold that lock, so it relays that line and names the command
+# itself, with the condition under which an operator can act on it.
+case_dir=$(new_case private)
+wire_style "$case_dir"
+default_branch=$(git -C "$case_dir/checkout" symbolic-ref --short HEAD)
+git -C "$case_dir/checkout" checkout -q -b fm/stranded-work
+out=$(run_installer "$case_dir" '')
+code=$?
+todo_block=$(printf '%s\n' "$out" \
+  | awk '/^Still to do on this machine:$/ { f = 1; next } f && /^$/ { exit } f')
+assert_contains "$todo_block" "feature branch 'fm/stranded-work'" \
+  'tangled checkout: the line bootstrap reported was not left as an outstanding step'
+assert_contains "$todo_block" \
+  "git -C $(cd "$case_dir/checkout" && pwd -P) checkout $default_branch" \
+  'tangled checkout: no command an operator can actually run was named'
+assert_contains "$todo_block" 'when no firstmate session is running on this machine' \
+  'tangled checkout: the condition that makes that command safe was not stated'
+expect_code 1 "$code" 'tangled checkout: the run must not report a finished machine'
+pass 'a tangled checkout gets a command to run, not a deferral to a lock holder'
 
 # --- a tool that is absent ---------------------------------------------------
 

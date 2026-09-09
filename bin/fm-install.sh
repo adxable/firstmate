@@ -12,15 +12,22 @@
 #
 # On a machine with no checkout, piped from a repository this account can read:
 #   gh api repos/adxable/firstmate/contents/bin/fm-install.sh \
-#     -H 'Accept: application/vnd.github.raw' | bash
+#     -H 'Accept: application/vnd.github.raw' | bash -s --
+#
+# The `-s --` is what makes that form carry flags: bash reads anything before
+# the `--` as an option of its own, so a flag for this script goes after it.
 #
 # What that command clones is DEFAULT_REPO below, not the repository the script
 # itself was fetched from: a piped run has no way to learn where it came from.
-# Installing from a fork means passing --repo with that fork's clone URL.
+# Installing from a fork means passing --repo with that fork's clone URL:
+#   gh api repos/me/firstmate/contents/bin/fm-install.sh \
+#     -H 'Accept: application/vnd.github.raw' \
+#     | bash -s -- --repo https://github.com/me/firstmate.git
 #
 # Usage:
 #   fm-install.sh [--dir <path>] [--repo <url>] [--yes]
 #   fm-install.sh --help
+#   ... | bash -s -- [--dir <path>] [--repo <url>] [--yes]
 #
 #   --dir <path>   where the checkout lives, or is cloned to. Default: the
 #                  checkout this run is already standing in - the one holding
@@ -75,6 +82,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: fm-install.sh [--dir <path>] [--repo <url>] [--yes]
        fm-install.sh --help
+       ... | bash -s -- [--dir <path>] [--repo <url>] [--yes]
 EOF
 }
 
@@ -278,15 +286,30 @@ manual_lines() {
   grep '^MISSING_MANUAL: ' || true
 }
 
-# Everything bootstrap reported that is neither a tool nor a completed no-action
-# fact: a bad backend value, a tangled checkout, and anything it learns to
-# report later. Passed through verbatim rather than re-worded, because
-# bootstrap's line is the authority on what it found.
+# Bootstrap reports more than the steps that stand a machine up. It also reports
+# facts about a fleet already running on one - a secondmate handoff waiting to be
+# delivered, a sync it skipped - and none of those mean this machine is not set
+# up, so none of them may hold the run back from reporting a finished one. The
+# lines below are the ones this script recognizes as setup steps, and only they
+# decide the exit status. An allowlist rather than a list of fleet prefixes to
+# skip, so the next fact bootstrap learns to report lands on the harmless side.
+SETUP_LINE_RE='^(MISSING|MISSING_MANUAL|BACKEND_INVALID|TANGLE): |^NEEDS_GH_AUTH$'
+
+backend_lines() {
+  grep '^BACKEND_INVALID: ' || true
+}
+
+tangle_lines() {
+  grep '^TANGLE: ' || true
+}
+
+# Everything else bootstrap reported, minus its completed no-action facts.
+# Passed through verbatim rather than re-worded, because bootstrap's line is the
+# authority on what it found, and reported as a note rather than a step, because
+# a line this script does not recognize is not one it can claim is outstanding.
 other_lines() {
-  grep -v '^MISSING: ' \
-    | grep -v '^MISSING_MANUAL: ' \
+  grep -Ev "$SETUP_LINE_RE" \
     | grep -v '^BOOTSTRAP_INFO: ' \
-    | grep -v '^NEEDS_GH_AUTH$' \
     | grep -v '^[[:space:]]*$' || true
 }
 
@@ -377,7 +400,39 @@ fi
 while IFS= read -r line; do
   [ -n "$line" ] || continue
   add_todo "$line"
-done < <(printf '%s\n' "$DETECT" | other_lines)
+done < <(printf '%s\n' "$DETECT" | backend_lines)
+
+# A tangled checkout is a setup step this run can name a command for but must
+# not take. Bootstrap's read-only wording deliberately leaves the repair to
+# whichever session holds the fleet lock, and this run does not hold it - a
+# firstmate session may be live on this machine right now, and claiming the lock
+# to get a better-worded line would be a false claim on exactly the machine
+# where it matters. So bootstrap's line is relayed as it stands, and the command
+# is named beside it together with the one condition that makes it safe to run.
+TANGLE_LINES=$(printf '%s\n' "$DETECT" | tangle_lines)
+if [ -n "$TANGLE_LINES" ]; then
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    add_todo "$line"
+  done < <(printf '%s\n' "$TANGLE_LINES")
+  # The default branch comes from the same owner bootstrap used to decide the
+  # checkout is tangled at all, including its fallback, so the branch named here
+  # is the branch named in the line above it.
+  TANGLE_DEFAULT=$(. "$TARGET/bin/fm-tangle-lib.sh" && fm_default_branch "$TARGET") || TANGLE_DEFAULT=
+  [ -n "$TANGLE_DEFAULT" ] || TANGLE_DEFAULT=main
+  add_todo "when no firstmate session is running on this machine, put that checkout back on its default branch (run: git -C $TARGET checkout $TANGLE_DEFAULT)"
+fi
+
+OTHER_LINES=$(printf '%s\n' "$DETECT" | other_lines)
+if [ -n "$OTHER_LINES" ]; then
+  begin_notes
+  add_note 'The toolchain check also reported this about the fleet on this machine,'
+  add_note 'which is not part of standing the machine up:'
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    add_note "  $line"
+  done < <(printf '%s\n' "$OTHER_LINES")
+fi
 
 # --- the captain style rules, checked and never written ----------------------
 

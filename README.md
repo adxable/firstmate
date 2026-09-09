@@ -87,10 +87,18 @@ bin/fm-install.sh                 # from a checkout you already have
 ```sh
 # on a machine with no checkout, from a repository this account can read
 gh api repos/adxable/firstmate/contents/bin/fm-install.sh \
-  -H 'Accept: application/vnd.github.raw' | bash
+  -H 'Accept: application/vnd.github.raw' | bash -s --
 ```
 
+The `-s --` is what lets that form carry flags: bash reads anything before the `--` as an option of its own, so a flag for the installer goes after it.
+
 What that command clones is the installer's own default repository, not whatever repository the script was fetched from; installing from a fork means passing `--repo` with that fork's clone URL.
+
+```sh
+gh api repos/me/firstmate/contents/bin/fm-install.sh \
+  -H 'Accept: application/vnd.github.raw' \
+  | bash -s -- --repo https://github.com/me/firstmate.git
+```
 
 It asks before installing anything, upgrades tools that are installed but below the version firstmate requires, and is safe to run again: a second run over a finished machine changes nothing.
 `--yes` installs without asking, for unattended runs.
