@@ -286,13 +286,14 @@ manual_lines() {
   grep '^MISSING_MANUAL: ' || true
 }
 
-# Bootstrap reports more than the steps that stand a machine up. It also reports
-# facts about a fleet already running on one - a secondmate handoff waiting to be
-# delivered, a sync it skipped - and none of those mean this machine is not set
-# up, so none of them may hold the run back from reporting a finished one. The
-# lines below are the ones this script recognizes as setup steps, and only they
-# decide the exit status. An allowlist rather than a list of fleet prefixes to
-# skip, so the next fact bootstrap learns to report lands on the harmless side.
+# Bootstrap reports more than the steps that stand a machine up: facts about a
+# fleet already running on one, defects in local configuration the operator owns
+# and this script does not, and whatever it learns to report next. None of those
+# mean the machine is not set up, so none of them may hold the run back from
+# reporting a finished one. The lines below are the ones this script recognizes
+# as setup steps, and only they decide the exit status. An allowlist rather than
+# a list of prefixes to skip, so the next line bootstrap learns to report lands
+# on the harmless side.
 SETUP_LINE_RE='^(MISSING|MISSING_MANUAL|BACKEND_INVALID|TANGLE): |^NEEDS_GH_AUTH$'
 
 backend_lines() {
@@ -368,13 +369,22 @@ if [ -n "$MISSING" ]; then
   fi
 fi
 
-if [ -z "$MISSING" ]; then
+# A tool bootstrap can only point at instructions for is still a tool this
+# machine does not have, and it is listed as an outstanding step below, so it
+# holds the done line back the same way a tool with an install command does.
+# Nothing installs it here: the whole reason it is reported separately is that
+# there is no command to run for it.
+MANUAL=$(printf '%s\n' "$DETECT" | manual_lines)
+
+if [ -z "$MISSING" ] && [ -z "$MANUAL" ]; then
   if [ "$INSTALL_RAN" -eq 1 ]; then
     add_done 'tools: every tool firstmate requires is now present'
   else
     add_done 'tools: every tool firstmate requires is already present'
   fi
-else
+fi
+
+if [ -n "$MISSING" ]; then
   if [ "$CONSENT_DECLINED" -eq 1 ]; then
     begin_notes
     add_note 'Nothing was installed: the install was declined, or no answer was available.'
@@ -389,7 +399,7 @@ fi
 while IFS= read -r line; do
   [ -n "$line" ] || continue
   add_todo "${line#MISSING_MANUAL: }"
-done < <(printf '%s\n' "$DETECT" | manual_lines)
+done < <(printf '%s\n' "$MANUAL")
 
 if printf '%s\n' "$DETECT" | grep -q '^NEEDS_GH_AUTH$'; then
   add_todo 'GitHub is not authenticated (run: gh auth login)'
@@ -426,8 +436,8 @@ fi
 OTHER_LINES=$(printf '%s\n' "$DETECT" | other_lines)
 if [ -n "$OTHER_LINES" ]; then
   begin_notes
-  add_note 'The toolchain check also reported this about the fleet on this machine,'
-  add_note 'which is not part of standing the machine up:'
+  add_note 'The toolchain check also reported this, which is not a step this installer'
+  add_note 'recognizes as part of standing a machine up:'
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     add_note "  $line"

@@ -407,6 +407,30 @@ assert_grep 'npm install -g quota-axi' "$case_dir/npm.log" \
   'below-floor tool: the approved upgrade did not run'
 pass 'a tool below its version floor is upgraded by the same path as an absent one'
 
+# --- a tool that can only be installed by hand -------------------------------
+
+# Some tools have no install command bootstrap can run, only instructions, and
+# it reports those separately from the ones it can install. That is still a tool
+# this machine does not have, so the run must not report every tool as present
+# in the same breath as it names one that is missing.
+case_dir=$(new_case private)
+wire_style "$case_dir"
+mkdir -p "$case_dir/checkout/config"
+printf 'cursor\n' > "$case_dir/checkout/config/crew-harness"
+out=$(run_installer "$case_dir" '')
+code=$?
+done_block=$(printf '%s\n' "$out" | awk '/^Done:$/ { f = 1; next } f && /^$/ { exit } f')
+todo_block=$(printf '%s\n' "$out" \
+  | awk '/^Still to do on this machine:$/ { f = 1; next } f && /^$/ { exit } f')
+assert_contains "$todo_block" 'cursor-agent (instructions:' \
+  'manual tool: a tool with no install command was not left as an outstanding step'
+assert_not_contains "$done_block" 'every tool firstmate requires' \
+  'manual tool: the run reported every tool as present beside one it says is missing'
+assert_no_grep 'npm' "$case_dir/npm.log" \
+  'manual tool: the run tried to install a tool bootstrap has no command for'
+expect_code 1 "$code" 'manual tool: the run must not report a finished machine'
+pass 'a tool that can only be installed by hand holds back the every-tool-present line'
+
 # --- consent, declined -------------------------------------------------------
 
 case_dir=$(new_case)
