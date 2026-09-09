@@ -46,7 +46,7 @@ build_template() {
   cp -R "$ROOT/bin" "$TEMPLATE/bin"
   cp "$ROOT/docs/styl-kapitanski.md" "$TEMPLATE/docs/styl-kapitanski.md"
   cp "$ROOT/AGENTS.md" "$TEMPLATE/AGENTS.md"
-  git -C "$TEMPLATE" init -q
+  git -C "$TEMPLATE" init -q -b main
   git -C "$TEMPLATE" add -A >/dev/null
   git -C "$TEMPLATE" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
     commit -qm 'template checkout' >/dev/null
