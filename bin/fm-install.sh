@@ -259,12 +259,19 @@ STYLE_MEMORY="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/CLAUDE.md"
 # Read-only detection: FM_BOOTSTRAP_DETECT_ONLY keeps bootstrap's mutating
 # session-start sweeps out of an install run, so this reports the machine
 # without changing anything on it.
+# FM_BOOTSTRAP_NETWORK is pinned rather than inherited because this run reads
+# bootstrap's answers as complete: it reports a tool as present, and GitHub as
+# authenticated, from the ABSENCE of a line about it. Bootstrap emits its tool
+# lines only in the local phase and NEEDS_GH_AUTH only in the network one, so a
+# shell that exported `skip` or `only` would turn a check that never ran into a
+# check that passed. `all` is the value under which every line this script reads
+# is actually produced.
 # Bootstrap's own stderr is left on stderr rather than captured, so a notice it
 # prints there - an auto-detected runtime backend, say - reaches the operator
 # instead of being swallowed by a run that only wanted its diagnostic lines.
 run_detect() {
   local out rc
-  out=$(FM_BOOTSTRAP_DETECT_ONLY=1 bash "$BOOTSTRAP")
+  out=$(FM_BOOTSTRAP_DETECT_ONLY=1 FM_BOOTSTRAP_NETWORK=all bash "$BOOTSTRAP")
   rc=$?
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || err "$out"

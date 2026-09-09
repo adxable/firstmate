@@ -168,6 +168,7 @@ run_script() {
     TMPDIR="${TMPDIR:-/tmp}" \
     FM_FAKE_NPM_LOG="$dir/npm.log" \
     FM_FAKE_QUOTA_AXI_VERSION="${FM_FAKE_QUOTA_AXI_VERSION:-0.1.29}" \
+    FM_BOOTSTRAP_NETWORK="${FM_TEST_BOOTSTRAP_NETWORK:-}" \
     bash "$script" "$@" 2>&1)
 }
 
@@ -406,6 +407,35 @@ assert_contains "$out" 'quota-axi (install: npm install -g quota-axi)' \
 assert_grep 'npm install -g quota-axi' "$case_dir/npm.log" \
   'below-floor tool: the approved upgrade did not run'
 pass 'a tool below its version floor is upgraded by the same path as an absent one'
+
+# --- a shell that narrowed what the toolchain check runs ----------------------
+
+# The run reports GitHub as authenticated when the check says nothing about it,
+# so the check has to actually run. Bootstrap decides which of its checks run
+# from an environment variable, and an operator's shell can carry a value that
+# skips the very ones this report reads, which would turn a check that never ran
+# into a check that passed.
+case_dir=$(new_case private)
+wire_style "$case_dir"
+mkdir -p "$case_dir/fakebin-gh"
+cat > "$case_dir/fakebin-gh/gh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = auth ] && exit 1
+exit 0
+SH
+chmod +x "$case_dir/fakebin-gh/gh"
+printf '%s\n' "$case_dir/fakebin-gh:$FAKEBIN_QUOTA:$FAKEBIN:$BASE_PATH" > "$case_dir/path"
+out=$(FM_TEST_BOOTSTRAP_NETWORK=skip run_installer "$case_dir" '')
+code=$?
+done_block=$(printf '%s\n' "$out" | awk '/^Done:$/ { f = 1; next } f && /^$/ { exit } f')
+todo_block=$(printf '%s\n' "$out" \
+  | awk '/^Still to do on this machine:$/ { f = 1; next } f && /^$/ { exit } f')
+assert_not_contains "$done_block" 'GitHub: authenticated' \
+  'narrowed check: an unauthenticated machine was reported as authenticated'
+assert_contains "$todo_block" 'GitHub is not authenticated' \
+  'narrowed check: the authentication step was not left outstanding'
+expect_code 1 "$code" 'narrowed check: the run must not report a finished machine'
+pass 'the toolchain check runs in full whatever the shell asked bootstrap to skip'
 
 # --- a tool that can only be installed by hand -------------------------------
 
