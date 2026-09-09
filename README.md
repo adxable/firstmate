@@ -103,7 +103,7 @@ The manual route still works on its own:
 
 ```sh
 gh auth login
-git clone https://github.com/kunchenguid/firstmate
+git clone https://github.com/adxable/firstmate
 cd firstmate
 ```
 
