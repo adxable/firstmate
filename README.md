@@ -78,9 +78,40 @@ Launch it with `--trust`, or none of its project hooks load; it also has no turn
 
 ### Install and launch
 
+One command stands the setup up on a new machine, from either starting state: with no checkout yet it clones one, and inside an existing checkout it uses that one.
+
+```sh
+bin/fm-install.sh                 # from a checkout you already have
+```
+
+```sh
+# on a machine with no checkout, from a repository this account can read
+gh api repos/adxable/firstmate/contents/bin/fm-install.sh \
+  -H 'Accept: application/vnd.github.raw' | bash -s --
+```
+
+The `-s --` is what lets that form carry flags: bash reads anything before the `--` as an option of its own, so a flag for the installer goes after it.
+
+What that command clones is the installer's own default repository, not whatever repository the script was fetched from; installing from a fork means passing `--repo` with that fork's clone URL.
+
+```sh
+gh api repos/me/firstmate/contents/bin/fm-install.sh \
+  -H 'Accept: application/vnd.github.raw' \
+  | bash -s -- --repo https://github.com/me/firstmate.git
+```
+
+It asks before installing anything, upgrades tools that are installed but below the version firstmate requires, and is safe to run again: a second run over a finished machine changes nothing.
+`--yes` installs without asking, for unattended runs.
+`bin/fm-install.sh --help` owns the rest.
+
+The steps no script can take are listed at the end of every run: choosing an agent harness and signing in to it, and giving that account access to your repositories.
+When the captain style rules are not wired yet, the run also names the exact line to paste and the exact Claude memory file to paste it into.
+
+The manual route still works on its own:
+
 ```sh
 gh auth login
-git clone https://github.com/kunchenguid/firstmate
+git clone https://github.com/adxable/firstmate
 cd firstmate
 ```
 
