@@ -94,9 +94,10 @@ It asks before installing anything, upgrades tools that are installed but below 
 `--yes` installs without asking, for unattended runs.
 `bin/fm-install.sh --help` owns the rest.
 
-The steps no script can take are listed at the end of every run: choosing an agent harness and signing in to it, giving that account access to your repositories, and pasting one line into your own Claude memory file.
+The steps no script can take are listed at the end of every run: choosing an agent harness and signing in to it, and giving that account access to your repositories.
+When the captain style rules are not wired yet, the run also names the exact line to paste and the exact Claude memory file to paste it into.
 
-The manual path below is what that command automates, and it still works on its own:
+The manual route still works on its own:
 
 ```sh
 gh auth login

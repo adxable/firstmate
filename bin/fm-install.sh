@@ -3,7 +3,7 @@
 #
 # One command covers both starting states because the run detects which one it
 # is in rather than asking the operator to pick a mode: with no checkout yet it
-# clones one, and inside an existing checkout it uses that checkout. Re-running
+# clones one, and standing in an existing checkout it uses that one. Re-running
 # it on a machine that is already set up changes nothing and exits 0, so it is
 # safe to run again after a partial or interrupted first attempt.
 #
@@ -19,9 +19,10 @@
 #   fm-install.sh --help
 #
 #   --dir <path>   where the checkout lives, or is cloned to. Default: the
-#                  checkout this script was run from, else ./firstmate
+#                  checkout this run is already standing in - the one holding
+#                  this script, or the working directory - else ./firstmate
 #   --repo <url>   what to clone when there is no checkout yet. Default: the
-#                  origin of the checkout this script was run from, else
+#                  origin of the checkout this run is standing in, else
 #                  DEFAULT_REPO below
 #   --yes          install missing tools without asking. For unattended runs
 #                  only: an ordinary run always asks first
@@ -49,8 +50,10 @@
 # The captain style rules are checked, never written. bin/fm-captain-style.sh
 # owns that wiring and deliberately does not write to the user-level memory file
 # it does not own; this script runs its read-only --check and reports the exact
-# line and file as a step for a human. Nothing here writes to any file outside
-# the checkout directory it clones.
+# line and file as a step for a human. This script itself writes to no file
+# outside the checkout directory it clones; the tools it installs once consent
+# was given are put on the machine by fm-bootstrap.sh, wherever each tool's own
+# installer puts it, and the closing summary says so.
 #
 # Steps no script can take - choosing an agent harness and signing in to it,
 # and giving that account access to the repositories the crew will work on -
@@ -124,9 +127,6 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-[ -n "$DIR_ARG" ] || [ -z "${FM_INSTALL_DIR:-}" ] || DIR_ARG=$FM_INSTALL_DIR
-[ -n "$REPO_ARG" ] || [ -z "${FM_INSTALL_REPO:-}" ] || REPO_ARG=$FM_INSTALL_REPO
-
 say() { printf '%s\n' "$*"; }
 err() { printf '%s\n' "$*" >&2; }
 
@@ -158,13 +158,21 @@ dir_is_empty() {
   ! find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .
 }
 
-# The checkout this script was run from, if it was run from one at all.
+# The checkout this run is already standing in, if there is one: the one holding
+# this script when it was run from a file, and otherwise the working directory,
+# which is the only checkout a run piped into bash can see. Both are the same
+# starting state - a machine that already has firstmate on it - so both resolve
+# here rather than leaving the piped form to clone a second checkout inside the
+# first one.
 CONTAINING=
 if [ -n "$SELF_FILE" ]; then
   candidate=$(cd "$(dirname "$SELF_FILE")/.." 2>/dev/null && pwd -P) || candidate=
   if [ -n "$candidate" ] && is_checkout "$candidate"; then
     CONTAINING=$candidate
   fi
+fi
+if [ -z "$CONTAINING" ] && is_checkout "$PWD"; then
+  CONTAINING=$PWD
 fi
 
 if [ -n "$DIR_ARG" ]; then
@@ -230,6 +238,7 @@ run_detect() {
   out=$(FM_BOOTSTRAP_DETECT_ONLY=1 bash "$BOOTSTRAP")
   rc=$?
   if [ "$rc" -ne 0 ]; then
+    [ -z "$out" ] || err "$out"
     err "error: the toolchain check failed (exit $rc); see its output above"
     return 1
   fi
@@ -351,10 +360,29 @@ done < <(printf '%s\n' "$DETECT" | other_lines)
 
 # --- the captain style rules, checked and never written ----------------------
 
+# A wired verdict can carry notes beside it - an import that reaches a different
+# checkout than this one, or occurrences that are indented and so never load -
+# and those are states a human still has to settle. Only the verdict line is a
+# completed step; a note goes to the notes block, and an import pointing at
+# another checkout is named as an outstanding step so the run does not report
+# this machine as finished.
 STYLE_OUT=$(bash "$STYLE" --check 2>&1)
 STYLE_RC=$?
 if [ "$STYLE_RC" -eq 0 ]; then
-  add_done "captain style rules: ${STYLE_OUT#captain-style: wired  }"
+  STYLE_VERDICT=$(printf '%s\n' "$STYLE_OUT" | grep '^captain-style: ' | sed -n '1p')
+  STYLE_NOTES=$(printf '%s\n' "$STYLE_OUT" | grep -v '^captain-style: ' | grep -v '^[[:space:]]*$' || true)
+  add_done "captain style rules: ${STYLE_VERDICT#captain-style: wired  }"
+  if [ -n "$STYLE_NOTES" ]; then
+    if printf '%s\n' "$STYLE_NOTES" | grep -q 'different checkout'; then
+      add_todo "the captain style import in Claude's user-level memory points at a different checkout than $TARGET"
+    fi
+    begin_notes
+    add_note 'The captain style check reported this beside the wiring it found:'
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      add_note "  $line"
+    done < <(printf '%s\n' "$STYLE_NOTES")
+  fi
 else
   add_todo "the captain style rules are not wired into Claude's user-level memory yet"
   begin_notes
@@ -400,7 +428,11 @@ say "      cd $TARGET"
 say '      claude            # or: grok --trust, or: pi'
 say '  - give that account access to the repositories the crew will work on.'
 say
-say "Nothing outside $TARGET was written."
+if [ "$INSTALL_RAN" -eq 1 ]; then
+  say "Beyond the tools installed above, this run wrote nothing outside $TARGET."
+else
+  say "Nothing outside $TARGET was written."
+fi
 
 [ -z "$TODO_ITEMS" ] || exit 1
 exit 0

@@ -240,6 +240,31 @@ assert_contains "$out" "cloned from $case_dir/checkout" \
   'piped run: the report does not say the checkout was cloned'
 pass 'the script piped into bash clones into the working directory it was run from'
 
+# The same piped shape, run from inside a checkout that already exists: the run
+# has no file on disk to locate a checkout from, so the working directory is the
+# only one it can see, and reusing it is what keeps this one command from having
+# two modes a human has to pick between.
+case_dir=$(new_case private)
+wire_style "$case_dir"
+out=$( (cd "$case_dir/checkout" && env -i \
+  PATH="$(cat "$case_dir/path")" \
+  HOME="$case_dir/home" \
+  CLAUDE_CONFIG_DIR="$case_dir/home/.claude" \
+  TMPDIR="${TMPDIR:-/tmp}" \
+  FM_FAKE_NPM_LOG="$case_dir/npm.log" \
+  FM_FAKE_QUOTA_AXI_VERSION=0.1.29 \
+  bash -s -- --yes < "$case_dir/checkout/$INSTALLER_REL" 2>&1) )
+code=$?
+assert_absent "$case_dir/checkout/firstmate" \
+  'piped run inside a checkout: a second checkout was cloned inside the first'
+assert_not_contains "$out" 'Cloning' \
+  'piped run inside a checkout: the run cloned instead of using the checkout it stands in'
+assert_contains "$out" '(already present)' \
+  'piped run inside a checkout: the checkout it stands in was not reported'
+expect_code 0 "$code" \
+  'piped run inside a finished checkout should have nothing outstanding'
+pass 'the script piped into bash inside an existing checkout reuses that checkout'
+
 # --- an existing checkout ----------------------------------------------------
 
 case_dir=$(new_case)
@@ -334,6 +359,10 @@ wire_style "$case_dir"
 out=$(FM_FAKE_QUOTA_AXI_VERSION=0.1.20 run_installer "$case_dir" '' --yes)
 assert_not_contains "$out" 'Install them now?' '--yes: the run still asked'
 assert_grep 'npm install -g quota-axi' "$case_dir/npm.log" '--yes: nothing was installed'
+assert_not_contains "$out" 'Nothing outside' \
+  '--yes: the closing summary denies the system-wide install it just carried out'
+assert_contains "$out" 'Beyond the tools installed above' \
+  '--yes: the closing summary does not account for what was installed'
 pass '--yes installs without asking, and only --yes does'
 
 # --- the captain style rules, wired and not wired ----------------------------
@@ -397,6 +426,47 @@ assert_contains "$out" 'is not a firstmate checkout' 'occupied target: the refus
 cmp -s "$occupied/README.md" "$case_dir/occupied-before" \
   || fail 'occupied target: the run wrote into a directory it refused'
 pass 'a target holding something else is refused and left alone'
+
+# --- style rules wired, but to a different checkout ---------------------------
+
+# A memory file whose import loads and reaches a real style file, in another
+# checkout: the wiring works for that checkout, not for this one, so it is a
+# step for a human rather than a finished one.
+case_dir=$(new_case)
+other="$case_dir/other-checkout"
+cp -R "$TEMPLATE" "$other"
+env -i PATH="$BASE_PATH" HOME="$case_dir/home" CLAUDE_CONFIG_DIR="$case_dir/home/.claude" \
+  bash "$other/bin/fm-captain-style.sh" --print-import > "$case_dir/home/.claude/CLAUDE.md"
+out=$(run_installer "$case_dir" '')
+code=$?
+done_block=$(printf '%s\n' "$out" | awk '/^Done:$/ { f = 1; next } f && /^$/ { exit } f')
+todo_block=$(printf '%s\n' "$out" \
+  | awk '/^Still to do on this machine:$/ { f = 1; next } f && /^$/ { exit } f')
+assert_not_contains "$done_block" 'different checkout' \
+  'style pointing elsewhere: the mismatch was filed as a completed step'
+assert_contains "$todo_block" 'points at a different checkout' \
+  'style pointing elsewhere: the mismatch was not left as an outstanding step'
+expect_code 1 "$code" 'style pointing elsewhere: the run must not report a finished machine'
+pass 'a style import reaching another checkout is an outstanding step, not a done one'
+
+# --- a toolchain check that fails --------------------------------------------
+
+# Bootstrap reports what it found on stdout, which this run captures, so a
+# failing check has to hand that output back rather than point at a terminal
+# that never saw it.
+case_dir=$(new_case private)
+wire_style "$case_dir"
+cat > "$case_dir/checkout/bin/fm-bootstrap.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'TANGLE: this checkout is in a state bootstrap could not read'
+exit 3
+SH
+out=$(run_installer "$case_dir" '')
+code=$?
+expect_code 2 "$code" 'failed toolchain check: the run should not proceed'
+assert_contains "$out" 'TANGLE: this checkout is in a state bootstrap could not read' \
+  'failed toolchain check: the output the error points at was swallowed'
+pass 'a failing toolchain check shows what bootstrap reported before it gives up'
 
 # --- the manual steps no script can take -------------------------------------
 
