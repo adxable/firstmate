@@ -421,6 +421,8 @@ test_invalid_events_are_refused_and_quarantined() {
     || fail "a refused event must leave the commitment untouched"
 
   # A hand-edited event whose id no longer matches its own identity fields.
+  # occurred_at is a recorded event time, not a window: nothing compares it to
+  # the clock, so it stays a written-in instant and cannot rot.
   jq -n '{schema_version:1, event_id:"forged", obligation_id:"pf-refuse",
           relation_id:"rel-code", work_id:"work-real", generation:1,
           source_home_id:"secondmate:fmdev", outcome_type:"pr-merged",
@@ -1879,6 +1881,7 @@ test_pending_skips_concurrent_retirement() {
     while [ ! -e "$FM_RACE_HOME/release-lock" ]; do sleep 0.02; done
     sleep 0.1
     mkdir -p "$FM_RACE_HOME/state/public-followup/retired"
+    # retired_at records when the close happened; it is never clock-compared.
     printf "reason=concurrent close\nretired_at=2026-08-01T00:00:00Z\n" \
       > "$FM_RACE_HOME/state/public-followup/retired/pf-race"
     chmod 600 "$FM_RACE_HOME/state/public-followup/retired/pf-race"
@@ -2116,6 +2119,7 @@ test_prechange_registration_is_open_and_unrechainable() {
     *'not state=delivered'*) ;;
     *) fail "rechain must refuse a pre-change record without crashing: $EXPECT_OUT" ;;
   esac
+  # delivered_at records when the reply landed; it is never clock-compared.
   printf 'state=delivered\ndelivered_at=2026-08-21T00:00:00Z\n' >> "$file"
   expect_failure "delivered pre-change record without context is un-rechainable" \
     run_pf "$home" rechain pf-new --from pf-legacy --work-home main --work-id work-next --expected pr-merged
