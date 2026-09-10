@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/fm-tmux-target-fallback-live-e2e.test.sh - opt-in drift guard for the
+# tests/fm-tmux-target-fallback-live-e2e.test.sh - drift guard for the
 # tmux named-target fallback that proof-grade endpoint existence is built on
 # (fm_backend_target_proven, bin/fm-backend.sh).
 #
@@ -25,15 +25,15 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-fm_live_gate opt-in FM_TMUX_TARGET_FALLBACK_DRIFT tmux
+fm_live_gate default-on FM_TMUX_TARGET_FALLBACK_DRIFT tmux
 
 REAL_TMUX=
 SOCKET="fm-target-fallback-$$"
 SESSION=sess
 
 cleanup_all() {
-  [ -n "$REAL_TMUX" ] || return 0
-  "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+  [ -z "$REAL_TMUX" ] || "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+  fm_test_cleanup
 }
 trap cleanup_all EXIT
 

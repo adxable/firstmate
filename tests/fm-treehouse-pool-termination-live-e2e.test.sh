@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/fm-treehouse-pool-termination-live-e2e.test.sh - opt-in drift guard for
+# tests/fm-treehouse-pool-termination-live-e2e.test.sh - drift guard for
 # the worktree-pool facts fm-spawn.sh's ownership refusal rests on
 # (discard_refused_endpoint, bin/fm-spawn.sh).
 #
@@ -21,15 +21,16 @@
 # root = "./", so the pool is created under the lab directory and no real pool
 # is touched. tmux runs on a private socket for the same reason.
 #
-# Standard CI has no treehouse binary, so this is opt-in and on-demand. Run it
-# after a treehouse upgrade and before trusting the dated record in
+# Standard CI has no treehouse binary, so the shared gate skips this there and
+# it runs wherever both binaries are installed. Run it after a treehouse
+# upgrade and before trusting the dated record in
 # docs/verification/runtime-backends.md "Endpoint kill and worktree-pool safety".
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-fm_live_gate opt-in FM_TREEHOUSE_POOL_TERMINATION_DRIFT tmux treehouse jq
+fm_live_gate default-on FM_TREEHOUSE_POOL_TERMINATION_DRIFT tmux treehouse jq
 
 REAL_TMUX=
 SOCKET="fm-pool-termination-$$"
@@ -39,6 +40,7 @@ SESSION=pool
 cleanup_all() {
   [ -z "$REAL_TMUX" ] || "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
   [ -z "$LAB" ] || rm -rf "$LAB"
+  fm_test_cleanup
 }
 trap cleanup_all EXIT
 

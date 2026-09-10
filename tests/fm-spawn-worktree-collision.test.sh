@@ -624,10 +624,22 @@ test_herdr_flat_refusal_closes_nothing() {
   pass "the refusal on a herdr spawn without projection closes no pane either"
 }
 
-# The other side of the same dimension, through the same log: the pre-existing
-# primary-checkout isolation refusal on the projected layout still closes its
-# pane. This is deliberately unchanged by this work, and it is what proves the
-# "closed nothing" assertions above can fail.
+# The other side of the same dimension, through the same log: an isolation
+# refusal on the projected layout still closes its pane. This is deliberately
+# unchanged by this work, and it is what proves the "closed nothing" assertions
+# above can fail.
+#
+# Which of the two isolation refusals this reaches is fixed by construction
+# rather than chosen. The worktree-discovery poll screens every pane read with
+# the same spawn_worktree_isolated predicate validate_spawn_worktree applies
+# (bin/fm-spawn.sh), so a fresh spawn can never settle on a path the guard
+# would then reject: a pane path that is no worktree at all is refused by the
+# poll giving up, and the guard's own isolation branch is unreachable on any
+# fresh spawn. That branch still covers the relaunch route, but a relaunch
+# adopts its endpoint instead of creating one and therefore closes nothing, so
+# it cannot be the positive control this case exists to be. The refusal named
+# below is the settle poll's, pinned by its own sentence so a rewording shows
+# up here instead of being absorbed by a phrase both refusals share.
 test_herdr_projected_isolation_refusal_still_closes() {
   local rec id holder out status stray pane
   id=collide-herdr-m2
@@ -640,13 +652,9 @@ test_herdr_projected_isolation_refusal_still_closes() {
   out=$(run_herdr_spawn "$id" "$stray")
   status=$?
 
-  expect_code 1 "$status" "a settled path that is no worktree at all should refuse"
-  # Whichever isolation refusal fires - the settle poll giving up on a path that
-  # never becomes a worktree, or the guard rejecting the one it settled on -
-  # both name an isolated worktree and the ownership refusal names none, so this
-  # phrase is what separates this control case from the collision scenes above
-  # without pinning wording upstream keeps rewording.
-  assert_contains "$out" "isolated worktree" "isolation refusal did not fire"
+  expect_code 1 "$status" "a pane path that never becomes a worktree should refuse"
+  assert_contains "$out" "treehouse get did not enter an isolated worktree" \
+    "the settle poll's isolation refusal did not fire"
   pane=$(herdr_task_pane "$out")
   [ -n "$pane" ] || fail "could not read the endpoint pane out of the isolation refusal"
   herdr_pane_was_closed "$pane" \
