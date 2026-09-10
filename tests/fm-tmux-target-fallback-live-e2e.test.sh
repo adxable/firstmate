@@ -16,10 +16,10 @@
 # the recorded behavior no longer holds. It is the command that refreshes that
 # record after a tmux upgrade.
 #
-# It refuses to pass without checking anything: an absent tmux fails here
-# rather than skipping. The portable counterpart in
-# tests/fm-tmux-target-proof.test.sh pins the logic in CI, where tmux may be
-# absent and skipping is correct.
+# It refuses to pass without checking anything: a run that was explicitly asked
+# for fails on an absent tmux rather than skipping. Where nothing asked for it
+# and this host has no tmux, the shared gate skips it, and the portable
+# counterpart in tests/fm-tmux-target-proof.test.sh pins the logic in CI.
 set -u
 
 # shellcheck source=tests/lib.sh

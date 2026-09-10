@@ -630,16 +630,20 @@ test_herdr_flat_refusal_closes_nothing() {
 # above can fail.
 #
 # Which of the two isolation refusals this reaches is fixed by construction
-# rather than chosen. The worktree-discovery poll screens every pane read with
-# the same spawn_worktree_isolated predicate validate_spawn_worktree applies
-# (bin/fm-spawn.sh), so a fresh spawn can never settle on a path the guard
-# would then reject: a pane path that is no worktree at all is refused by the
-# poll giving up, and the guard's own isolation branch is unreachable on any
-# fresh spawn. That branch still covers the relaunch route, but a relaunch
-# adopts its endpoint instead of creating one and therefore closes nothing, so
-# it cannot be the positive control this case exists to be. The refusal named
-# below is the settle poll's, pinned by its own sentence so a rewording shows
-# up here instead of being absorbed by a phrase both refusals share.
+# rather than chosen, and the constraint is specific to the route this case
+# drives. Here the worktree is discovered from the pane by `treehouse get`:
+# WT starts empty and the discovery poll screens every read with the same
+# spawn_worktree_isolated predicate validate_spawn_worktree applies
+# (bin/fm-spawn.sh), so the poll can never adopt a path the guard would then
+# reject. A pane path that is no worktree at all is therefore refused by the
+# poll giving up, and on THIS route the guard's own isolation branch cannot be
+# reached at all. Other routes do reach it - orca sets WT from its own
+# `orca worktree create` result and is never screened by the poll, which is
+# the branch tests/fm-backend-orca.test.sh exercises, and a relaunch validates
+# the worktree it adopts - but neither of those opens the projected pane whose
+# close this case exists to observe. The refusal named below is the settle
+# poll's, pinned by its own sentence so a rewording shows up here instead of
+# being absorbed by a phrase both refusals share.
 test_herdr_projected_isolation_refusal_still_closes() {
   local rec id holder out status stray pane
   id=collide-herdr-m2
