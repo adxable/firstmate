@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/fm-treehouse-pool-termination-live-e2e.test.sh - opt-in drift guard for
+# tests/fm-treehouse-pool-termination-live-e2e.test.sh - drift guard for
 # the worktree-pool facts fm-spawn.sh's ownership refusal rests on
 # (discard_refused_endpoint, bin/fm-spawn.sh).
 #
@@ -21,15 +21,16 @@
 # root = "./", so the pool is created under the lab directory and no real pool
 # is touched. tmux runs on a private socket for the same reason.
 #
-# Standard CI has no treehouse binary, so this is opt-in and on-demand. Run it
-# after a treehouse upgrade and before trusting the dated record in
+# Standard CI has no treehouse binary, so the shared gate skips this there and
+# it runs wherever both binaries are installed. Run it after a treehouse
+# upgrade and before trusting the dated record in
 # docs/verification/runtime-backends.md "Endpoint kill and worktree-pool safety".
 set -u
 
-if [ "${FM_TREEHOUSE_POOL_TERMINATION_DRIFT:-0}" != 1 ]; then
-  echo "skip: set FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 to run the installed-treehouse pool termination guard"
-  exit 0
-fi
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+fm_live_gate default-on FM_TREEHOUSE_POOL_TERMINATION_DRIFT tmux treehouse jq
 
 REAL_TMUX=
 SOCKET="fm-pool-termination-$$"
@@ -39,6 +40,7 @@ SESSION=pool
 cleanup_all() {
   [ -z "$REAL_TMUX" ] || "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
   [ -z "$LAB" ] || rm -rf "$LAB"
+  fm_test_cleanup
 }
 trap cleanup_all EXIT
 
@@ -46,9 +48,6 @@ fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 note() { printf '# %s\n' "$1"; }
 
-command -v tmux >/dev/null 2>&1 || fail "tmux not found; this guard cannot pass without checking a real tmux"
-command -v treehouse >/dev/null 2>&1 || fail "treehouse not found; this guard cannot pass without checking a real worktree pool"
-command -v jq >/dev/null 2>&1 || fail "jq not found; the pool's own status verdict cannot be read without it"
 REAL_TMUX=$(command -v tmux)
 TMUX_VERSION=$("$REAL_TMUX" -V 2>/dev/null || printf 'unknown')
 TREEHOUSE_VERSION=$(treehouse --version 2>/dev/null || printf 'unknown')

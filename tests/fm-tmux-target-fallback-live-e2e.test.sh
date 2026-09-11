@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/fm-tmux-target-fallback-live-e2e.test.sh - opt-in drift guard for the
+# tests/fm-tmux-target-fallback-live-e2e.test.sh - drift guard for the
 # tmux named-target fallback that proof-grade endpoint existence is built on
 # (fm_backend_target_proven, bin/fm-backend.sh).
 #
@@ -16,24 +16,24 @@
 # the recorded behavior no longer holds. It is the command that refreshes that
 # record after a tmux upgrade.
 #
-# It refuses to pass without checking anything: an absent tmux fails here
-# rather than skipping. The portable counterpart in
-# tests/fm-tmux-target-proof.test.sh pins the logic in CI, where tmux may be
-# absent and skipping is correct.
+# It refuses to pass without checking anything: a run that was explicitly asked
+# for fails on an absent tmux rather than skipping. Where nothing asked for it
+# and this host has no tmux, the shared gate skips it, and the portable
+# counterpart in tests/fm-tmux-target-proof.test.sh pins the logic in CI.
 set -u
 
-if [ "${FM_TMUX_TARGET_FALLBACK_DRIFT:-0}" != 1 ]; then
-  echo "skip: set FM_TMUX_TARGET_FALLBACK_DRIFT=1 to run the installed-tmux named-target fallback guard"
-  exit 0
-fi
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+fm_live_gate default-on FM_TMUX_TARGET_FALLBACK_DRIFT tmux
 
 REAL_TMUX=
 SOCKET="fm-target-fallback-$$"
 SESSION=sess
 
 cleanup_all() {
-  [ -n "$REAL_TMUX" ] || return 0
-  "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+  [ -z "$REAL_TMUX" ] || "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+  fm_test_cleanup
 }
 trap cleanup_all EXIT
 
@@ -41,7 +41,6 @@ fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 note() { printf '# %s\n' "$1"; }
 
-command -v tmux >/dev/null 2>&1 || fail "tmux not found; this guard cannot pass without checking a real tmux"
 REAL_TMUX=$(command -v tmux)
 TMUX_VERSION=$("$REAL_TMUX" -V 2>/dev/null || printf 'unknown')
 

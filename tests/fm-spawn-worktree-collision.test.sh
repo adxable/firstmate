@@ -34,6 +34,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-worktree-collision)
@@ -146,8 +148,7 @@ make_collision_case() {
   mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
   printf 'codex\n' > "$home/config/crew-harness"
   fm_git_worktree "$proj" "$wt" "fm/$holder"
-  mkdir -p "$home/data/$id"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  fm_test_spawn_brief "$home" "$id"
   touch "$home/state/.last-watcher-beat"
   printf 'captain\n' > "$case_dir/windows"
   fm_write_meta "$home/state/$holder.meta" \
@@ -210,11 +211,15 @@ test_live_owner_blocks_spawn() {
 
   # The branch is created by the worker the launch command starts, so the
   # refusal is only worth anything if it lands before that command does. What
-  # goes on the wire is the harness invocation carrying the brief PATH, so that
-  # path is what a launch send would really log; the allowed retry below sends
-  # it into this same log, which is what proves this assertion can fail.
+  # goes on the wire is the harness invocation carrying the rendered
+  # launch-brief PATH, so that path is what a launch send would really log; the
+  # allowed retry below sends it into this same log, which is what proves this
+  # assertion can fail. It must be launch-brief.md and not the brief.md the
+  # captain wrote: fm-spawn renders the launch brief and sends only that, so
+  # pinning brief.md here would never match and the assertion would pass
+  # vacuously on a refusal that had in fact already launched.
   assert_grep "treehouse get" "$SENDLOG" "refused spawn never reached the pane at all"
-  assert_no_grep "$HOME_DIR/data/$id/brief.md" "$SENDLOG" \
+  assert_no_grep "$HOME_DIR/data/$id/launch-brief.md" "$SENDLOG" \
     "refused spawn still sent the launch command to the pane"
 
   # The refusal must not leave its own pane parked in the contested worktree,
@@ -230,7 +235,7 @@ test_live_owner_blocks_spawn() {
   status=$?
   expect_code 0 "$status" "re-running the refused task id should work once the collision is gone"
   assert_contains "$out" "spawned $id" "retry after a refusal did not report success"
-  assert_grep "$HOME_DIR/data/$id/brief.md" "$SENDLOG" \
+  assert_grep "$HOME_DIR/data/$id/launch-brief.md" "$SENDLOG" \
     "the allowed retry sent no launch command, so the refused-spawn assertion above pins nothing"
 
   pass "a worktree still owned by a live task refuses the spawn before the launch command is sent"
@@ -341,7 +346,7 @@ test_relaunch_refusal_leaves_the_adopted_endpoint_alone() {
   window_is_open "fm-$id" \
     || fail "the relaunch refusal ended the endpoint it had only adopted, killing the relaunched task's own terminal"
   window_is_open "fm-$holder" || fail "the relaunch refusal killed the OWNING task's endpoint"
-  assert_no_grep "$HOME_DIR/data/$id/brief.md" "$SENDLOG" \
+  assert_no_grep "$HOME_DIR/data/$id/launch-brief.md" "$SENDLOG" \
     "refused relaunch still sent the launch command to the pane"
   # No pool acquisition ran here, so the worktree stands on the branch the
   # holder's agent left it on; a note telling the operator otherwise would send
@@ -489,8 +494,7 @@ make_herdr_case() {
   printf 'herdr\n' > "$home/config/backend"
   [ "$projection" = on ] || printf 'off\n' > "$home/config/herdr-presentation-spaces"
   fm_git_worktree "$proj" "$wt" "fm/$holder"
-  mkdir -p "$home/data/$id"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  fm_test_spawn_brief "$home" "$id"
   touch "$home/state/.last-watcher-beat"
   # The holder's endpoint is a pane the fake knows about, so the guard's
   # existence probe proves ownership rather than guessing it.
@@ -517,12 +521,19 @@ EOF
 
 # run_herdr_spawn <id> <pane-cwd>: spawn <id> on the fake herdr, with the pane
 # settling into <pane-cwd>.
+#
+# The launcher identity is pinned, never inherited. fm-spawn refuses to place a
+# worker whose parent pane belongs to a different herdr server than the session
+# it targets, so an ambient HERDR_PANE_ID/HERDR_SOCKET_PATH - which every run
+# inside a real herdr pane has - would refuse this fixture for a reason that has
+# nothing to do with worktree ownership.
 run_herdr_spawn() {
   local id=$1 pane_path=$2
   FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     FM_SPAWN_NO_GUARD=1 TMUX='' HERDR_SESSION=fmtest \
+    HERDR_ENV=1 HERDR_PANE_ID=w1:p1 HERDR_SOCKET_PATH="$HOME_DIR/herdr.sock" \
     FM_FAKE_PANE_PATH="$pane_path" FM_FAKE_HERDR_STATE="$HERDR_STATE" \
     FM_FAKE_HERDR_LOG="$HERDR_LOG" FM_FAKE_SENDLOG="$SENDLOG" \
     FM_FAKE_HERDR_SOCKET="$HOME_DIR/herdr.sock" \
@@ -536,7 +547,7 @@ run_herdr_spawn() {
 # default tab is closed during every projection create.
 herdr_task_pane() {
   printf '%s\n' "$1" \
-    | sed -n 's/.*[Ii]nspect target fmtest:\([^ ]*\).*/\1/p;s/.*left the herdr endpoint fmtest:\([^ ]*\) open.*/\1/p' \
+    | sed -n 's/.*[Ii]nspect target fmtest:\([^ ]*\).*/\1/p;s/.*[Ii]nspect window fmtest:\([^ ]*\).*/\1/p;s/.*left the herdr endpoint fmtest:\([^ ]*\) open.*/\1/p' \
     | head -1
 }
 
@@ -613,24 +624,42 @@ test_herdr_flat_refusal_closes_nothing() {
   pass "the refusal on a herdr spawn without projection closes no pane either"
 }
 
-# The other side of the same dimension, through the same log: the pre-existing
-# primary-checkout isolation refusal on the projected layout still closes its
-# pane. This is deliberately unchanged by this work, and it is what proves the
-# "closed nothing" assertions above can fail.
+# The other side of the same dimension, through the same log: an isolation
+# refusal on the projected layout still closes its pane. This is deliberately
+# unchanged by this work, and it is what proves the "closed nothing" assertions
+# above can fail.
+#
+# Which of the two isolation refusals this reaches is fixed by construction
+# rather than chosen, and the constraint is specific to the route this case
+# drives. Here the worktree is discovered from the pane by `treehouse get`:
+# WT starts empty and the discovery poll screens every read with the same
+# spawn_worktree_isolated predicate validate_spawn_worktree applies
+# (bin/fm-spawn.sh), so the poll can never adopt a path the guard would then
+# reject. A pane path that is no worktree at all is therefore refused by the
+# poll giving up, and on THIS route the guard's own isolation branch cannot be
+# reached at all. Other routes do reach it - orca sets WT from its own
+# `orca worktree create` result and is never screened by the poll, which is
+# the branch tests/fm-backend-orca.test.sh exercises, and a relaunch validates
+# the worktree it adopts - but neither of those opens the projected pane whose
+# close this case exists to observe. The refusal named below is the settle
+# poll's, pinned by its own sentence so a rewording shows up here instead of
+# being absorbed by a phrase both refusals share.
 test_herdr_projected_isolation_refusal_still_closes() {
   local rec id holder out status stray pane
   id=collide-herdr-m2
   holder=collide-herdr-holder-m3
   rec=$(make_herdr_case collide-herdr-isolation "$id" "$holder" on)
   read_herdr_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
   stray="$TMP_ROOT/collide-herdr-isolation/not-a-worktree"
   mkdir -p "$stray"
 
   out=$(run_herdr_spawn "$id" "$stray")
   status=$?
 
-  expect_code 1 "$status" "a settled path that is no worktree at all should refuse"
-  assert_contains "$out" "did not yield an isolated worktree" "isolation refusal did not fire"
+  expect_code 1 "$status" "a pane path that never becomes a worktree should refuse"
+  assert_contains "$out" "treehouse get did not enter an isolated worktree" \
+    "the settle poll's isolation refusal did not fire"
   pane=$(herdr_task_pane "$out")
   [ -n "$pane" ] || fail "could not read the endpoint pane out of the isolation refusal"
   herdr_pane_was_closed "$pane" \
