@@ -650,6 +650,7 @@ test_herdr_projected_isolation_refusal_still_closes() {
   holder=collide-herdr-holder-m3
   rec=$(make_herdr_case collide-herdr-isolation "$id" "$holder" on)
   read_herdr_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
   stray="$TMP_ROOT/collide-herdr-isolation/not-a-worktree"
   mkdir -p "$stray"
 
