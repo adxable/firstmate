@@ -27,8 +27,8 @@
 # backed by its own clone.
 #
 # RESOLUTION ORDER.
-#   1. $FM_HOME/config/treehouse-root, when it is a regular, single-linked file
-#      whose first line is a non-empty absolute path. Home-local operator
+#   1. $FM_HOME/config/treehouse-root, when it is a regular file that is not a
+#      symlink and whose first line is a non-empty absolute path. Home-local operator
 #      override; LOCAL, gitignored, and deliberately NOT inherited into
 #      secondmate homes, because inheriting one root is what recreates the
 #      collision (bin/fm-config-inherit-lib.sh owns that exclusion).
@@ -81,8 +81,7 @@ die() { echo "error: fm-treehouse-root.sh: $1" >&2; exit 1; }
 
 # Leg 1: the home-local operator override.
 #
-# The file is read only when it is a regular, single-linked file, the same
-# safety shape the other single-value config readers in bin/ apply, so a
+# The file is read only when it is a regular file that is not a symlink, so a
 # symlink or a special file cannot redirect a home's whole worktree pool. A
 # present but malformed file is an error rather than a silent fall-through to
 # the default: falling through would put the home back on the shared pool this

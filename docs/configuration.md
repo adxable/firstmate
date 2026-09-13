@@ -272,7 +272,7 @@ Nothing is printed, no `TREEHOUSE_ROOT` is forced on the pane, and treehouse's o
 No primary moves: no migration, no disturbance to secondmate homes already leased inside the primary's pool, and work in flight keeps its pool.
 
 `config/treehouse-root` overrides both legs for one home.
-It is LOCAL and gitignored, must be a regular, single-linked file whose first line is one absolute path, and a present but malformed file is rejected rather than treated as an absent default.
+It is LOCAL and gitignored, must be a regular file that is not a symlink and whose first line is one absolute path, and a present but malformed file is rejected rather than treated as an absent default.
 It is deliberately NOT inherited by secondmate homes, because one inherited root recreates the shared pool it exists to leave; `bin/fm-config-inherit-lib.sh` owns that exclusion.
 
 The setting governs the pools a home's project worktrees come from.

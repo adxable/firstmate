@@ -402,7 +402,7 @@ SH
   line=$(grep -F 'treehouse get' "$home/pane.log" | head -1) \
     || fail "the spawn never asked its pane to acquire a worktree"
   [ -n "$line" ] || fail "the spawn never asked its pane to acquire a worktree"
-  PATH="$stub:$PATH" bash -c "$line"
+  PATH="$stub:$PATH" env -u TREEHOUSE_ROOT bash -c "$line"
 }
 
 test_spawn_leases_and_records_its_own_homes_root() {
@@ -457,7 +457,8 @@ SH
   [ -n "$line" ] || fail "the spawn never asked its pane to acquire a worktree"
   ( cd "$project" \
     && FM_TEST_REAL_TREEHOUSE="$real" FM_TEST_LEASE_HOLDER="$holder" \
-       HOME="$home/user-home" PATH="$shim:$PATH" bash -c "$line" 2>/dev/null )
+       HOME="$home/user-home" PATH="$shim:$PATH" \
+       env -u TREEHOUSE_ROOT bash -c "$line" 2>/dev/null )
 }
 
 # A project that configures its own pool root keeps it. The spawning home has no
