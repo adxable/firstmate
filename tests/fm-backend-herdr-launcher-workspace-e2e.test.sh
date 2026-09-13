@@ -166,11 +166,6 @@ mkdir -p "$SM_HOME/state" "$SM_HOME/config" "$SM_HOME/projects" "$SM_HOME/bin" "
 printf 'off\n' > "$SM_HOME/config/herdr-presentation-spaces"
 printf '# scratch secondmate home AGENTS.md placeholder\n' > "$SM_HOME/AGENTS.md"
 printf '%s\n' "$SM_ID" > "$SM_HOME/.fm-secondmate-home"
-# A secondmate home gets a worktree pool root of its own under $HOME
-# (bin/fm-treehouse-root.sh), which for this suite is the developer's real home.
-# Pin it inside the lab, so cleanup_all's bare `treehouse return --force` still
-# names the pool the spawn leased from and $TMP_ROOT takes the pool with it.
-printf '%s\n' "$TMP_ROOT/pool-$SM_ID" > "$SM_HOME/config/treehouse-root"
 printf 'trivial e2e secondmate charter: nothing to do.\n' > "$SM_HOME/data/charter.md"
 
 SM2_ID="lwsm2"
@@ -179,7 +174,6 @@ mkdir -p "$SM2_HOME/state" "$SM2_HOME/config" "$SM2_HOME/projects" "$SM2_HOME/bi
 printf 'off\n' > "$SM2_HOME/config/herdr-presentation-spaces"
 printf '# scratch secondmate home AGENTS.md placeholder\n' > "$SM2_HOME/AGENTS.md"
 printf '%s\n' "$SM2_ID" > "$SM2_HOME/.fm-secondmate-home"
-printf '%s\n' "$TMP_ROOT/pool-$SM2_ID" > "$SM2_HOME/config/treehouse-root"
 printf 'trivial e2e secondmate charter: nothing to do.\n' > "$SM2_HOME/data/charter.md"
 
 # A third primary-shaped home that keeps presentation spaces ON through the

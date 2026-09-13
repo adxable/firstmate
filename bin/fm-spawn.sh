@@ -3170,10 +3170,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  # This home's own resolved directories are handed over explicitly rather than
-  # left to the child's fallback chain, so the root recorded below is the one
-  # this spawn resolved even when neither variable was exported into it.
-  SPAWN_TREEHOUSE_ROOT=$(FM_HOME="$FM_HOME" FM_CONFIG_OVERRIDE="$CONFIG" \
+  # This home is handed over explicitly rather than left to the child's fallback
+  # chain, so the root recorded below is the one this spawn resolved even when
+  # FM_HOME was never exported into it.
+  SPAWN_TREEHOUSE_ROOT=$(FM_HOME="$FM_HOME" \
     "$FM_ROOT/bin/fm-treehouse-root.sh") || {
     echo "error: could not resolve this home's treehouse pool root; refusing to launch $ID into a pool that may belong to another home; inspect window $T" >&2
     exit 1

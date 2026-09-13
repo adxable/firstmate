@@ -26,38 +26,35 @@
 # though the remote hash is identical, so a home can only ever be handed a slot
 # backed by its own clone.
 #
-# RESOLUTION ORDER.
-#   1. $FM_HOME/config/treehouse-root, when it is a regular file that is not a
-#      symlink and whose first line is a non-empty absolute path. Home-local operator
-#      override; LOCAL, gitignored, and deliberately NOT inherited into
-#      secondmate homes, because inheriting one root is what recreates the
-#      collision (bin/fm-config-inherit-lib.sh owns that exclusion).
-#   2. A secondmate home gets its own root: $HOME/.treehouse-homes/<home id>,
-#      where <home id> is the registered secondmate id its .fm-secondmate-home
-#      identity marker holds - the same marker bin/fm-bootstrap.sh and
-#      bin/fm-backend-hometag-lib.sh already read to answer this question, the
-#      id bin/fm-home-seed.sh writes, and the registry key in
-#      data/secondmates.md. The id, not the home's PATH, is what keys the root:
-#      a secondmate home is itself a slot in the primary's firstmate pool, that
-#      slot is returned when the home is retired, and treehouse hands the same
-#      slot path (<pool>/2/firstmate) to the next home. A path-derived key would
-#      therefore make the next home inherit the retired home's pool; the
-#      registered id is unique among live homes and is not recycled with the
-#      slot. A marker that holds no usable id is refused rather than keyed on
-#      something weaker, because the fallback would be a root shared with
-#      another home.
-#   3. Otherwise nothing is printed and this home is left alone: no
-#      TREEHOUSE_ROOT is forced anywhere, so treehouse's own resolution stands
-#      and a project that configures its own root in treehouse.toml keeps it. A
-#      primary home therefore does not move: no migration, no disturbance to
-#      secondmate homes already leased inside the primary's pool, and work in
-#      flight keeps its pool.
+# RESOLUTION. There is nothing to configure; a home's root follows from what the
+# home IS.
+#   - A secondmate home gets its own root: $HOME/.treehouse-homes/<home id>,
+#     where <home id> is the registered secondmate id its .fm-secondmate-home
+#     identity marker holds - the id bin/fm-home-seed.sh writes and the registry
+#     key in data/secondmates.md. Whether this home IS a secondmate is not
+#     decided here: bin/fm-primary-scope-lib.sh's fm_root_is_secondmate_home
+#     owns that question for the whole repository, and a marker it rejects makes
+#     this home a primary here exactly as it does everywhere else.
+#     The id, not the home's PATH, is what keys the root: a secondmate home is
+#     itself a slot in the primary's firstmate pool, that slot is returned when
+#     the home is retired, and treehouse hands the same slot path
+#     (<pool>/2/firstmate) to the next home. A path-derived key would therefore
+#     make the next home inherit the retired home's pool; the registered id is
+#     unique among live homes and is not recycled with the slot. An id that
+#     cannot be one path segment would name a directory other than this home's
+#     own, so it is refused rather than used.
+#   - Any other home: nothing is printed and it is left alone. No TREEHOUSE_ROOT
+#     is forced anywhere, so treehouse's own resolution stands and a project that
+#     configures its own root in treehouse.toml keeps it. A primary home
+#     therefore does not move: no migration, no disturbance to secondmate homes
+#     already leased inside the primary's pool, and work in flight keeps its
+#     pool.
 #
 # SCOPE. This governs the pools a home's PROJECT worktrees come from. It does
 # not govern the firstmate-repo lease a secondmate HOME itself occupies: that
 # slot belongs to the primary that seeded it (bin/fm-home-seed.sh) and is
 # returned by the primary (bin/fm-teardown.sh), both through treehouse's own
-# default resolution, so an override set here never strands a live home.
+# default resolution, so a root resolved here never strands a live home.
 #
 # Consumers: bin/fm-spawn.sh prefixes the pane's `treehouse get` with the
 # resolved root and records it as treehouse_root= in state/<id>.meta, and sends
@@ -69,7 +66,6 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
-CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 SECONDMATE_MARKER=".fm-secondmate-home"
 HOMES_DIRNAME=".treehouse-homes"
@@ -79,57 +75,23 @@ die() { echo "error: fm-treehouse-root.sh: $1" >&2; exit 1; }
 [ "$#" -eq 0 ] || die "takes no arguments"
 [ -n "${HOME:-}" ] || die "HOME is not set, so no treehouse root can be resolved"
 
-# Leg 1: the home-local operator override.
-#
-# The file is read only when it is a regular file that is not a symlink, so a
-# symlink or a special file cannot redirect a home's whole worktree pool. A
-# present but malformed file is an error rather than a silent fall-through to
-# the default: falling through would put the home back on the shared pool this
-# override exists to leave.
-OVERRIDE="$CONFIG/treehouse-root"
-if [ -f "$OVERRIDE" ] && [ ! -L "$OVERRIDE" ]; then
-  # A directory whose contents an attacker controls is not a concern here (the
-  # whole home is captain-private), but a config/ replaced by a symlink is
-  # exactly the shape the other readers refuse, so refuse it the same way.
-  [ -d "$CONFIG" ] && [ ! -L "$CONFIG" ] \
-    || die "'$CONFIG' is not a plain directory, so '$OVERRIDE' cannot be trusted"
-  # `read` reports failure at EOF even after assigning a final line that has no
-  # trailing newline, so the value it read is kept; an empty or unreadable file
-  # leaves the variable empty and reaches the '' arm below.
-  override_value=
-  IFS= read -r override_value < "$OVERRIDE" || true
-  # Strip surrounding whitespace, including the CR an editor may leave.
-  override_value=${override_value%%$'\r'*}
-  override_value="${override_value#"${override_value%%[![:space:]]*}"}"
-  override_value="${override_value%"${override_value##*[![:space:]]}"}"
-  case $override_value in
-    /*) printf '%s\n' "$override_value"; exit 0 ;;
-    '') die "'$OVERRIDE' is empty; remove it to use the default root, or write one absolute path" ;;
-    *) die "'$OVERRIDE' must hold one absolute path, got '$override_value'" ;;
-  esac
-fi
+# shellcheck source=bin/fm-primary-scope-lib.sh
+. "$SCRIPT_DIR/fm-primary-scope-lib.sh"
 
-# Leg 2: a secondmate home gets its own root, keyed by its registered id.
+# A secondmate home gets its own root, keyed by its registered id.
 MARKER="$FM_HOME/$SECONDMATE_MARKER"
-if [ -f "$MARKER" ] && [ ! -L "$MARKER" ]; then
+if fm_root_is_secondmate_home "$FM_HOME"; then
   home_id=
   IFS= read -r home_id < "$MARKER" || true
-  home_id=${home_id%%$'\r'*}
-  home_id="${home_id#"${home_id%%[![:space:]]*}"}"
-  home_id="${home_id%"${home_id##*[![:space:]]}"}"
-  # The id names one directory under $HOME/.treehouse-homes, so it must be a
-  # single safe path segment. Anything else is refused by name rather than
-  # coerced: the only fallback available is a root some other home already uses.
-  [ -n "$home_id" ] \
-    || die "'$MARKER' holds no secondmate id, so this home has no identity to key its own worktree pool on"
+  home_id=${home_id//[[:space:]]/}
   case $home_id in
-    . | .. | *[!A-Za-z0-9._-]*)
+    . | .. | */*)
       die "'$MARKER' must hold one secondmate id usable as a directory name, got '$home_id'" ;;
   esac
   printf '%s/%s/%s\n' "$HOME" "$HOMES_DIRNAME" "$home_id"
   exit 0
 fi
 
-# Leg 3: nothing, so treehouse's own resolution stands and a primary home never
-# moves.
+# Any other home: nothing, so treehouse's own resolution stands and a primary
+# home never moves.
 exit 0

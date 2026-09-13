@@ -1048,18 +1048,12 @@ mkdir -p "$SECOND_HOME_A/state" "$SECOND_HOME_A/config" "$SECOND_HOME_A/data" \
   "$SECOND_HOME_B/state" "$SECOND_HOME_B/config" "$SECOND_HOME_B/data"
 printf 'alpha\n' > "$SECOND_HOME_A/.fm-secondmate-home"
 printf 'bravo\n' > "$SECOND_HOME_B/.fm-secondmate-home"
-# A secondmate home gets a worktree pool root of its own under $HOME
-# (bin/fm-treehouse-root.sh), which for this suite is the developer's real home.
-# Pin both inside the lab, so every worktree these fixtures lease is deleted with
-# $TMP_ROOT like the primary's in-project pool already is.
-printf '%s\n' "$TMP_ROOT/pool-2ndmate-alpha" > "$SECOND_HOME_A/config/treehouse-root"
-printf '%s\n' "$TMP_ROOT/pool-2ndmate-bravo" > "$SECOND_HOME_B/config/treehouse-root"
 touch "$SECOND_HOME_A/state/.last-watcher-beat" "$SECOND_HOME_B/state/.last-watcher-beat"
 # Ensure the secondmate homes look like gitignored firstmate homes so inheritance
 # may write config/herdr-presentation-spaces.
 git -C "$SECOND_HOME_A" init -q
 git -C "$SECOND_HOME_B" init -q
-printf 'config/herdr-presentation-spaces\nconfig/crew-harness\nconfig/crew-dispatch.json\nconfig/backlog-backend\nconfig/backend\nconfig/startup-memory-budget\nconfig/treehouse-root\n' \
+printf 'config/herdr-presentation-spaces\nconfig/crew-harness\nconfig/crew-dispatch.json\nconfig/backlog-backend\nconfig/backend\nconfig/startup-memory-budget\n' \
   > "$SECOND_HOME_A/.gitignore"
 cp "$SECOND_HOME_A/.gitignore" "$SECOND_HOME_B/.gitignore"
 git -C "$SECOND_HOME_A" add .gitignore

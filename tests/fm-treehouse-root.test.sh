@@ -45,15 +45,15 @@ make_home() {  # <name> [secondmate]
 
 # resolve <home>: the pool root that home resolves to, against the fake $HOME.
 resolve() {  # <home>
-  HOME="$FAKE_HOME" FM_HOME="$1" FM_CONFIG_OVERRIDE="$1/config" "$RESOLVE"
+  HOME="$FAKE_HOME" FM_HOME="$1" "$RESOLVE"
 }
 
-# refuse_reason <home> <what-was-configured>: the resolver's combined output when
+# refuse_reason <home> <what-the-home-holds>: the resolver's combined output when
 # it refuses; fails the test when it succeeded instead.
-refuse_reason() {  # <home> <what-was-configured>
+refuse_reason() {  # <home> <what-the-home-holds>
   local out rc
   set +e
-  out=$(HOME="$FAKE_HOME" FM_HOME="$1" FM_CONFIG_OVERRIDE="$1/config" "$RESOLVE" 2>&1)
+  out=$(HOME="$FAKE_HOME" FM_HOME="$1" "$RESOLVE" 2>&1)
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "$2 was accepted instead of refused (printed '$out')"
@@ -128,65 +128,40 @@ test_a_recycled_home_slot_does_not_inherit_the_previous_root() {
   pass "two homes occupying one recycled slot path in turn resolve to two different roots"
 }
 
-# The id names a directory under $HOME/.treehouse-homes, and the only fallback
-# available is a root another home already uses, so an unusable id refuses.
-test_a_marker_without_a_usable_id_refuses() {
+# The id names one directory under $HOME/.treehouse-homes, so an id that is not a
+# single path segment would name a directory other than this home's own. There is
+# no safe fallback - every other root belongs to some other home - so it refuses.
+test_an_id_that_is_not_one_path_segment_refuses() {
   local home out
-  home="$TMP_ROOT/homes/mate-blank-marker"
+  home="$TMP_ROOT/homes/mate-dot-marker"
   mkdir -p "$home/config"
-  : > "$home/.fm-secondmate-home"
-  out=$(refuse_reason "$home" "a secondmate marker holding no id")
+  printf '.\n' > "$home/.fm-secondmate-home"
+  out=$(refuse_reason "$home" "a secondmate id of '.'")
   case $out in
     *.fm-secondmate-home*) ;;
     *) fail "the refusal did not name the marker: $out" ;;
   esac
 
-  printf '../escape\n' > "$home/.fm-secondmate-home"
-  refuse_reason "$home" "a secondmate id that is not one path segment" >/dev/null
-  pass "a secondmate marker with no usable id refuses by name instead of sharing another home's root"
+  printf '..\n' > "$home/.fm-secondmate-home"
+  refuse_reason "$home" "a secondmate id of '..'" >/dev/null
+  pass "a secondmate id that cannot be one path segment refuses instead of naming another directory"
 }
 
-test_config_override_wins_everywhere() {
-  local primary secondmate chosen
-  chosen="$TMP_ROOT/operator-chosen-root"
-  primary=$(make_home primary-override)
-  secondmate=$(make_home mate-override secondmate)
-  printf '%s\n' "$chosen" > "$primary/config/treehouse-root"
-  printf '%s\n' "$chosen" > "$secondmate/config/treehouse-root"
-  [ "$(resolve "$primary")" = "$chosen" ] \
-    || fail "the operator override did not beat the primary's legacy default"
-  [ "$(resolve "$secondmate")" = "$chosen" ] \
-    || fail "the operator override did not beat the secondmate's own root"
-  pass "config/treehouse-root wins over both the legacy default and a secondmate's own root"
-}
-
-# An operator's editor, or a `printf '%s'`, leaves the file's one line without a
-# trailing newline. That is a valid root, not an empty file.
-test_override_without_a_trailing_newline_is_honoured() {
-  local home chosen
-  home=$(make_home primary-no-newline)
-  chosen="$TMP_ROOT/no-newline-root"
-  printf '%s' "$chosen" > "$home/config/treehouse-root"
-  [ "$(resolve "$home")" = "$chosen" ] \
-    || fail "an override holding one absolute path with no trailing newline was not honoured"
-  pass "config/treehouse-root without a trailing newline is honoured rather than reported as empty"
-}
-
-# A malformed override must refuse, not fall back: falling back would silently put
-# the home back on the shared pool the override exists to leave.
-test_malformed_override_refuses_rather_than_falling_back() {
-  local home out
-  home=$(make_home mate-bad-override secondmate)
-
-  printf 'relative/path\n' > "$home/config/treehouse-root"
-  out=$(refuse_reason "$home" "a relative override")
-  case $out in
-    *"$FAKE_HOME"*) fail "a relative override leaked a fallback root into the output: $out" ;;
-  esac
-
-  : > "$home/config/treehouse-root"
-  refuse_reason "$home" "an empty override" >/dev/null
-  pass "a malformed config/treehouse-root refuses instead of falling back to a shared root"
+# Detection has ONE owner: fm_root_is_secondmate_home in bin/fm-primary-scope-lib.sh.
+# A marker that predicate rejects makes the home a primary here, exactly as it
+# already does for every other consumer, rather than a second opinion in this file.
+test_a_marker_the_shared_predicate_rejects_leaves_the_home_alone() {
+  local home lib
+  lib="$ROOT/bin/fm-primary-scope-lib.sh"
+  home="$TMP_ROOT/homes/mate-unreadable-marker"
+  mkdir -p "$home/config"
+  : > "$home/.fm-secondmate-home"
+  # shellcheck source=bin/fm-primary-scope-lib.sh
+  ( . "$lib" && fm_root_is_secondmate_home "$home" ) \
+    && fail "fixture is vacuous: the shared predicate accepted an empty marker"
+  [ -z "$(resolve "$home")" ] \
+    || fail "a marker the shared predicate rejects still resolved a secondmate root"
+  pass "a marker the shared predicate rejects leaves the home on treehouse's own resolution"
 }
 
 # --- the reported bug -------------------------------------------------------
@@ -383,7 +358,7 @@ EOF
     fm_test_run_spawn "$home" "$pool" "$fakebin" "$2" "$project" --scout) \
     || fail "spawn failed for $1: $out"
   recorded=$(sed -n 's/^treehouse_root=//p' "$home/state/$2.meta" | head -1)
-  expected=$(HOME="$home/user-home" FM_HOME="$home" FM_CONFIG_OVERRIDE="$home/config" "$RESOLVE")
+  expected=$(HOME="$home/user-home" FM_HOME="$home" "$RESOLVE")
   printf '%s|%s|%s\n' "$recorded" "$expected" "$home"
 }
 
@@ -584,10 +559,8 @@ test_a_home_without_its_own_root_is_left_alone
 test_secondmate_home_gets_its_own_root
 test_two_secondmate_homes_get_two_roots
 test_a_recycled_home_slot_does_not_inherit_the_previous_root
-test_a_marker_without_a_usable_id_refuses
-test_config_override_wins_everywhere
-test_override_without_a_trailing_newline_is_honoured
-test_malformed_override_refuses_rather_than_falling_back
+test_an_id_that_is_not_one_path_segment_refuses
+test_a_marker_the_shared_predicate_rejects_leaves_the_home_alone
 test_a_worktree_of_another_clone_is_refused
 if command -v treehouse >/dev/null 2>&1; then
   test_two_homes_two_clones_do_not_share_a_pool
