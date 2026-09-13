@@ -60,12 +60,25 @@ CLEANED=0
 # Idempotent: fail() cleans up before exiting and the EXIT trap fires after it,
 # so a second teardown would otherwise report the already-consumed fleet-state
 # tripwire as if the lab had gone wrong.
+# A task spawned from a secondmate home leased from that home's own pool root,
+# recorded as treehouse_root= beside its worktree; returning it against the
+# default root would leave the lease held. An absent record keeps the bare form.
+return_recorded_worktree() {  # <worktree>|<root>
+  local wt=${1%%|*} root=${1#*|}
+  [ -n "$wt" ] || return 0
+  if [ -n "$root" ] && [ "$root" != "$wt" ]; then
+    TREEHOUSE_ROOT="$root" treehouse return --force "$wt" >/dev/null 2>&1
+  else
+    treehouse return --force "$wt" >/dev/null 2>&1
+  fi
+}
+
 cleanup_all() {
   local wt status=0
   [ "$CLEANED" = 0 ] || return 0
   CLEANED=1
   for wt in ${WORKTREES[@]+"${WORKTREES[@]}"}; do
-    [ -n "$wt" ] && treehouse return --force "$wt" >/dev/null 2>&1
+    return_recorded_worktree "$wt"
   done
   WORKTREES=()
   "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" || status=$?
@@ -143,9 +156,10 @@ spawn_from_launcher() {
 }
 
 record_worktree() {  # <meta>
-  local wt
+  local wt root
   wt=$(grep '^worktree=' "$1" 2>/dev/null | cut -d= -f2-)
-  [ -n "$wt" ] && WORKTREES+=("$wt")
+  root=$(grep '^treehouse_root=' "$1" 2>/dev/null | cut -d= -f2-)
+  [ -n "$wt" ] && WORKTREES+=("$wt|$root")
   return 0
 }
 

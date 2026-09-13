@@ -73,14 +73,22 @@ HOMES_DIRNAME=".treehouse-homes"
 die() { echo "error: fm-treehouse-root.sh: $1" >&2; exit 1; }
 
 [ "$#" -eq 0 ] || die "takes no arguments"
-[ -n "${HOME:-}" ] || die "HOME is not set, so no treehouse root can be resolved"
 
+# Detection lives in an upstream-tracked file, so a rename there must be loud.
+# Reporting no root is not a safe answer to "could not tell": it is exactly the
+# answer that puts a secondmate home back on the shared pool.
+SCOPE_LIB="$SCRIPT_DIR/fm-primary-scope-lib.sh"
 # shellcheck source=bin/fm-primary-scope-lib.sh
-. "$SCRIPT_DIR/fm-primary-scope-lib.sh"
+. "$SCOPE_LIB" \
+  || die "could not load '$SCOPE_LIB', which owns secondmate-home detection"
+declare -F fm_root_is_secondmate_home >/dev/null \
+  || die "'$SCOPE_LIB' defines no fm_root_is_secondmate_home, so this home's identity cannot be established"
 
 # A secondmate home gets its own root, keyed by its registered id.
 MARKER="$FM_HOME/$SECONDMATE_MARKER"
 if fm_root_is_secondmate_home "$FM_HOME"; then
+  [ -n "${HOME:-}" ] \
+    || die "HOME is not set, so this secondmate home's own worktree pool root cannot be built"
   home_id=
   IFS= read -r home_id < "$MARKER" || true
   home_id=${home_id//[[:space:]]/}

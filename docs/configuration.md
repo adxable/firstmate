@@ -255,7 +255,7 @@ The skill text owns the marker spelling, the tick order, and the reinforcement r
 
 ## Worktree pool root
 
-A firstmate home that would otherwise share a worktree pool with another home leases its task worktrees from a pool root of its own, so two homes that each hold a clone of the same repository can never be handed each other's worktrees.
+A secondmate home leases its task worktrees from a pool root of its own, so a secondmate and the home that seeded it can never be handed each other's worktrees.
 Treehouse keys a pool by the repository's remote URL rather than by the clone path, so without per-home roots both clones resolve to one pool under one root, and a slot that pool hands out can be a linked worktree of the other home's clone.
 That slot is a real, isolated worktree, so it passes the spawn guards; what fails is later and less legible.
 A claude spawn is refused by the workspace-trust scope test in `bin/fm-claude-trust.sh`, which is the one check that compares git common directories, and the home can start nothing at all.

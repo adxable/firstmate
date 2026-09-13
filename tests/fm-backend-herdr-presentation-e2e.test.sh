@@ -285,8 +285,11 @@ LOCK_CONTENTION_OWNER_PID=
 # is one an occupant can miss between two polls.
 WORKTREE_OCCUPANT_RELEASE="$TMP_ROOT.released"
 SUITE_PID=$$
+# A task spawned from a secondmate home leased from that home's own pool root,
+# recorded as treehouse_root= beside its worktree; returning it against the
+# default root would leave the lease held. An absent record keeps the bare form.
 cleanup_all() {
-  local wt
+  local wt root
   : > "$WORKTREE_OCCUPANT_RELEASE" 2>/dev/null || true
   if [ -n "$LOCK_CONTENTION_OWNER_PID" ]; then
     kill "$LOCK_CONTENTION_OWNER_PID" 2>/dev/null || true
@@ -295,8 +298,14 @@ cleanup_all() {
   fi
   while IFS= read -r wt; do
     [ -n "$wt" ] || continue
+    root=${wt#*|}; wt=${wt%%|*}
+    [ -n "$wt" ] || continue
     [ -d "$wt" ] || continue
-    "$REAL_TREEHOUSE" return --force "$wt" >/dev/null 2>&1 || true
+    if [ -n "$root" ] && [ "$root" != "$wt" ]; then
+      TREEHOUSE_ROOT="$root" "$REAL_TREEHOUSE" return --force "$wt" >/dev/null 2>&1 || true
+    else
+      "$REAL_TREEHOUSE" return --force "$wt" >/dev/null 2>&1 || true
+    fi
   done <<EOF
 $RECORDED_WORKTREES
 EOF
@@ -384,10 +393,11 @@ assert_cleanup_focus_preserved() {  # <line-count> <pane-id> <expected-focus>
 }
 
 remember_meta_worktree() {  # <meta>
-  local wt
+  local wt root
   wt=$(grep '^worktree=' "$1" | cut -d= -f2-)
+  root=$(grep '^treehouse_root=' "$1" | cut -d= -f2-)
   [ -n "$wt" ] || fail "metadata did not record a worktree"
-  RECORDED_WORKTREES="${RECORDED_WORKTREES}${wt}"$'\n'
+  RECORDED_WORKTREES="${RECORDED_WORKTREES}${wt}|${root}"$'\n'
   printf '%s' "$wt"
 }
 
