@@ -276,6 +276,13 @@ The root governs the pools a home's project worktrees come from.
 It does not govern the firstmate-repo lease a secondmate home itself occupies: that slot belongs to the primary that seeded it and is returned by the primary, both through treehouse's own default resolution, so a resolved root never strands a live home.
 `bin/fm-spawn.sh` records the resolved root as `treehouse_root=` in the task record, and `bin/fm-teardown.sh` returns the slot against that recorded value; a task with no recorded value, whether it was spawned in a home with no root of its own or before the record existed, keeps treehouse's own resolution and tears down exactly as before.
 
+Retiring a secondmate costs one orphaned pool tree, and reclaiming it is the operator's call rather than teardown's.
+`$HOME/.treehouse-homes/<id>` survives the retirement with its worktrees, and the clone those worktrees are linked to lived inside the retired home, so it is gone.
+Before this change those slots went back to the shared pool and were handed out again; they are not now, because the root is keyed by the registered id and ids are deliberately not recycled with the slot.
+Nothing deletes the directory automatically, because one of its worktrees can still hold unlanded work.
+Reclaim it deliberately with `treehouse prune --root "$HOME/.treehouse-homes/<id>" --all --prune-orphans`, which lists the worktrees whose backing repository is missing and deletes nothing until you re-run it with `--yes`.
+`--all` is required: without it prune derives the pool from the current directory, and the clone that directory would name no longer exists.
+
 ## Secondmate routes (data/secondmates.md)
 
 Persistent secondmate routes live locally in `data/secondmates.md`.

@@ -288,6 +288,17 @@ jobs:
           echo "::error::default Herdr server did not become ready"
           cat "$RUNNER_TEMP/fm-herdr/default-server.log" || true
           exit 1
+      - name: Run the per-home Treehouse pool suite against the real pool tool
+        # Its own portable coverage still runs in the serial lane and is allowed
+        # to skip there. This job has the pinned pool tool, so a skip here means
+        # the pool-separation regression proof did not execute at all.
+        timeout-minutes: 10
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          bin/fm-test-run.sh tests/fm-treehouse-root.test.sh \
+            --fail-on-gate-skip 'treehouse not found' \
+            --json "$RUNNER_TEMP/fm-test/fm-test-timing-treehouse-root.json"
       - name: Snapshot pre-suite Herdr sessions
         run: |
           set -eu
@@ -322,6 +333,7 @@ jobs:
           name: fm-test-timing-herdr
           path: |
             ${{ runner.temp }}/fm-test/fm-test-timing-herdr.json
+            ${{ runner.temp }}/fm-test/fm-test-timing-treehouse-root.json
             ${{ runner.temp }}/fm-herdr/sessions-before.json
             ${{ runner.temp }}/fm-herdr/default-server.log
           if-no-files-found: warn

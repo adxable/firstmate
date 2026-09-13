@@ -52,10 +52,7 @@ resolve() {  # <home>
 # it refuses; fails the test when it succeeded instead.
 refuse_reason() {  # <home> <what-the-home-holds>
   local out rc
-  set +e
-  out=$(HOME="$FAKE_HOME" FM_HOME="$1" "$RESOLVE" 2>&1)
-  rc=$?
-  set -e
+  out=$(HOME="$FAKE_HOME" FM_HOME="$1" "$RESOLVE" 2>&1) && rc=0 || rc=$?
   [ "$rc" -ne 0 ] || fail "$2 was accepted instead of refused (printed '$out')"
   [ -n "$out" ] || fail "$2 was refused with no diagnostic"
   printf '%s\n' "$out"
@@ -282,7 +279,6 @@ EOF
   can_spawn_into "$slot_b_own" "$cloneB" \
     || fail "home B still could not spawn into a worktree from its own pool"
 
-  unlease "$root_a" "$cloneA" "$slot"
   unlease "$root_b" "$cloneB" "$slot_b_own"
   unlease "$shared" "$cloneB" "$slot_b_shared"
   pass "two homes with their own clone of one repository get two pool directories, and the second can spawn"
