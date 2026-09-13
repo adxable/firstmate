@@ -255,15 +255,21 @@ The skill text owns the marker spelling, the tick order, and the reinforcement r
 
 ## Worktree pool root (config/treehouse-root)
 
-Every firstmate home leases its task worktrees from its own treehouse pool root, so two homes that each hold a clone of the same repository can never be handed each other's worktrees.
+A firstmate home that would otherwise share a worktree pool with another home leases its task worktrees from a pool root of its own, so two homes that each hold a clone of the same repository can never be handed each other's worktrees.
 Treehouse keys a pool by the repository's remote URL rather than by the clone path, so without per-home roots both clones resolve to one pool under one root, and a slot that pool hands out can be a linked worktree of the other home's clone.
 That slot is a real, isolated worktree, so it passes the spawn guards; what fails is later and less legible.
 A claude spawn is refused by the workspace-trust scope test in `bin/fm-claude-trust.sh`, which is the one check that compares git common directories, and the home can start nothing at all.
 On a harness with no such pre-registration the worker instead branches and commits inside the other clone's object store, and this home's teardown does not recognize the slot as a pool slot at all, so its lease is never returned.
 
-`bin/fm-treehouse-root.sh` is the single owner of the resolution and prints the root for the home it runs in.
-A secondmate home resolves to `$HOME/.treehouse-homes/<basename-of-FM_HOME>-<short hash of FM_HOME>`, identified by the same `.fm-secondmate-home` marker the bootstrap and backend home-tag paths read; the hash, not the basename, is what keeps two secondmate homes leased from one pool apart.
-A primary home resolves to `$HOME`, treehouse's own historical default, so no primary moves: no migration, no disturbance to secondmate homes already leased inside the primary's pool, and work in flight keeps its pool.
+`bin/fm-treehouse-root.sh` is the single owner of the resolution and prints the root for the home it runs in, or nothing when that home needs none.
+A secondmate home resolves to `$HOME/.treehouse-homes/<home id>`, where the id is the registered secondmate id its `.fm-secondmate-home` marker holds, the same marker the bootstrap and backend home-tag paths read and the same key `data/secondmates.md` registers.
+The id, not the home's path, is what keys the root, because a secondmate home is itself a slot in the primary's firstmate pool: retiring the home returns that slot, and treehouse hands the same slot path to the next home, so a path-derived key would make the next home inherit the retired home's pool.
+A marker that holds no id usable as a directory name is refused by name rather than keyed on something weaker, because the only fallback is a root another home already uses.
+One case remains and is an operator's choice about identity rather than slot recycling: a new home deliberately created under a retired home's id inherits that id's pool.
+
+A home with no per-home root of its own is left alone entirely.
+Nothing is printed, no `TREEHOUSE_ROOT` is forced on the pane, and treehouse's own resolution stands, so a project that configures its own `root` in `treehouse.toml` keeps it.
+No primary moves: no migration, no disturbance to secondmate homes already leased inside the primary's pool, and work in flight keeps its pool.
 
 `config/treehouse-root` overrides both legs for one home.
 It is LOCAL and gitignored, must be a regular, single-linked file whose first line is one absolute path, and a present but malformed file is rejected rather than treated as an absent default.
@@ -271,7 +277,7 @@ It is deliberately NOT inherited by secondmate homes, because one inherited root
 
 The setting governs the pools a home's project worktrees come from.
 It does not govern the firstmate-repo lease a secondmate home itself occupies: that slot belongs to the primary that seeded it and is returned by the primary, both through treehouse's own default resolution, so an override never strands a live home.
-`bin/fm-spawn.sh` records the resolved root as `treehouse_root=` in the task record, and `bin/fm-teardown.sh` returns the slot against that recorded value; a task spawned before that record existed has no value and keeps treehouse's own resolution, so it tears down exactly as before.
+`bin/fm-spawn.sh` records the resolved root as `treehouse_root=` in the task record, and `bin/fm-teardown.sh` returns the slot against that recorded value; a task with no recorded value, whether it was spawned in a home that needs no root of its own or before the record existed, keeps treehouse's own resolution and tears down exactly as before.
 
 ## Secondmate routes (data/secondmates.md)
 

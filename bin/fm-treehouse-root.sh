@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # fm-treehouse-root.sh - the single owner of "which treehouse pool root does
-# this firstmate home use". Prints one absolute path on stdout.
+# this firstmate home use". Prints one absolute path on stdout, or nothing at
+# all when this home needs no root of its own.
 #
 # Usage: fm-treehouse-root.sh
 #        FM_HOME=/path/to/home fm-treehouse-root.sh
@@ -31,18 +32,26 @@
 #      override; LOCAL, gitignored, and deliberately NOT inherited into
 #      secondmate homes, because inheriting one root is what recreates the
 #      collision (bin/fm-config-inherit-lib.sh owns that exclusion).
-#   2. A secondmate home gets its own root:
-#      $HOME/.treehouse-homes/<basename-of-FM_HOME>-<short hash of FM_HOME>.
-#      A secondmate home is identified by its .fm-secondmate-home identity
-#      marker, the same marker bin/fm-bootstrap.sh and
-#      bin/fm-backend-hometag-lib.sh already read to answer this question.
-#      Two secondmate homes leased from one pool share a basename
-#      (<pool>/2/firstmate and <pool>/3/firstmate), so the hash of the resolved
-#      FM_HOME path, not the basename, is what keeps their roots distinct.
-#   3. Otherwise $HOME, treehouse's own historical default. A primary home
-#      therefore does not move: no migration, no disturbance to secondmate homes
-#      already leased inside the primary's pool, and work in flight keeps its
-#      pool.
+#   2. A secondmate home gets its own root: $HOME/.treehouse-homes/<home id>,
+#      where <home id> is the registered secondmate id its .fm-secondmate-home
+#      identity marker holds - the same marker bin/fm-bootstrap.sh and
+#      bin/fm-backend-hometag-lib.sh already read to answer this question, the
+#      id bin/fm-home-seed.sh writes, and the registry key in
+#      data/secondmates.md. The id, not the home's PATH, is what keys the root:
+#      a secondmate home is itself a slot in the primary's firstmate pool, that
+#      slot is returned when the home is retired, and treehouse hands the same
+#      slot path (<pool>/2/firstmate) to the next home. A path-derived key would
+#      therefore make the next home inherit the retired home's pool; the
+#      registered id is unique among live homes and is not recycled with the
+#      slot. A marker that holds no usable id is refused rather than keyed on
+#      something weaker, because the fallback would be a root shared with
+#      another home.
+#   3. Otherwise nothing is printed and this home is left alone: no
+#      TREEHOUSE_ROOT is forced anywhere, so treehouse's own resolution stands
+#      and a project that configures its own root in treehouse.toml keeps it. A
+#      primary home therefore does not move: no migration, no disturbance to
+#      secondmate homes already leased inside the primary's pool, and work in
+#      flight keeps its pool.
 #
 # SCOPE. This governs the pools a home's PROJECT worktrees come from. It does
 # not govern the firstmate-repo lease a secondmate HOME itself occupies: that
@@ -51,9 +60,10 @@
 # default resolution, so an override set here never strands a live home.
 #
 # Consumers: bin/fm-spawn.sh prefixes the pane's `treehouse get` with the
-# resolved root and records it as treehouse_root= in state/<id>.meta;
+# resolved root and records it as treehouse_root= in state/<id>.meta, and sends
+# the bare `treehouse get` with no record when nothing is printed;
 # bin/fm-teardown.sh returns a slot against that recorded value, and against
-# treehouse's own default when a task predates the record.
+# treehouse's own default when a task has no record.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,7 +94,11 @@ if [ -f "$OVERRIDE" ] && [ ! -L "$OVERRIDE" ]; then
   # exactly the shape the other readers refuse, so refuse it the same way.
   [ -d "$CONFIG" ] && [ ! -L "$CONFIG" ] \
     || die "'$CONFIG' is not a plain directory, so '$OVERRIDE' cannot be trusted"
-  IFS= read -r override_value < "$OVERRIDE" || override_value=
+  # `read` reports failure at EOF even after assigning a final line that has no
+  # trailing newline, so the value it read is kept; an empty or unreadable file
+  # leaves the variable empty and reaches the '' arm below.
+  override_value=
+  IFS= read -r override_value < "$OVERRIDE" || true
   # Strip surrounding whitespace, including the CR an editor may leave.
   override_value=${override_value%%$'\r'*}
   override_value="${override_value#"${override_value%%[![:space:]]*}"}"
@@ -96,21 +110,27 @@ if [ -f "$OVERRIDE" ] && [ ! -L "$OVERRIDE" ]; then
   esac
 fi
 
-# Leg 2: a secondmate home gets its own root.
-if [ -f "$FM_HOME/$SECONDMATE_MARKER" ] && [ ! -L "$FM_HOME/$SECONDMATE_MARKER" ]; then
-  home_real=$(CDPATH='' cd -P -- "$FM_HOME" 2>/dev/null && pwd -P) || home_real=
-  [ -n "$home_real" ] || die "secondmate home '$FM_HOME' is not an accessible directory"
-  if command -v shasum >/dev/null 2>&1; then
-    home_hash=$(printf '%s' "$home_real" | shasum -a 256 | awk '{print substr($1,1,8)}')
-  elif command -v sha256sum >/dev/null 2>&1; then
-    home_hash=$(printf '%s' "$home_real" | sha256sum | awk '{print substr($1,1,8)}')
-  else
-    home_hash=$(printf '%s' "$home_real" | cksum | awk '{printf "%08x", $1}')
-  fi
-  [ -n "$home_hash" ] || die "could not derive a stable identity for secondmate home '$home_real'"
-  printf '%s/%s/%s-%s\n' "$HOME" "$HOMES_DIRNAME" "$(basename "$home_real")" "$home_hash"
+# Leg 2: a secondmate home gets its own root, keyed by its registered id.
+MARKER="$FM_HOME/$SECONDMATE_MARKER"
+if [ -f "$MARKER" ] && [ ! -L "$MARKER" ]; then
+  home_id=
+  IFS= read -r home_id < "$MARKER" || true
+  home_id=${home_id%%$'\r'*}
+  home_id="${home_id#"${home_id%%[![:space:]]*}"}"
+  home_id="${home_id%"${home_id##*[![:space:]]}"}"
+  # The id names one directory under $HOME/.treehouse-homes, so it must be a
+  # single safe path segment. Anything else is refused by name rather than
+  # coerced: the only fallback available is a root some other home already uses.
+  [ -n "$home_id" ] \
+    || die "'$MARKER' holds no secondmate id, so this home has no identity to key its own worktree pool on"
+  case $home_id in
+    . | .. | *[!A-Za-z0-9._-]*)
+      die "'$MARKER' must hold one secondmate id usable as a directory name, got '$home_id'" ;;
+  esac
+  printf '%s/%s/%s\n' "$HOME" "$HOMES_DIRNAME" "$home_id"
   exit 0
 fi
 
-# Leg 3: treehouse's historical default, so a primary home never moves.
-printf '%s\n' "$HOME"
+# Leg 3: nothing, so treehouse's own resolution stands and a primary home never
+# moves.
+exit 0

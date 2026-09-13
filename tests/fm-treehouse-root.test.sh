@@ -61,35 +61,36 @@ refuse_reason() {  # <home> <what-was-configured>
   printf '%s\n' "$out"
 }
 
-test_primary_home_keeps_the_legacy_default() {
+# A home that needs no root of its own is left alone: nothing is printed, so
+# fm-spawn forces no TREEHOUSE_ROOT and treehouse's own resolution stands,
+# including a root the project configures for itself.
+test_a_home_without_its_own_root_is_left_alone() {
   local home root
   home=$(make_home primary-legacy)
   root=$(resolve "$home")
-  [ "$root" = "$FAKE_HOME" ] \
-    || fail "a primary home must keep treehouse's own default root, got '$root'"
-  pass "a primary home resolves to the legacy default root, so no primary moves"
+  [ -z "$root" ] \
+    || fail "a home with no root of its own printed '$root' instead of leaving treehouse's resolution alone"
+  pass "a home with no root of its own resolves to nothing, so no root is forced anywhere"
 }
 
 test_secondmate_home_gets_its_own_root() {
-  local primary secondmate primary_root secondmate_root
-  primary=$(make_home primary-vs-mate)
+  local secondmate secondmate_root
   secondmate=$(make_home mate-own-root secondmate)
-  primary_root=$(resolve "$primary")
   secondmate_root=$(resolve "$secondmate")
-  [ "$secondmate_root" != "$primary_root" ] \
-    || fail "a secondmate home resolved to the primary's root '$primary_root'"
+  [ -n "$secondmate_root" ] \
+    || fail "a secondmate home was left on treehouse's own resolution, which is the primary's pool"
   case $secondmate_root in
     "$FAKE_HOME"/*) ;;
     *) fail "a secondmate home's root escaped \$HOME: '$secondmate_root'" ;;
   esac
   [ "$(resolve "$secondmate")" = "$secondmate_root" ] \
     || fail "a secondmate home's root is not stable across resolutions"
-  pass "a marker-bearing secondmate home resolves to its own stable root, distinct from the primary's"
+  pass "a marker-bearing secondmate home resolves to its own stable root under \$HOME"
 }
 
 # The realistic collision: secondmate homes are slots in the primary's firstmate
 # pool, so <pool>/2/firstmate and <pool>/3/firstmate share a basename. Only the
-# resolved home PATH tells them apart.
+# registered id each marker holds tells them apart.
 test_two_secondmate_homes_get_two_roots() {
   local pool one two root_one root_two
   pool="$TMP_ROOT/homes/shared-pool"
@@ -104,8 +105,45 @@ test_two_secondmate_homes_get_two_roots() {
   root_one=$(resolve "$one")
   root_two=$(resolve "$two")
   [ "$root_one" != "$root_two" ] \
-    || fail "two secondmate homes sharing a basename collapsed onto one root '$root_one'"
-  pass "two secondmate homes that share a basename resolve to two different roots"
+    || fail "two secondmate homes with different registered ids collapsed onto one root '$root_one'"
+  pass "two secondmate homes leased from one pool are kept apart by their registered ids"
+}
+
+# treehouse recycles slot paths: retiring a secondmate home returns
+# <pool>/2/firstmate to the primary's firstmate pool, and the next home is handed
+# the same path. Two homes that occupy it in turn must not share a worktree pool,
+# because the first home's state and worktrees name a clone that no longer exists.
+test_a_recycled_home_slot_does_not_inherit_the_previous_root() {
+  local slot first second
+  slot="$TMP_ROOT/homes/recycled-pool/2/firstmate"
+  mkdir -p "$slot/config"
+  printf 'mate-retired\n' > "$slot/.fm-secondmate-home"
+  first=$(resolve "$slot")
+  # The home is retired and treehouse hands its slot to a different secondmate:
+  # the path is byte-identical and only the registered identity changed.
+  printf 'mate-successor\n' > "$slot/.fm-secondmate-home"
+  second=$(resolve "$slot")
+  [ "$first" != "$second" ] \
+    || fail "a home leased into a retired home's slot path inherited its pool root '$first'"
+  pass "two homes occupying one recycled slot path in turn resolve to two different roots"
+}
+
+# The id names a directory under $HOME/.treehouse-homes, and the only fallback
+# available is a root another home already uses, so an unusable id refuses.
+test_a_marker_without_a_usable_id_refuses() {
+  local home out
+  home="$TMP_ROOT/homes/mate-blank-marker"
+  mkdir -p "$home/config"
+  : > "$home/.fm-secondmate-home"
+  out=$(refuse_reason "$home" "a secondmate marker holding no id")
+  case $out in
+    *.fm-secondmate-home*) ;;
+    *) fail "the refusal did not name the marker: $out" ;;
+  esac
+
+  printf '../escape\n' > "$home/.fm-secondmate-home"
+  refuse_reason "$home" "a secondmate id that is not one path segment" >/dev/null
+  pass "a secondmate marker with no usable id refuses by name instead of sharing another home's root"
 }
 
 test_config_override_wins_everywhere() {
@@ -120,6 +158,18 @@ test_config_override_wins_everywhere() {
   [ "$(resolve "$secondmate")" = "$chosen" ] \
     || fail "the operator override did not beat the secondmate's own root"
   pass "config/treehouse-root wins over both the legacy default and a secondmate's own root"
+}
+
+# An operator's editor, or a `printf '%s'`, leaves the file's one line without a
+# trailing newline. That is a valid root, not an empty file.
+test_override_without_a_trailing_newline_is_honoured() {
+  local home chosen
+  home=$(make_home primary-no-newline)
+  chosen="$TMP_ROOT/no-newline-root"
+  printf '%s' "$chosen" > "$home/config/treehouse-root"
+  [ "$(resolve "$home")" = "$chosen" ] \
+    || fail "an override holding one absolute path with no trailing newline was not honoured"
+  pass "config/treehouse-root without a trailing newline is honoured rather than reported as empty"
 }
 
 # A malformed override must refuse, not fall back: falling back would silently put
@@ -163,12 +213,22 @@ make_two_clone_world() {  # <name>
   printf '%s|%s|%s\n' "$dir" "$dir/homeA/adx-worker" "$dir/homeB/adx-worker"
 }
 
+# An empty <root> means "force nothing", the shape a home with no root of its own
+# produces; treehouse then resolves the root itself, against the fake $HOME.
 lease() {  # <root> <clone> <holder> -> the leased worktree path
-  ( cd "$2" && TREEHOUSE_ROOT="$1" treehouse get --lease --lease-holder "$3" 2>/dev/null )
+  if [ -n "$1" ]; then
+    ( cd "$2" && HOME="$FAKE_HOME" TREEHOUSE_ROOT="$1" treehouse get --lease --lease-holder "$3" 2>/dev/null )
+  else
+    ( cd "$2" && HOME="$FAKE_HOME" env -u TREEHOUSE_ROOT treehouse get --lease --lease-holder "$3" 2>/dev/null )
+  fi
 }
 
 unlease() {  # <root> <clone> <worktree>
-  ( cd "$2" && TREEHOUSE_ROOT="$1" treehouse return --force "$3" >/dev/null 2>&1 )
+  if [ -n "$1" ]; then
+    ( cd "$2" && HOME="$FAKE_HOME" TREEHOUSE_ROOT="$1" treehouse return --force "$3" >/dev/null 2>&1 )
+  else
+    ( cd "$2" && HOME="$FAKE_HOME" env -u TREEHOUSE_ROOT treehouse return --force "$3" >/dev/null 2>&1 )
+  fi
 }
 
 common_dir_of() {  # <dir>
@@ -228,8 +288,9 @@ EOF
   can_spawn_into "$slot_b_shared" "$cloneB" \
     && fail "the reported bug did not reproduce: home B was allowed to spawn into home A's worktree"
 
-  # The fix: each home resolves its own root, so the two pools are different
-  # directories even though the remote hash they are keyed by is identical.
+  # The fix: the two homes no longer resolve to one root, so the pools are
+  # different directories even though the remote hash they are keyed by is
+  # identical. Home A keeps treehouse's own resolution and home B gets its own.
   root_a=$(resolve "$(make_home repro-primary)")
   root_b=$(resolve "$(make_home repro-mate secondmate)")
   [ "$root_a" != "$root_b" ] || fail "the two homes resolved to one root"
@@ -356,22 +417,81 @@ EOF
 $mate_rec
 EOF
 
-  [ "$primary_recorded" = "$primary_expected" ] \
-    || fail "a primary spawn recorded root '$primary_recorded', not its home's '$primary_expected'"
+  # The home with no root of its own: nothing recorded and nothing forced on the
+  # pane, so treehouse's own resolution stands exactly as it did before.
+  [ -z "$primary_expected" ] \
+    || fail "fixture is vacuous: the rootless home resolved to a root of its own '$primary_expected'"
+  [ -z "$primary_recorded" ] \
+    || fail "a spawn from a home with no root of its own recorded treehouse_root='$primary_recorded'"
+  [ "$(leased_root_of_pane "$primary_home")" = UNSET ] \
+    || fail "a spawn from a home with no root of its own still forced TREEHOUSE_ROOT on its pane"
+
+  [ -n "$mate_expected" ] \
+    || fail "fixture is vacuous: the secondmate home resolved to no root of its own"
   [ "$mate_recorded" = "$mate_expected" ] \
     || fail "a secondmate spawn recorded root '$mate_recorded', not its home's '$mate_expected'"
-  [ "$mate_recorded" != "$primary_recorded" ] \
-    || fail "a secondmate home's spawn recorded the same pool root as a primary's"
-
-  [ "$(leased_root_of_pane "$primary_home")" = "$primary_expected" ] \
-    || fail "the primary's pane was asked to acquire a worktree from a different root than its record names"
   [ "$(leased_root_of_pane "$mate_home")" = "$mate_expected" ] \
     || fail "the secondmate's pane was asked to acquire a worktree from a different root than its record names"
   # A home's first spawn under its own root meets a root directory that does not
   # exist yet; the spawn must not depend on the pool tool to create it.
   [ -d "$mate_expected" ] \
     || fail "the first spawn in a secondmate home left its pool root '$mate_expected' missing"
-  pass "a spawn acquires from, and records, its own home's pool root; two homes get two roots"
+  pass "a spawn records and acquires from its own home's pool root, and forces nothing when the home has none"
+}
+
+# leased_by_pane <home> <project> <holder>: run the pane's own acquisition line
+# against the REAL treehouse, adding only the non-interactive lease flags a bare
+# `treehouse get` would otherwise open a subshell for. Echoes the worktree handed
+# over, so where that line lands is the pool tool's own verdict, not a stub's.
+leased_by_pane() {  # <home> <project> <holder>
+  local home=$1 project=$2 holder=$3 shim line real
+  real=$(command -v treehouse)
+  shim="$home/pane-real"
+  mkdir -p "$shim"
+  cat > "$shim/treehouse" <<'SH'
+#!/usr/bin/env bash
+exec "$FM_TEST_REAL_TREEHOUSE" "$@" --lease --lease-holder "$FM_TEST_LEASE_HOLDER"
+SH
+  chmod +x "$shim/treehouse"
+  line=$(grep -F 'treehouse get' "$home/pane.log" | head -1)
+  [ -n "$line" ] || fail "the spawn never asked its pane to acquire a worktree"
+  ( cd "$project" \
+    && FM_TEST_REAL_TREEHOUSE="$real" FM_TEST_LEASE_HOLDER="$holder" \
+       HOME="$home/user-home" PATH="$shim:$PATH" bash -c "$line" 2>/dev/null )
+}
+
+# A project that configures its own pool root keeps it. The spawning home has no
+# root of its own, so the spawn forces nothing and treehouse's own precedence -
+# which reads the project's treehouse.toml - decides where the slot comes from.
+# Needs the real pool tool, because that precedence is treehouse's own behavior.
+test_a_projects_own_root_survives_a_home_without_one() {
+  local rec home project pool fakebin out lab leased
+  rec=$(make_spawn_case project-root th-root-project)
+  IFS='|' read -r home project pool fakebin <<EOF
+$rec
+EOF
+  lab="$TMP_ROOT/spawn-project-root/lab-pool"
+  mkdir -p "$lab"
+  printf 'max_trees = 4\nroot = "%s"\n' "$lab" > "$project/treehouse.toml"
+  git -C "$project" add treehouse.toml
+  git -C "$project" commit -qm "the project configures its own pool root"
+
+  out=$(FM_FAKE_PANE_LOG="$home/pane.log" \
+    fm_test_run_spawn "$home" "$pool" "$fakebin" th-root-project "$project" --scout) \
+    || fail "spawn failed: $out"
+
+  leased=$(leased_by_pane "$home" "$project" fm-project-root)
+  [ -n "$leased" ] || fail "the pane's own acquisition line leased no worktree"
+  case $leased in
+    "$lab"/*) ;;
+    *) fail "the pane leased '$leased', outside the pool root the project configured at '$lab'" ;;
+  esac
+  # treehouse keeps its own update-check file under $HOME whatever the root is,
+  # so what must be absent there is a POOL: pools are directories, that is a file.
+  [ -z "$(find "$home/user-home/.treehouse" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)" ] \
+    || fail "the spawn built a worktree pool under \$HOME instead of the project's own configured pool"
+  unlease "" "$project" "$leased"
+  pass "a project's own treehouse.toml root still wins when the spawning home has none"
 }
 
 # --- teardown returns to the recorded root ----------------------------------
@@ -459,14 +579,18 @@ test_task_returns_to_its_recorded_root() {
   pass "a task returns its worktree to the pool root its record names"
 }
 
-test_primary_home_keeps_the_legacy_default
+test_a_home_without_its_own_root_is_left_alone
 test_secondmate_home_gets_its_own_root
 test_two_secondmate_homes_get_two_roots
+test_a_recycled_home_slot_does_not_inherit_the_previous_root
+test_a_marker_without_a_usable_id_refuses
 test_config_override_wins_everywhere
+test_override_without_a_trailing_newline_is_honoured
 test_malformed_override_refuses_rather_than_falling_back
 test_a_worktree_of_another_clone_is_refused
 if command -v treehouse >/dev/null 2>&1; then
   test_two_homes_two_clones_do_not_share_a_pool
+  test_a_projects_own_root_survives_a_home_without_one
 else
   echo "skip: treehouse not found; the two-clone pool regression needs the real pool tool"
 fi

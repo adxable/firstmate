@@ -3148,7 +3148,8 @@ rovo_endpoint_cleanup() {
 
 # The pool root this home leases from, recorded below as treehouse_root= so
 # teardown never re-derives it. Empty on the relaunch, secondmate and orca paths,
-# which acquire no pool slot. bin/fm-treehouse-root.sh owns the resolution.
+# which acquire no pool slot, and empty for a home that needs no root of its own.
+# bin/fm-treehouse-root.sh owns the resolution.
 SPAWN_TREEHOUSE_ROOT=
 
 if [ "$RELAUNCH" -eq 1 ]; then
@@ -3177,14 +3178,22 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     echo "error: could not resolve this home's treehouse pool root; refusing to launch $ID into a pool that may belong to another home; inspect window $T" >&2
     exit 1
   }
-  # A home's first spawn under its own root meets a directory that does not exist
-  # yet. Current treehouse creates it, but the pinned CI version's behavior there
-  # is unverified, so make it exist here rather than depend on the pool tool.
-  mkdir -p "$SPAWN_TREEHOUSE_ROOT" 2>/dev/null || {
-    echo "error: could not create this home's treehouse pool root '$SPAWN_TREEHOUSE_ROOT'; refusing to launch $ID; inspect window $T" >&2
-    exit 1
-  }
-  spawn_send_text_line "$WT_TARGET" "TREEHOUSE_ROOT=$(shell_quote "$SPAWN_TREEHOUSE_ROOT") treehouse get"
+  if [ -n "$SPAWN_TREEHOUSE_ROOT" ]; then
+    # A home's first spawn under its own root meets a directory that does not
+    # exist yet. Current treehouse creates it, but the pinned CI version's
+    # behavior there is unverified, so make it exist here rather than depend on
+    # the pool tool.
+    mkdir -p "$SPAWN_TREEHOUSE_ROOT" 2>/dev/null || {
+      echo "error: could not create this home's treehouse pool root '$SPAWN_TREEHOUSE_ROOT'; refusing to launch $ID; inspect window $T" >&2
+      exit 1
+    }
+    spawn_send_text_line "$WT_TARGET" "TREEHOUSE_ROOT=$(shell_quote "$SPAWN_TREEHOUSE_ROOT") treehouse get"
+  else
+    # This home needs no root of its own, so nothing is forced on the pane and
+    # treehouse's own resolution stands, including a root the project configures
+    # in its own treehouse.toml.
+    spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  fi
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
   # Target the stable window id, not the name: if the name is ever lost (e.g. an
@@ -3747,11 +3756,12 @@ preserve_relaunch_meta() {
   echo "window=$META_WINDOW"
   echo "endpoint_task_id=$ID"
   echo "worktree=$WT"
-  # Absent on the paths that acquire no pool slot, and absent on every task
-  # spawned before this record existed; teardown reads that absence as
-  # treehouse's own default root. Deliberately not in preserve_relaunch_meta's
-  # owned set: a relaunch reuses the recorded worktree, so the root that
-  # worktree actually came from must survive rather than be re-resolved.
+  # Absent on the paths that acquire no pool slot, on a home that needs no root
+  # of its own, and on every task spawned before this record existed; teardown
+  # reads that absence as treehouse's own root resolution. Deliberately not in
+  # preserve_relaunch_meta's owned set: a relaunch reuses the recorded worktree,
+  # so the root that worktree actually came from must survive rather than be
+  # re-resolved.
   [ -z "$SPAWN_TREEHOUSE_ROOT" ] || echo "treehouse_root=$SPAWN_TREEHOUSE_ROOT"
   echo "project=$PROJ_ABS"
   echo "harness=$HARNESS"

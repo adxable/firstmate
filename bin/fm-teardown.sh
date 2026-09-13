@@ -907,9 +907,10 @@ BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 WT=$(fm_meta_get "$META" worktree)
 PROJ=$(fm_meta_get "$META" project)
-# The pool root this task's slot was leased from. Absent for a task spawned
-# before fm-spawn recorded it, and an absent value keeps treehouse's own root
-# resolution, so such a task returns exactly where it always did.
+# The pool root this task's slot was leased from. Absent for a task spawned in a
+# home that needs no root of its own and for one spawned before fm-spawn recorded
+# it; an absent value keeps treehouse's own root resolution, so such a task
+# returns exactly where it always did.
 TREEHOUSE_SLOT_ROOT=$(fm_meta_get "$META" treehouse_root)
 T_ORCA=
 [ "$BACKEND" != orca ] || T_ORCA=$T
@@ -1580,9 +1581,9 @@ treehouse_return_attempt() {  # <dir> <cd-dir> <root>
 # stale git index.lock left by a killed crew process. See the script header.
 #
 # <root> is the pool root the slot was leased from, recorded by fm-spawn as
-# treehouse_root=. It is empty for a task spawned before that record existed and
-# for the secondmate-home lease the primary owns, and both then keep returning
-# exactly where they do today.
+# treehouse_root=. It is empty for a task with no such record and for the
+# secondmate-home lease the primary owns, and both then keep returning exactly
+# where they do today.
 teardown_treehouse_return() {
   local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} root=${5:-}
   local out lock attempt=0 max_retries lock_desc
