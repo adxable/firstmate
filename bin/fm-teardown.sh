@@ -119,6 +119,10 @@
 # releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
+# Every `treehouse return` goes through teardown_treehouse_return, which returns a
+# task's slot to the pool root recorded as treehouse_root= in its task record and
+# falls back to treehouse's own resolution when a task predates that record; a
+# secondmate home's own lease is the primary's and keeps that default resolution.
 # Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
@@ -903,6 +907,10 @@ BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 WT=$(fm_meta_get "$META" worktree)
 PROJ=$(fm_meta_get "$META" project)
+# The pool root this task's slot was leased from. Absent for a task spawned
+# before fm-spawn recorded it, and an absent value keeps treehouse's own root
+# resolution, so such a task returns exactly where it always did.
+TREEHOUSE_SLOT_ROOT=$(fm_meta_get "$META" treehouse_root)
 T_ORCA=
 [ "$BACKEND" != orca ] || T_ORCA=$T
 if [ "${FM_TEARDOWN_GUARD_DONE:-0}" != 1 ]; then
@@ -1558,15 +1566,30 @@ cleanup_stale_lock_for_safety_check() {
   return "$TEARDOWN_TREEHOUSE_LOCK_REFUSED"
 }
 
+# One `treehouse return --force` attempt, printing its combined output. An empty
+# <root> leaves treehouse's own root resolution untouched.
+treehouse_return_attempt() {  # <dir> <cd-dir> <root>
+  if [ -n "$3" ]; then
+    ( cd "$2" && TREEHOUSE_ROOT="$3" treehouse return --force "$1" ) 2>&1
+  else
+    ( cd "$2" && treehouse return --force "$1" ) 2>&1
+  fi
+}
+
 # Return a worktree/home via `treehouse return --force`, tolerating a transient or
 # stale git index.lock left by a killed crew process. See the script header.
+#
+# <root> is the pool root the slot was leased from, recorded by fm-spawn as
+# treehouse_root=. It is empty for a task spawned before that record existed and
+# for the secondmate-home lease the primary owns, and both then keep returning
+# exactly where they do today.
 teardown_treehouse_return() {
-  local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-}
+  local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} root=${5:-}
   local out lock attempt=0 max_retries lock_desc
 
   # Capture stdout+stderr so non-lock failures stay visible and lock failures can
   # be matched by signature even when the lock file is already gone mid-check.
-  if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
+  if out=$(treehouse_return_attempt "$dir" "$cd_dir" "$root"); then
     [ -n "$out" ] && printf '%s\n' "$out"
     return 0
   fi
@@ -1591,7 +1614,7 @@ teardown_treehouse_return() {
     echo "teardown: $label return failed with transient git lock ($lock_desc); waiting ${TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS}s and retrying ($attempt/${max_retries})" >&2
     sleep "$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS"
 
-    if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
+    if out=$(treehouse_return_attempt "$dir" "$cd_dir" "$root"); then
       [ -n "$out" ] && printf '%s\n' "$out"
       echo "teardown: $label return succeeded on retry; lock cleared on its own" >&2
       return 0
@@ -1618,7 +1641,7 @@ teardown_treehouse_return() {
           return 1
         fi
       fi
-      if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
+      if out=$(treehouse_return_attempt "$dir" "$cd_dir" "$root"); then
         [ -n "$out" ] && printf '%s\n' "$out"
         echo "teardown: $label return succeeded after stale-lock cleanup" >&2
         return 0
@@ -2363,6 +2386,10 @@ remove_firstmate_home() {
       restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
       return 1
     }
+    # No root is passed on purpose. A secondmate home is a slot leased from the
+    # PRIMARY's own firstmate pool by bin/fm-home-seed.sh, which acquires it
+    # through treehouse's default resolution; naming this home's project-pool
+    # root here would look in the wrong pool and strand a live home.
     teardown_treehouse_return "$abs_home_path" "$FM_ROOT" "$label" || {
       echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
       restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
@@ -2909,7 +2936,8 @@ cleanup_firstmate_home_children() {
         "$child_wt/.opencode/plugins/fm-busy-state.js" \
         "$child_wt/.fm-grok-turnend" "$child_wt/.fm-kimi-turnend"
       if [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; then
-        if teardown_treehouse_return "$child_wt" "$child_proj" "child worktree"; then
+        if teardown_treehouse_return "$child_wt" "$child_proj" "child worktree" "" \
+             "$(meta_value "$child_meta" treehouse_root)"; then
           :
         else
           child_return_rc=$?
@@ -3225,7 +3253,8 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   if [ "$FORCE" != "--force" ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ]; then
     post_lock_cleanup_check=validate_worktree_teardown_safety
   fi
-  teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" || {
+  teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" \
+      "$TREEHOUSE_SLOT_ROOT" || {
     echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
     exit 1
   }
