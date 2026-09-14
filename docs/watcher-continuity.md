@@ -22,6 +22,42 @@ Only an exhausted failure with no verified watcher commits one last-resort notic
 The Claude turn-end guard owns that notice commit contract, the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
 While supervision is still needed and away mode remains inactive, an actionable close wakes the idle session through exit 2.
 
+## Last-resort arm at the Stop boundary
+
+Every arming path under a Claude primary is triggered by a Stop event, and the only unattended source of a Stop event is the rewake an arming path produces.
+A Stop that ends with no watcher therefore ends the chain: nothing fires again until a human sends a message.
+Three shapes reach that state, and all three were reproduced against the real scripts in an isolated home on 2026-09-14.
+The claim micro-mutex is held by a live process that is not a claimant, so the hook stands down silently on every firing and never writes a ledger entry at all.
+The current claim reads open while its owner is hung, so both Stop participants defer to a promise nothing is keeping.
+The hook's exit-2 rewake is never delivered, which upstream issue 4209 reports independently and which leaves the same durable state a healthy running turn leaves.
+
+`bin/fm-turnend-guard.sh --claude` therefore owns a last-resort arm, implemented by `bin/fm-guard-last-resort-arm.sh`.
+It runs only after the guard has already concluded that nothing owns recovery for this Stop event, so it never competes with the Stop-owned auto-arm and is a backstop rather than a second arming owner.
+It launches this home's own `bin/fm-watch.sh`, detached in its own process group so tearing down the synchronous hook cannot take the replacement with it, and confirms it against the same `fm_watcher_healthy` honesty gate the arm layer uses, inside the arm layer's own `FM_ARM_CONFIRM_TIMEOUT` window over the same OSTYPE default `bin/fm-watch-arm.sh` reads.
+The arm itself is never budget-limited; only the follow-up block is, so an exhausted block budget now ends the turn with a watcher running instead of ending it blind.
+That confirmation runs synchronously inside Claude's Stop hook, so it is bounded by the `timeout` that hook entry declares in `.claude/settings.json` (180 seconds), and a `FM_ARM_CONFIRM_TIMEOUT` raised near or past that ceiling is cut off by the harness rather than honoured.
+Being cut off there is not the same failure as no arm at all: the watcher is launched detached in its own process group before the confirmation wait, so the home stays watched, and what is lost is the guard's exit-2 continuation - the turn ends without handing the cycle back to the Stop-owned auto-arm.
+The only process it ever signals is the child it forked, so it can never reach a sibling home's watcher.
+
+The boundary matters as much as the arm.
+Between turns under the auto-arm model a home is legitimately unwatched while the model runs, and an aging beacon mid-turn is the healthy state, indistinguishable in durable state from the undelivered-rewake wedge.
+At a Stop a turn is by definition ending, so "supervision is needed and no watcher exists" is unambiguous there and nowhere else.
+Nothing in this path runs mid-turn, and an aging beacon is never treated as a fault on its own.
+
+An `arming` claim is a promise that a watcher is on its way, and the stuck proof bounds how long that promise is credited while nothing is beating.
+That bound is the arm layer's own confirmation window through `fm_autoarm_arming_stuck`, not the watcher beacon grace: `bin/fm-watch-arm.sh` confirms or fails a watcher inside `FM_ARM_CONFIRM_TIMEOUT`, and the hook makes at most `FM_CLAUDE_AUTOARM_ATTEMPTS` attempts, so a beaconless claim older than those attempts can honestly take - `FM_CLAUDE_AUTOARM_ATTEMPTS` times the confirm-plus-successor phases, with a 60s floor - is hung rather than slow.
+The budget is clamped to the grace, so the proof is strictly more willing to declare a claim stuck than the grace-only form it replaces and never less.
+A claim declared stuck too eagerly costs at most one extra arm the watcher singleton dedupes; the reverse mistake costs the home its supervision.
+
+This fork carries the guard's arm while upstream PR 4208 is unmerged; that PR pairs the same guard arm with keying lock-holder liveness on process start time, which cures the wedged claim mutex itself rather than its symptom.
+Reading the shared `FM_ARM_CONFIRM_TIMEOUT` here is deliberate, and adopting upstream's own `FM_CLAUDE_GUARD_ARM_CONFIRM` spelling if that PR lands is a rename rather than an oversight.
+Until it lands, a mutex wedged by a recycled pid keeps the home watched through this arm but leaves the automatic rewake unowned, and the watcher's wake waits in the durable queue for the next turn.
+
+Two residuals are named rather than claimed closed, because both require a Stop event that never arrives.
+A claim taken seconds before a hung arm is still inside its arming budget, so that Stop allows correctly and only the next one recovers; when no next Stop comes, the home stays unwatched.
+An exit-2 rewake that the harness never delivers produces no turn at all, so no later Stop boundary exists for the guard to act at; upstream issue 4209 owns delivering a wake to an idle home, and this change does not address it.
+Every shape where Stop events keep arriving is covered, which is every attended session and every home with a live lane.
+
 ## Actionable wake ordering
 
 After an actionable Pi, omp, or OpenCode child close, the adapter starts and verifies one singleton successor before it delivers the original wake.
@@ -122,12 +158,15 @@ The same suite covers ordinary same-process session replacement for `/new`, `/re
 It also covers generation-claim single-flight, stuck-claim supersession, superseded-owner silence, notice-marker refusal and retry, ownership-atomic episode reset, and the legacy upgrade shim; [`turnend-guard.md`](turnend-guard.md) owns those behavior contracts.
 `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-stop-autoarm-live-e2e.test.sh` starts with the reproduced stale-lock state, runs session start first, completes two tokenless cycles, and checks the competing-live-owner negative control.
 `tests/fm-turnend-guard.test.sh` covers the cooperative `--claude` guard, including monotonic failed-epoch progression, the integrated bounded fail-open, post-alarm continuation suppression, and positive recovery reset; [`turnend-guard.md`](turnend-guard.md#regression-coverage) lists that suite's full generation and legacy claim coverage.
+The same suite covers the last-resort arm with the real `bin/fm-watch.sh` as a real process: it brings a watcher up when nothing owns recovery, it keeps a home watched whose claim mutex is permanently wedged, and it stays out of both healthy shapes - a live identity-matched watcher, and a claim that is genuinely still arming - asserting in each that no watcher was started.
+`tests/fm-claude-stop-autoarm.test.sh` drives the arming budget and the beacon apart and asserts the verdict survives losing either signal, with the grace held at its default so a regression to grace-only crediting fails all three assertions together.
+`FM_CLAUDE_LIVE_E2E=1 tests/fm-guard-last-resort-arm-live-e2e.test.sh` proves the two harness-dependent facts no fixture can: that Claude runs the guard synchronously and delivers its exit-2 banner, and that a watcher the guard spawns inside that hook outlives Claude tearing the hook down.
 
 ## Active limits and verification
 
 The goal is continuity without a Pi, omp, or OpenCode model-memory re-arm step.
 No zero-latency guarantee is claimed because lock verification, watcher startup, and bounded retry delays remain deliberate safety work.
 OpenCode support targets persistent TUI sessions rather than headless `opencode run`.
-Claude depends on the Stop `asyncRewake` rewake, Cursor depends on its awaited stop-hook park, Grok retains native background-completion notifications, and Codex retains bounded foreground checkpoints.
+Claude depends on the Stop `asyncRewake` rewake for the automatic cycle, with the last-resort arm above as a supervision-only backstop that keeps a home watched without reclaiming the rewake, Cursor depends on its awaited stop-hook park, Grok retains native background-completion notifications, and Codex retains bounded foreground checkpoints.
 
 [`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current five-harness live evidence, the 2026-07-24 Stop-owned Claude auto-arm results, and exact opt-in commands.

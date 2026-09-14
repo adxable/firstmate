@@ -184,6 +184,8 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
+  cp "$ROOT/bin/fm-guard-last-resort-arm.sh" "$dir/bin/fm-guard-last-resort-arm.sh"
+  chmod +x "$dir/bin/fm-guard-last-resort-arm.sh"
   mkdir -p "$dir/docs"
   cp -R "$ROOT/docs/supervision-protocols" "$dir/docs/supervision-protocols"
   chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh"
@@ -285,6 +287,51 @@ record_watcher_lock() {
   printf '%s\n' "$root" > "$dir/state/.watch.lock/fm-home"
   printf '%s\n' "$bin_dir/fm-watch.sh" > "$dir/state/.watch.lock/watcher-path"
   printf '%s\n' "$identity" > "$dir/state/.watch.lock/pid-identity"
+}
+
+# A primary fixture whose bin/ carries the complete script set, so the guard's
+# last-resort arm launches this home's REAL bin/fm-watch.sh as a real process
+# instead of a stand-in that could only confirm the assumption written into it.
+make_primary_dir_with_watcher() {
+  local dir=$1
+  make_primary_dir "$dir" >/dev/null
+  cp "$ROOT"/bin/*.sh "$dir/bin/"
+  chmod +x "$dir"/bin/*.sh
+  printf 'project=fixture\nwindow=fixture\nbackend=tmux\n' > "$dir/state/task.meta"
+  printf '%s\n' "$dir"
+}
+
+# Stop ONLY the watcher this fixture home recorded in its own lock. Never a
+# pattern match: every firstmate home on this machine runs the same script.
+stop_fixture_watcher() {
+  local dir=$1 pid i=0
+  pid=$(cat "$dir/state/.watch.lock/pid" 2>/dev/null || true)
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  kill -TERM "$pid" 2>/dev/null || true
+  while [ "$i" -lt 50 ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+}
+
+# The home is watched: its own lock names a live process and the beacon is warm.
+fixture_is_watched() {
+  local dir=$1 pid beat now
+  pid=$(cat "$dir/state/.watch.lock/pid" 2>/dev/null || true)
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  [ -e "$dir/state/.last-watcher-beat" ] || return 1
+  beat=$(fm_test_mtime "$dir/state/.last-watcher-beat") || return 1
+  now=$(date +%s)
+  [ "$(( now - beat ))" -lt 60 ]
+}
+
+fm_test_mtime() {
+  if [ "$(uname)" = Darwin ]; then
+    /usr/bin/stat -f %m "$1" 2>/dev/null
+  else
+    stat -c %Y "$1" 2>/dev/null
+  fi
 }
 
 test_hook_silent_when_no_work_in_flight() {
@@ -924,6 +971,40 @@ test_tracked_claude_entries_inert_under_grok() {
   [ "$guarded" -eq 5 ] || fail "expected 5 grok-guarded tracked entries, saw $guarded"
   [ "$unguarded" -eq 1 ] || fail "expected 1 documented unguarded tracked entry, saw $unguarded"
   pass "tracked .claude/settings.json entries: $guarded inert under grok, the documented subagent exception still armed, all live under Claude"
+}
+
+# The guard's last-resort arm confirms its watcher SYNCHRONOUSLY inside Claude's
+# Stop hook, so the hook entry's own declared timeout is the real ceiling on that
+# wait. Claude Code's undeclared default is 60s, which the documented slow-host
+# worst case already approaches and which an operator raising the shared
+# FM_ARM_CONFIRM_TIMEOUT crosses outright; past the ceiling Claude kills the
+# guard, the home stays watched (the watcher is detached before the wait) but the
+# exit-2 continuation that hands the cycle back to the Stop-owned auto-arm is
+# lost. Asserted against the parsed hook entry, never a substring of the file.
+test_guard_stop_entry_declares_a_timeout_covering_its_synchronous_arm() {
+  local settings declared worst
+  command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
+  settings="$ROOT/.claude/settings.json"
+  [ -f "$settings" ] || fail "tracked .claude/settings.json is missing"
+
+  declared=$(jq -r '
+    [.hooks.Stop[].hooks[] | select(.command | test("fm-turnend-guard\\.sh"))]
+    | if length == 1 then .[0].timeout else "multiple" end
+    | if type == "number" then tostring else "unset" end' "$settings")
+  [ "$declared" != multiple ] \
+    || fail "expected exactly one tracked Stop entry running the turn-end guard"
+  [ "$declared" != unset ] \
+    || fail "the guard's Stop entry declares no numeric timeout, so Claude's 60s default bounds its synchronous last-resort arm"
+
+  # Documented slow-host worst case: the Git Bash/MSYS FM_ARM_CONFIRM_TIMEOUT
+  # default (30) plus the arm's one rounding second, plus the guard's own
+  # FM_CLAUDE_AUTOARM_SYNC_WAIT_MS wait (800ms, rounded up).
+  worst=$(( 30 + 1 + 1 ))
+  [ "$declared" -gt "$worst" ] \
+    || fail "declared guard timeout ${declared}s does not cover the ${worst}s documented slow-host worst case"
+  [ "$declared" -ge $(( worst * 2 )) ] \
+    || fail "declared guard timeout ${declared}s leaves no headroom to raise FM_ARM_CONFIRM_TIMEOUT above its slow-host default"
+  pass "the guard's tracked Stop entry declares a ${declared}s timeout, covering its synchronous last-resort arm with headroom"
 }
 
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root() {
@@ -1865,6 +1946,101 @@ make_away_home_between_cycles() {  # <dir-path>
   printf '%s\n' "$dir"
 }
 
+# --- last-resort arm ----------------------------------------------------------
+# Reproduced 2026-09-14 in an isolated home: at a Stop where nothing owned
+# recovery, the guard blocked and blocked and never brought a watcher up, because
+# a forced continuation was its only lever. Twelve seconds after the block there
+# was still no watcher. When the block budget or the harness's own consecutive-
+# block override runs out, that turn ends with nothing watching, and the only
+# thing that fires either Stop participant again is another turn end - which an
+# idle home never produces. The guard must establish supervision itself.
+test_hook_claude_mode_last_resort_arm_restores_supervision() {
+  local dir out status
+  dir=$(make_primary_dir_with_watcher "$TMP_ROOT/hook-claude-last-resort")
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
+  fixture_is_watched "$dir" \
+    || { stop_fixture_watcher "$dir"; fail "the guard left the home unwatched: $out"; }
+  stop_fixture_watcher "$dir"
+  expect_code 2 "$status" "a guard-restored stop still spends one bounded continuation"
+  assert_contains "$out" "SUPERVISION RESTORED BY THE TURN-END GUARD" \
+    "a restored stop must say so instead of claiming the turn ends blind"
+  assert_not_contains "$out" "TURN WOULD END BLIND" \
+    "the blind-turn banner is false once a watcher is running"
+  pass "fm-turnend-guard --claude: the last-resort arm brings a watcher up when nothing owns recovery"
+}
+
+# The claim micro-mutex is reclaimed only from a DEAD pid, so a recycled pid worn
+# by any live process holds it forever: the Stop auto-arm then stands down
+# silently on every firing and never writes a ledger entry at all. Before the
+# last-resort arm this produced five consecutive blocks and zero watchers, which
+# the harness's 8-block override ends blind. Upstream PR 4208 fixes the mutex
+# itself by keying holder liveness on process start time; until that lands here,
+# the home must at least never stop watching.
+test_hook_claude_mode_last_resort_arm_survives_a_wedged_claim_mutex() {
+  local dir out status pid owner
+  dir=$(make_primary_dir_with_watcher "$TMP_ROOT/hook-claude-wedged-mutex")
+  sleep 60 &
+  pid=$!
+  owner="$dir/state/.claude-autoarm.lock.owner.wedged"
+  mkdir -p "$owner"
+  printf '%s\n' "$pid" > "$owner/pid"
+  ln -s "$owner" "$dir/state/.claude-autoarm.lock"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  fixture_is_watched "$dir" \
+    || { stop_fixture_watcher "$dir"; fail "a wedged claim mutex still left the home unwatched: $out"; }
+  stop_fixture_watcher "$dir"
+  expect_code 2 "$status" "a guard-restored stop still spends one bounded continuation"
+  assert_contains "$out" "SUPERVISION RESTORED BY THE TURN-END GUARD" \
+    "the guard must report restoring supervision over a wedged claim mutex"
+  pass "fm-turnend-guard --claude: a permanently wedged claim mutex no longer leaves the home unwatched"
+}
+
+# The regression that matters most: the last-resort arm must never fire on a
+# home that is fine. Both healthy shapes are driven here, and each asserts that
+# NO new watcher was started - a fix that arms whenever the beacon ages would
+# pass the wedge cases above and still be wrong.
+test_hook_claude_mode_last_resort_arm_never_fires_on_a_healthy_home() {
+  local dir out status pid identity watcher_pid after
+  dir=$(make_primary_dir_with_watcher "$TMP_ROOT/hook-claude-last-resort-healthy")
+
+  # (a) a live identity-matched watcher already holds this home.
+  sleep 60 &
+  watcher_pid=$!
+  identity=$(fm_test_pid_identity "$watcher_pid") || fail "could not compute a watcher identity"
+  record_watcher_lock "$dir" "$watcher_pid" "$identity"
+  : > "$dir/state/.last-watcher-beat"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
+  after=$(cat "$dir/state/.watch.lock/pid" 2>/dev/null || true)
+  kill "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+  expect_code 0 "$status" "a healthy watcher must still allow the stop"
+  [ "$after" = "$watcher_pid" ] \
+    || fail "the guard replaced a healthy watcher (lock now $after, was $watcher_pid)"
+  assert_not_contains "$out" "SUPERVISION RESTORED BY THE TURN-END GUARD" \
+    "the last-resort arm must not run while a healthy watcher holds the home"
+
+  # (b) the Stop auto-arm that fired on THIS event is genuinely still arming:
+  # a live identity-matched claim, seconds old, with no beacon yet. This is the
+  # normal shape of every healthy Stop and must not be armed over.
+  rm -rf "$dir/state/.watch.lock" "$dir/state/.last-watcher-beat"
+  sleep 60 &
+  pid=$!
+  identity=$(fm_test_pid_identity "$pid") || fail "could not compute a claim pid-identity"
+  printf 'epoch=7 owner_pid=%s outcome=arming updated_at=%s\n%s\n' "$pid" "$(date +%s)" "$identity" \
+    > "$dir/state/.claude-autoarm-epoch"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "a claim that is genuinely still arming must allow the stop"
+  assert_absent "$dir/state/.watch.lock" \
+    "the last-resort arm started a watcher underneath an arming Stop auto-arm"
+  assert_not_contains "$out" "SUPERVISION RESTORED BY THE TURN-END GUARD" \
+    "the last-resort arm must not run while the auto-arm is genuinely arming"
+  pass "fm-turnend-guard --claude: the last-resort arm stays out of a healthy home and a live arming claim"
+}
+
 test_hook_away_daemon_allows_between_watcher_cycles() {
   local dir pid out status
   dir=$(make_away_home_between_cycles "$TMP_ROOT/hook-afk-daemon-live")
@@ -2116,6 +2292,7 @@ test_grok_adapter_snake_case_native_and_camel_precedence
 test_grok_adapter_invalid_inputs_start_neither_path
 test_grok_adapter_missing_jq_and_no_supervision_allow
 test_tracked_claude_entries_inert_under_grok
+test_guard_stop_entry_declares_a_timeout_covering_its_synchronous_arm
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root
 test_codex_hook_ignores_nested_git_root_guard
 test_opencode_plugin_anchors_guard_to_worktree
@@ -2145,6 +2322,9 @@ test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open
 test_hook_claude_mode_allow_resets_budget
 test_hook_claude_mode_waits_for_late_claim
 test_hook_claude_mode_secondmate_reblocks_like_primary
+test_hook_claude_mode_last_resort_arm_restores_supervision
+test_hook_claude_mode_last_resort_arm_survives_a_wedged_claim_mutex
+test_hook_claude_mode_last_resort_arm_never_fires_on_a_healthy_home
 test_hook_away_daemon_allows_between_watcher_cycles
 test_hook_away_daemon_allows_over_dead_watcher_lock
 test_hook_away_mode_blocks_without_any_supervisor

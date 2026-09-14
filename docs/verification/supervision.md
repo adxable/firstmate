@@ -469,6 +469,29 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.
 
+### Claude turn-end guard last-resort arm, 2026-09-14
+
+The guard's last-resort arm exists for the Stop events at which the Stop-owned auto-arm establishes nothing, so the evidence has to come from a real Claude Stop boundary: a fixture cannot show that Claude runs the guard synchronously and delivers its exit-2 banner, nor that a watcher spawned inside that hook outlives Claude tearing the hook down.
+The home, project, and watcher are isolated; the only process the guard signals is the child it forked.
+
+```sh
+claude --version
+FM_CLAUDE_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-guard-last-resort-arm-live-e2e.test.sh
+```
+
+```text
+2.1.247 (Claude Code)
+FM_TEST_BEGIN 2026-09-14T07:28:48Z tests/fm-guard-last-resort-arm-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+ok - Claude 2.1.247 (Claude Code) live E2E: the turn-end guard restored supervision over a wedged auto-arm claim mutex, and its watcher outlived the session (beacon 2s)
+FM_TEST_END 2026-09-14T07:29:07Z tests/fm-guard-last-resort-arm-live-e2e.test.sh exit=0 duration_ms=18672 gate_skip=false
+```
+
+Observed guarantee: with the auto-arm's claim mutex held by a live process so the hook could never claim, the synchronous Stop guard launched this project's real `bin/fm-watch.sh`, its banner reached the model, no `TURN WOULD END BLIND` banner was emitted, and the watcher was still alive with a 2-second-old beacon after the session had exited.
+Against the pre-fix guard the same command reports `not ok - the synchronous guard never reported restoring supervision`.
+This command refreshes the record; rerun it after every Claude upgrade.
+
+Other primary harnesses are not applicable: the last-resort arm is reached only from `--claude` mode, and each of the other harnesses owns its own continuity path ([`watcher-continuity.md`](../watcher-continuity.md#ownership)).
+
 Pi same-process session-transition ownership was verified on 2026-09-01 against the tracked extension with provider-free public lifecycle events, retained and fresh extension-module rebinds, and real arm children:
 
 ```sh
