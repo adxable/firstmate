@@ -1,0 +1,33 @@
+
+========== S8  reclaiming a retired second mate's pool, the way the docs say ==========
+  -- the ordinary retirement: fm-teardown returned the task's lease first --
+  pool slot under the home's own root: /var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-housekeeping.gTqTEi/user-home/.treehouse-homes/mate-returned/.treehouse/adx-worker-1d93c4/1/adx-worker
+  its task is torn down first, so teardown returns the lease
+  the home is retired: its directory and the clone its worktrees link to are gone
+  docs recipe, dry run:
+      🌳 Dry run: would prune 1 stale/orphaned worktree across 1 pool and reclaim 394 B.
+      1     394 B  /var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-housekeeping.gTqTEi/user-home/.treehouse-homes/mate-returned/.treehouse/adx-worker-1d93c4/1/adx-worker  content could not be verified
+      🌳 Re-run with --all --prune-orphans --yes to delete these worktrees.
+  docs recipe, with --yes:
+      🌳 Pruned 1 stale/orphaned worktree across 1 pool and freed 394 B.
+      1     394 B  /var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-housekeeping.gTqTEi/user-home/.treehouse-homes/mate-returned/.treehouse/adx-worker-1d93c4/1/adx-worker  content could not be verified
+  worktree still on disk afterwards: no
+  
+  -- the leftover: a slot still leased when the home went away --
+  pool slot under the home's own root: /var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-housekeeping.gTqTEi/user-home/.treehouse-homes/mate-leased/.treehouse/adx-worker-1d93c4/1/adx-worker
+  its task is NOT torn down, so the slot stays leased
+  the home is retired: its directory and the clone its worktrees link to are gone
+  docs recipe, dry run:
+      🌳 No stale worktrees to prune across 1 pool.
+  docs recipe, with --yes:
+      🌳 No stale worktrees pruned across 1 pool.
+  worktree still on disk afterwards: YES
+
+========== S9  the pinned installer the required CI lane uses ==========
+    fm-install-treehouse.sh: downloading treehouse-v2.3.0-darwin-arm64.tar.gz from https://github.com/kunchenguid/treehouse/releases/download/v2.3.0/treehouse-v2.3.0-darwin-arm64.tar.gz
+    fm-install-treehouse.sh: installed treehouse v2.3.0 to <tmp>/pinned-bin/treehouse
+    v2.3.0
+  installed: v2.3.0
+  the pinned build advertises --root, so the capability probe says supported
+
+driver finished

@@ -1,0 +1,20 @@
+FM_TEST_BEGIN 2026-09-14T06:16:11Z tests/fm-treehouse-root.test.sh family=unclassified expected_gate_skip=none
+ok - a home with no root of its own resolves to nothing, so no root is forced anywhere
+ok - a marker-bearing secondmate home resolves to its own stable root under $HOME
+ok - two secondmate homes leased from one pool are kept apart by their registered ids
+ok - two homes occupying one recycled slot path in turn resolve to two different roots
+ok - a secondmate id that cannot be one path segment refuses instead of naming another directory
+ok - a marker the shared predicate rejects leaves the home on treehouse's own resolution
+ok - a worktree belonging to another clone of the same repository is refused, whichever pool handed it over
+ok - two homes with their own clone of one repository get two pool directories, and the second can spawn
+ok - a project's own treehouse.toml root still wins when the spawning home has none
+ok - a spawn records and acquires from its own home's pool root, and forces nothing when the home has none
+ok - the root-support probe answers from the pool tool's own help, not from its version
+ok - a home with its own pool root refuses a tool that ignores it, naming cause and fix, and records no root
+ok - a home that sends no root spawns normally whatever the pool tool supports
+ok - a task spawned before the per-home root was recorded still returns against treehouse's own default
+ok - a task returns its worktree to the pool root its record names
+FM_TEST_END 2026-09-14T06:16:45Z tests/fm-treehouse-root.test.sh exit=0 duration_ms=34156 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=34247
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=34156 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-treehouse-root.test.sh duration_ms=34156

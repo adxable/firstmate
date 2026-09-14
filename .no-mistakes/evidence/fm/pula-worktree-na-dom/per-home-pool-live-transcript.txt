@@ -1,0 +1,89 @@
+treehouse under test: /Users/adix/.local/bin/treehouse v2.3.0
+repo under test:      /Users/adix/.no-mistakes/worktrees/7185135c4488/01M2EA7SNS7YD8ZN9VKHT7PWHW (0e22e0a)
+
+========== S1  the reported field failure, and the same fleet after the change ==========
+  main home clone: s1/w/main-home/adx-worker
+  mate home clone: s1/w/mate-home/adx-worker
+  same remote:     s1/w/remote.git
+  
+  -- BEFORE: one shared pool root, exactly the 2026-09-13 incident --
+  main home leases and frees a slot:  s1/shared-root/.treehouse/adx-worker-e7f438/1/adx-worker
+  second mate is then handed:         s1/shared-root/.treehouse/adx-worker-e7f438/1/adx-worker
+  that slot is backed by the clone:   s1/w/main-home/adx-worker/.git
+  RESULT: fm-claude-trust.sh REFUSES the spawn; the second mate can start nothing
+  
+  -- AFTER: each home resolves its own pool root --
+  main home resolves:   ''  (empty = treehouse's own resolution, unchanged)
+  mate home resolves:   $HOME/.treehouse-homes/mate-9821
+  main home pool dir:   s1/main-root/.treehouse/adx-worker-e7f438
+  mate home pool dir:   $HOME/.treehouse-homes/mate-9821/.treehouse/adx-worker-e7f438
+  mate slot is backed by the clone:   s1/w/mate-home/adx-worker/.git
+  RESULT: the second mate CAN start work on its own clone
+
+========== S2  a second mate's spawn acquires from, and records, its own pool root ==========
+  spawn exit: 0
+  line the pane is asked to run:
+    TREEHOUSE_ROOT='<tmp>/spawn-mate-spawn/home/user-home/.treehouse-homes/mate-spawn' treehouse get
+  task record (home/state/th-mate.meta):
+    worktree=<tmp>/spawn-mate-spawn/pool
+treehouse_root=<tmp>/spawn-mate-spawn/home/user-home/.treehouse-homes/mate-spawn
+project=<tmp>/spawn-mate-spawn/project
+kind=scout
+
+========== S3  a home with no pool root of its own is untouched ==========
+  spawn exit: 0
+  line the pane is asked to run:
+    treehouse get
+  task record: no treehouse_root= line, so teardown keeps treehouse's own resolution
+
+========== S3b a project that configures its own pool root keeps it (real treehouse) ==========
+  slot came from the project's own configured root: s3/project-own-root/.treehouse/adx-worker-eb687f/1/adx-worker
+
+========== S5  a pool tool that ignores the root is refused, not silently obeyed ==========
+  spawn exit: 1 (0 would mean the worker silently joined another home's pool)
+  what the operator sees:
+    error: the installed treehouse ignores a configured pool root, so th-mate-old would silently lease from the shared pool another home owns instead of this home's own '<tmp>/spawn-mate-old/home/user-home/.treehouse-homes/mate-old'; upgrade treehouse and spawn again; inspect window firstmate:fm-th-mate-old
+  task record: none written, so no teardown can later return against a pool it never used
+
+========== S5b the same old tool does not block a home that sends no root ==========
+  spawn exit: 0 (0 expected: this home forces nothing on the pane)
+
+========== S6  session start tells a root-resolving home to upgrade the pool tool ==========
+  second mate home, pool tool WITHOUT --root:
+    MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+  second mate home, pool tool WITH --root:
+    []
+  home with no root of its own, same old pool tool WITHOUT --root:
+    []
+
+========== S7  an identity marker that cannot name this home's own directory refuses ==========
+  marker holding '.' -> resolver exit 1 (non-zero required: an empty answer would put this home back on the shared pool)
+    error: fm-treehouse-root.sh: '<tmp>/homes/mate-bad-d/.fm-secondmate-home' must hold one secondmate id usable as a directory name, got '.'
+  marker holding '..' -> resolver exit 1 (non-zero required: an empty answer would put this home back on the shared pool)
+    error: fm-treehouse-root.sh: '<tmp>/homes/mate-bad-dd/.fm-secondmate-home' must hold one secondmate id usable as a directory name, got '..'
+  a spawn from that home exits 1 rather than leasing from somewhere else:
+    error: could not resolve this home's treehouse pool root; refusing to launch th-bad into a pool that may belong to another home; inspect window firstmate:fm-th-bad
+      the pane was never asked to acquire a worktree
+
+========== S4  teardown returns the slot to the pool root the task record names (real treehouse) ==========
+  the task's worktree, leased from this home's own root: td-recorded/pool-root/.treehouse/project-6782dd/1/project
+  lease state before teardown:
+    1     leased       <tmp>/td-recorded/pool-root/.treehouse/project-6782dd/1/project  (held by fm-task-x1)
+  teardown exit: 0
+  lease state after teardown:
+    1     available    <tmp>/td-recorded/pool-root/.treehouse/project-6782dd/1/project
+  
+  -- work in flight: a task spawned BEFORE this change, whose record names no root --
+  its worktree: td-norecord/pool-root/.treehouse/project-6c0f61/1/project
+  teardown exit: 0
+  lease state after teardown:
+    1     available    <tmp>/td-norecord/pool-root/.treehouse/project-6c0f61/1/project
+  so a task already in flight when this change lands still tears down and still frees its slot
+
+driver finished
+
+========== S10 reseeding under a retired id meets that id's leftover pool, and says so ==========
+  the retired id's leftover slot: s10/leftover-root/.treehouse/adx-worker-7bf5a7/1/adx-worker
+  the clone it is linked to is gone with the retired home
+  the reseeded home's spawn is handed that slot; spawn exit: 1
+    error: treehouse get did not enter an isolated worktree within 60s (last seen '<tmp>/s10/leftover-root/.treehouse/adx-worker-7bf5a7/1/adx-worker': it is not inside a git worktree; spawning project '<tmp>/spawn-reseeded/project'); inspect window firstmate:fm-th-reseed
