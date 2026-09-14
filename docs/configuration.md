@@ -276,7 +276,8 @@ It does not govern the firstmate-repo lease a secondmate home itself occupies: t
 `bin/fm-spawn.sh` records the resolved root as `treehouse_root=` in the task record, and `bin/fm-teardown.sh` returns the slot against that recorded value; a task with no recorded value, whether it was spawned in a home with no root of its own or before the record existed, keeps treehouse's own resolution and tears down exactly as before.
 The per-home root depends on the pool tool honoring a configured root, which treehouse v2.0.1 does not and v2.3.0 does.
 A home that resolves a root of its own refuses to spawn against a tool that ignores one rather than silently leasing from the shared pool; the operator upgrades treehouse and spawns again.
-If a task somehow carries a recorded root the tool of the day ignored, its worktree really came from the shared pool and `treehouse return` answers `is not managed by treehouse`, wedging teardown: correct or remove that task's `treehouse_root=` so the return runs against the pool that actually holds the slot.
+A recorded root is verified rather than trusted: the spawn asks the tool it can see whether it honors a root, then checks that the worktree the pane's own treehouse handed back really is under that root, and refuses the spawn when it is not.
+That second check is what catches a worker shell whose PATH resolves a treehouse that ignores the root, so no task can record a root its slot never came from and no teardown can wedge returning a slot to a pool that never held it.
 
 ### What this costs
 

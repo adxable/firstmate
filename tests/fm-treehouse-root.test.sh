@@ -313,7 +313,11 @@ make_spawn_case() {  # <name> <id> [secondmate]
   case_dir="$TMP_ROOT/spawn-$name"
   home="$case_dir/home"
   project="$case_dir/project"
+  # A root-honouring treehouse hands a marker-bearing home a slot from that
+  # home's own pool root, so the stand-in slot has to sit there too; the spawn
+  # now verifies the slot it received against the root it asked for.
   pool="$case_dir/pool"
+  [ "$kind" != secondmate ] || pool="$home/user-home/.treehouse-homes/$name/pool/1"
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
   # The spawn asks the tool whether it honors a configured root before sending
   # one, so the stub has to answer that question the way a real build does.
@@ -617,18 +621,37 @@ path_without_treehouse() {
   printf '%s\n' "$out"
 }
 
+# resolves_in_path <path-list> <tool>: whether <tool> is executable in one of
+# <path-list>'s directories, without touching this shell's own PATH.
+resolves_in_path() {  # <path-list> <tool>
+  local IFS=: dir
+  for dir in $1; do
+    [ -n "$dir" ] || dir=.
+    [ ! -x "$dir/$2" ] || return 0
+  done
+  return 1
+}
+
 # spawn_against_stub <name> <id> <kind> <yes|no|absent>: one spawn whose treehouse
 # stub advertises root support, denies it, or is not installed at all.
 # Echoes "<rc>|<combined output>|<home>".
 spawn_against_stub() {  # <name> <id> <kind> <yes|no|absent>
-  local name=$1 id=$2 kind=$3 supports=$4 rec home project pool fakebin out rc runpath
+  local name=$1 id=$2 kind=$3 supports=$4 rec home project pool fakebin out rc runpath tool
   rec=$(FM_TEST_STUB_TREEHOUSE_ROOT_SUPPORT="$supports" make_spawn_case "$name" "$id" "$kind")
   IFS='|' read -r home project pool fakebin <<EOF
 $rec
 EOF
   # shellcheck disable=SC2031 # probe_says prepends its stub inside its own subshell; this reads the suite's own PATH.
   runpath=$PATH
-  [ "$supports" != absent ] || runpath=$(path_without_treehouse)
+  if [ "$supports" = absent ]; then
+    runpath=$(path_without_treehouse)
+    # Stripping whole directories takes their other binaries with them, and a
+    # spawn that dies for a missing git would read as the refusal under test.
+    for tool in git sed grep awk; do
+      resolves_in_path "$runpath" "$tool" \
+        || fail "fixture is vacuous: removing every PATH directory that holds a treehouse also removed $tool, so this case could not tell the refusal apart from a missing tool"
+    done
+  fi
   out=$(FM_FAKE_PANE_LOG="$home/pane.log" PATH="$runpath" \
     fm_test_run_spawn "$home" "$pool" "$fakebin" "$id" "$project" --scout 2>&1) && rc=0 || rc=$?
   printf '%s|%s|%s\n' "$rc" "$(printf '%s' "$out" | tr '\n' ' ')" "$home"
@@ -684,6 +707,88 @@ EOF
   pass "a home with its own pool root names an absent pool tool as missing rather than as too old"
 }
 
+# spawn_into_slot <name> <id> <kind> <own|foreign>: one spawn whose pane settles
+# in the slot its own pool root holds, or in one outside every pool root - which
+# is what a worker shell resolving a treehouse that ignores TREEHOUSE_ROOT hands
+# back, since that lease comes from the shared pool instead.
+# Echoes "<rc>|<combined output>|<home>|<resolved worktree>".
+spawn_into_slot() {  # <name> <id> <kind> <own|foreign>
+  local name=$1 id=$2 kind=$3 where=$4 rec home project pool fakebin wt out rc
+  rec=$(make_spawn_case "$name" "$id" "$kind")
+  IFS='|' read -r home project pool fakebin <<EOF
+$rec
+EOF
+  wt=$pool
+  if [ "$where" = foreign ]; then
+    wt="$TMP_ROOT/spawn-$name/outside-every-pool-root"
+    git -C "$project" worktree add --quiet --detach "$wt" HEAD
+  fi
+  out=$(FM_FAKE_PANE_LOG="$home/pane.log" \
+    fm_test_run_spawn "$home" "$wt" "$fakebin" "$id" "$project" --scout 2>&1) && rc=0 || rc=$?
+  printf '%s|%s|%s|%s\n' "$rc" "$(printf '%s' "$out" | tr '\n' ' ')" "$home" "$(cd "$wt" && pwd -P)"
+}
+
+# The capability probe answers for fm-spawn's own process, and the pane runs its
+# own treehouse off its own PATH. When those diverge the pane leases from the
+# shared pool another home owns, and that slot is a real isolated worktree, so
+# every other guard accepts it: the root is verified against the slot that came
+# back rather than recorded from intent.
+test_a_root_resolving_home_refuses_a_slot_outside_its_root() {
+  local rec rc out home wt root
+  rec=$(spawn_into_slot mate-foreign-slot th-root-foreign secondmate foreign)
+  IFS='|' read -r rc out home wt <<EOF
+$rec
+EOF
+  [ "$rc" -ne 0 ] \
+    || fail "a secondmate spawn accepted a worktree from outside its own pool root"
+  root=$(HOME="$home/user-home" FM_HOME="$home" "$RESOLVE")
+  case $out in
+    *"$wt"*) ;;
+    *) fail "the refusal did not name the worktree that came back: $out" ;;
+  esac
+  case $out in
+    *"$root"*) ;;
+    *) fail "the refusal did not name the pool root that was asked for: $out" ;;
+  esac
+  case $out in
+    *PATH*) ;;
+    *) fail "the refusal did not name the worker shell's PATH as the fix: $out" ;;
+  esac
+  [ ! -f "$home/state/th-root-foreign.meta" ] \
+    || ! grep -q '^treehouse_root=' "$home/state/th-root-foreign.meta" \
+    || fail "the refused spawn still recorded a treehouse_root= its slot never came from"
+  pass "a home with its own pool root refuses a slot from outside it, naming both paths and the fix"
+}
+
+test_a_root_resolving_home_accepts_a_slot_from_its_own_root() {
+  local rec rc out home wt recorded
+  rec=$(spawn_into_slot mate-own-slot th-root-own secondmate own)
+  IFS='|' read -r rc out home wt <<EOF
+$rec
+EOF
+  [ "$rc" -eq 0 ] || fail "a slot from the home's own pool root was refused: $out"
+  recorded=$(sed -n 's/^treehouse_root=//p' "$home/state/th-root-own.meta" | head -1)
+  [ "$recorded" = "$(HOME="$home/user-home" FM_HOME="$home" "$RESOLVE")" ] \
+    || fail "the accepted spawn recorded root '$recorded', not its home's own"
+  pass "a home with its own pool root spawns normally into a slot that root holds"
+}
+
+# A home that sends no root has nothing to verify against, so wherever its pane
+# lands is treehouse's own business exactly as it was before.
+test_a_home_without_its_own_root_accepts_any_slot() {
+  local rec rc out home wt
+  rec=$(spawn_into_slot primary-foreign-slot th-root-foreign-primary primary foreign)
+  IFS='|' read -r rc out home wt <<EOF
+$rec
+EOF
+  [ "$rc" -eq 0 ] \
+    || fail "a home with no root of its own was refused over the worktree it received: $out"
+  [ ! -f "$home/state/th-root-foreign-primary.meta" ] \
+    || ! grep -q '^treehouse_root=' "$home/state/th-root-foreign-primary.meta" \
+    || fail "a home with no root of its own recorded a treehouse_root="
+  pass "a home with no root of its own is unaffected by wherever its worktree comes from"
+}
+
 # The refusal is about sending a root, so a home that sends none never meets it.
 test_a_home_without_its_own_root_ignores_the_tools_root_support() {
   local rec rc out home
@@ -716,6 +821,9 @@ test_spawn_leases_and_records_its_own_homes_root
 test_the_probe_reads_root_support_from_the_tool
 test_a_root_resolving_home_refuses_a_tool_that_ignores_the_root
 test_a_root_resolving_home_names_an_absent_pool_tool_as_absent
+test_a_root_resolving_home_refuses_a_slot_outside_its_root
+test_a_root_resolving_home_accepts_a_slot_from_its_own_root
+test_a_home_without_its_own_root_accepts_any_slot
 test_a_home_without_its_own_root_ignores_the_tools_root_support
 test_task_without_a_recorded_root_tears_down_as_before
 test_task_returns_to_its_recorded_root

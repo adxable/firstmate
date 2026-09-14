@@ -24,7 +24,7 @@ HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --session ignores HERDR_SOCKET_PATH, and git reads $HOME/.gitconfig, so both
 # are linked through to the real home. Echoes the path.
 herdr_lab_home() {  # <dir>
-  local dir=$1 real=${HERDR_TEST_REAL_HOME:-${HOME:-}}
+  local dir=$1 real=${HOME:-}
   [ -n "$real" ] || {
     printf 'herdr_lab_home: HOME is not set, so the lab home cannot reach the real herdr config\n' >&2
     return 1

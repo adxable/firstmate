@@ -3260,6 +3260,24 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
+  # The capability probe above answers for THIS process; the pane runs its own
+  # treehouse off its own login-shell PATH, and those can legitimately differ.
+  # So the recorded root is verified against the slot that actually came back
+  # rather than trusted from intent: a worker shell whose treehouse ignores
+  # TREEHOUSE_ROOT leases from the shared pool another home owns, and that slot
+  # is a real isolated worktree, so every guard above accepts it.
+  if [ -n "$SPAWN_TREEHOUSE_ROOT" ]; then
+    pool_root_real=$(real_path_or_raw "$SPAWN_TREEHOUSE_ROOT")
+    pool_wt_real=$(real_path_or_raw "$WT")
+    case $pool_wt_real in
+      "$pool_root_real"/*) ;;
+      *)
+        echo "error: treehouse get returned worktree '$pool_wt_real', which is outside this home's own pool root '$pool_root_real', so $ID would work in the shared pool another home owns; the treehouse this spawn can see honors a configured root but the one the worker shell resolved ignored it, so make that shell's PATH resolve the same root-capable treehouse and spawn again; inspect window $T" >&2
+        discard_refused_endpoint
+        exit 1
+        ;;
+    esac
+  fi
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
