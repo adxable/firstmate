@@ -480,7 +480,7 @@ FM_CLAUDE_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-guard-last-resort-arm-live-e2e.
 ```
 
 ```text
-Claude 2.1.247 (Claude Code)
+2.1.247 (Claude Code)
 FM_TEST_BEGIN 2026-09-14T07:28:48Z tests/fm-guard-last-resort-arm-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
 ok - Claude 2.1.247 (Claude Code) live E2E: the turn-end guard restored supervision over a wedged auto-arm claim mutex, and its watcher outlived the session (beacon 2s)
 FM_TEST_END 2026-09-14T07:29:07Z tests/fm-guard-last-resort-arm-live-e2e.test.sh exit=0 duration_ms=18672 gate_skip=false

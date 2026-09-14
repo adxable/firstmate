@@ -973,6 +973,40 @@ test_tracked_claude_entries_inert_under_grok() {
   pass "tracked .claude/settings.json entries: $guarded inert under grok, the documented subagent exception still armed, all live under Claude"
 }
 
+# The guard's last-resort arm confirms its watcher SYNCHRONOUSLY inside Claude's
+# Stop hook, so the hook entry's own declared timeout is the real ceiling on that
+# wait. Claude Code's undeclared default is 60s, which the documented slow-host
+# worst case already approaches and which an operator raising the shared
+# FM_ARM_CONFIRM_TIMEOUT crosses outright; past the ceiling Claude kills the
+# guard, the home stays watched (the watcher is detached before the wait) but the
+# exit-2 continuation that hands the cycle back to the Stop-owned auto-arm is
+# lost. Asserted against the parsed hook entry, never a substring of the file.
+test_guard_stop_entry_declares_a_timeout_covering_its_synchronous_arm() {
+  local settings declared worst
+  command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
+  settings="$ROOT/.claude/settings.json"
+  [ -f "$settings" ] || fail "tracked .claude/settings.json is missing"
+
+  declared=$(jq -r '
+    [.hooks.Stop[].hooks[] | select(.command | test("fm-turnend-guard\\.sh"))]
+    | if length == 1 then .[0].timeout else "multiple" end
+    | if type == "number" then tostring else "unset" end' "$settings")
+  [ "$declared" != multiple ] \
+    || fail "expected exactly one tracked Stop entry running the turn-end guard"
+  [ "$declared" != unset ] \
+    || fail "the guard's Stop entry declares no numeric timeout, so Claude's 60s default bounds its synchronous last-resort arm"
+
+  # Documented slow-host worst case: the Git Bash/MSYS FM_ARM_CONFIRM_TIMEOUT
+  # default (30) plus the arm's one rounding second, plus the guard's own
+  # FM_CLAUDE_AUTOARM_SYNC_WAIT_MS wait (800ms, rounded up).
+  worst=$(( 30 + 1 + 1 ))
+  [ "$declared" -gt "$worst" ] \
+    || fail "declared guard timeout ${declared}s does not cover the ${worst}s documented slow-host worst case"
+  [ "$declared" -ge $(( worst * 2 )) ] \
+    || fail "declared guard timeout ${declared}s leaves no headroom to raise FM_ARM_CONFIRM_TIMEOUT above its slow-host default"
+  pass "the guard's tracked Stop entry declares a ${declared}s timeout, covering its synchronous last-resort arm with headroom"
+}
+
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root() {
   local settings command dir expected_root outside payload out status
   settings="$ROOT/.codex/hooks.json"
@@ -2258,6 +2292,7 @@ test_grok_adapter_snake_case_native_and_camel_precedence
 test_grok_adapter_invalid_inputs_start_neither_path
 test_grok_adapter_missing_jq_and_no_supervision_allow
 test_tracked_claude_entries_inert_under_grok
+test_guard_stop_entry_declares_a_timeout_covering_its_synchronous_arm
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root
 test_codex_hook_ignores_nested_git_root_guard
 test_opencode_plugin_anchors_guard_to_worktree

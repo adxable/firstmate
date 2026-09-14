@@ -1372,7 +1372,7 @@ fm_autoarm_ledger_read() {  # <state-dir>
 # at most one extra arm that the watcher singleton dedupes, while the superseded
 # owner still goes silent; the reverse mistake costs the home its supervision.
 fm_autoarm_arming_stuck() {  # <state-dir> [grace]
-  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} budget confirm attempts
+  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} budget confirm confirm_default attempts
   case "$grace" in
     ''|*[!0-9]*|0) grace=300 ;;
   esac
@@ -1381,11 +1381,11 @@ fm_autoarm_arming_stuck() {  # <state-dir> [grace]
   # and the same bounded attempt count bin/fm-claude-stop-autoarm.sh accepts, so
   # all three move together.
   case "${OSTYPE:-}" in
-    msys*|mingw*|cygwin*) confirm=30 ;;
-    *) confirm=10 ;;
+    msys*|mingw*|cygwin*) confirm_default=30 ;;
+    *) confirm_default=10 ;;
   esac
-  confirm=${FM_ARM_CONFIRM_TIMEOUT:-$confirm}
-  case "$confirm" in ''|*[!0-9]*|0) confirm=10 ;; esac
+  confirm=${FM_ARM_CONFIRM_TIMEOUT:-$confirm_default}
+  case "$confirm" in ''|*[!0-9]*|0) confirm=$confirm_default ;; esac
   attempts=${FM_CLAUDE_AUTOARM_ATTEMPTS:-2}
   case "$attempts" in 1|2|3) : ;; *) attempts=2 ;; esac
   budget=$(( attempts * (confirm + 1) * 2 ))

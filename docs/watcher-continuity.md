@@ -35,6 +35,8 @@ The hook's exit-2 rewake is never delivered, which upstream issue 4209 reports i
 It runs only after the guard has already concluded that nothing owns recovery for this Stop event, so it never competes with the Stop-owned auto-arm and is a backstop rather than a second arming owner.
 It launches this home's own `bin/fm-watch.sh`, detached in its own process group so tearing down the synchronous hook cannot take the replacement with it, and confirms it against the same `fm_watcher_healthy` honesty gate the arm layer uses, inside the arm layer's own `FM_ARM_CONFIRM_TIMEOUT` window over the same OSTYPE default `bin/fm-watch-arm.sh` reads.
 The arm itself is never budget-limited; only the follow-up block is, so an exhausted block budget now ends the turn with a watcher running instead of ending it blind.
+That confirmation runs synchronously inside Claude's Stop hook, so it is bounded by the `timeout` that hook entry declares in `.claude/settings.json` (180 seconds), and a `FM_ARM_CONFIRM_TIMEOUT` raised near or past that ceiling is cut off by the harness rather than honoured.
+Being cut off there is not the same failure as no arm at all: the watcher is launched detached in its own process group before the confirmation wait, so the home stays watched, and what is lost is the guard's exit-2 continuation - the turn ends without handing the cycle back to the Stop-owned auto-arm.
 The only process it ever signals is the child it forked, so it can never reach a sibling home's watcher.
 
 The boundary matters as much as the arm.
@@ -48,6 +50,7 @@ The budget is clamped to the grace, so the proof is strictly more willing to dec
 A claim declared stuck too eagerly costs at most one extra arm the watcher singleton dedupes; the reverse mistake costs the home its supervision.
 
 This fork carries the guard's arm while upstream PR 4208 is unmerged; that PR pairs the same guard arm with keying lock-holder liveness on process start time, which cures the wedged claim mutex itself rather than its symptom.
+Reading the shared `FM_ARM_CONFIRM_TIMEOUT` here is deliberate, and adopting upstream's own `FM_CLAUDE_GUARD_ARM_CONFIRM` spelling if that PR lands is a rename rather than an oversight.
 Until it lands, a mutex wedged by a recycled pid keeps the home watched through this arm but leaves the automatic rewake unowned, and the watcher's wake waits in the durable queue for the next turn.
 
 Two residuals are named rather than claimed closed, because both require a Stop event that never arrives.
