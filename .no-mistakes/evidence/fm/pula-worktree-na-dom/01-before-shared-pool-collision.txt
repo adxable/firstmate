@@ -1,0 +1,23 @@
+Live reproduction of the incident on the BASE commit b8798ff (no per-home pool root).
+Real tmux panes on a private socket, the real treehouse v2.3.0 binary, the real bin/fm-spawn.sh.
+
+
+=== BASE commit, home A spawns and takes the only pool slot ===
+spawned wa harness=codex kind=scout window=firstmate:fm-wa worktree=/private/tmp/fm-pool-before/user-home/.treehouse/adx-worker-dd63ee/1/adx-worker
+
+=== home A's work ends: its window closes and the slot goes back to the pool ===
+1     available    ~/.treehouse/adx-worker-dd63ee/1/adx-worker
+
+=== BASE commit, home B spawns into ITS OWN clone of the same repository ===
+spawned wb harness=codex kind=scout window=firstmate:fm-wb worktree=/private/tmp/fm-pool-before/user-home/.treehouse/adx-worker-dd63ee/1/adx-worker
+
+=== the slot home B was handed ===
+home B worktree     : /private/tmp/fm-pool-before/user-home/.treehouse/adx-worker-dd63ee/1/adx-worker
+home B wt common dir: /private/tmp/fm-pool-before/homeA/adx-worker/.git
+home B own clone    : /private/tmp/fm-pool-before/homeB/adx-worker/.git
+home A own clone    : /private/tmp/fm-pool-before/homeA/adx-worker/.git
+recorded treehouse_root: []
+
+=== what a claude spawn makes of that slot (bin/fm-claude-trust.sh, the check that refused in the field) ===
+error: refusing to pre-register Claude trust: '/private/tmp/fm-pool-before/user-home/.treehouse/adx-worker-dd63ee/1/adx-worker' is not a worktree of project '/private/tmp/fm-pool-before/homeB/adx-worker'
+trust: REFUSED (exit 1) - home B cannot start anything at all

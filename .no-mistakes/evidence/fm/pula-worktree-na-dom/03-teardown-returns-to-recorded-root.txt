@@ -1,0 +1,30 @@
+Live teardown: a secondmate home's live task returns its slot to the pool root its record names.
+
+spawned wa harness=codex kind=scout window=firstmate:fm-wa worktree=/private/tmp/fm-pool-td/user-home/.treehouse/adx-worker-d3426d/1/adx-worker
+spawned wb harness=codex kind=scout window=firstmate:fm-wb worktree=/private/tmp/fm-pool-td/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-d3426d/1/adx-worker
+
+=== both pools before teardown ===
+shared pool (home A):
+1     in-use       ~/.treehouse/adx-worker-d3426d/1/adx-worker
+                   zsh (34283), sleep (35864)
+home B's own pool:
+1     in-use       ~/.treehouse-homes/mate-live/.treehouse/adx-worker-d3426d/1/adx-worker
+                   zsh (36398), sleep (39579)
+wb record:
+worktree=/private/tmp/fm-pool-td/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-d3426d/1/adx-worker
+treehouse_root=/private/tmp/fm-pool-td/user-home/.treehouse-homes/mate-live
+
+=== teardown of the live task wb ===
+teardown: reaping leaked worktree process(es) for wb: 36398 39579
+teardown: force-killing leaked worktree process(es) for wb: 36398
+🌳 Worktree returned to pool.
+teardown wb complete (window firstmate:fm-wb, worktree /private/tmp/fm-pool-td/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-d3426d/1/adx-worker)
+Backlog: wb just finished (this home keeps no backlog at /private/tmp/fm-pool-td/homeB/mate-live/data/backlog.md). Update /private/tmp/fm-pool-td/homeB/mate-live/data/backlog.md - move wb to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+
+=== both pools after teardown ===
+home B's own pool (the slot must be back, not destroyed):
+1     available    ~/.treehouse-homes/mate-live/.treehouse/adx-worker-d3426d/1/adx-worker
+shared pool (home A's live task must be untouched):
+1     in-use       ~/.treehouse/adx-worker-d3426d/1/adx-worker
+                   zsh (34283), sleep (35864)
+record gone: yes

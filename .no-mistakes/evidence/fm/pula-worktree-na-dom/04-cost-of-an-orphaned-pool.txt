@@ -1,0 +1,31 @@
+Live cost accounting: the pool tree a retired secondmate home leaves behind, and the exact
+reclamation command docs/configuration.md gives the operator.
+
+spawned w1 harness=codex kind=scout window=firstmate:fm-w1 worktree=/private/tmp/fm-pool-prune/user-home/.treehouse-homes/mate-old/.treehouse/adx-worker-cef2e2/1/adx-worker
+
+=== the retired home's pool before retirement ===
+1     in-use       ~/.treehouse-homes/mate-old/.treehouse/adx-worker-cef2e2/1/adx-worker
+                   zsh (48437), env (49756)
+
+=== the home is retired: its window, its home directory and its clone all go ===
+pool tree survives retirement: yes
+ 16K	/private/tmp/fm-pool-prune/user-home/.treehouse-homes/mate-old
+
+=== the documented reclamation command, as a dry run ===
+🌳 Dry run: would prune 1 stale/orphaned worktree across 1 pool and reclaim 310 B.
+1     310 B  ~/.treehouse-homes/mate-old/.treehouse/adx-worker-cef2e2/1/adx-worker  content could not be verified
+🌳 Re-run with --all --prune-orphans --yes to delete these worktrees.
+still on disk after the dry run: 
+
+=== the same command with --yes ===
+🌳 Pruned 1 stale/orphaned worktree across 1 pool and freed 310 B.
+1     310 B  ~/.treehouse-homes/mate-old/.treehouse/adx-worker-cef2e2/1/adx-worker  content could not be verified
+pool contents after: []
+
+=== the housekeeping warning: a bare 'treehouse prune --all' reaches only the user-level root ===
+🌳 Dry run: would prune 1 stale worktree across 1 pool and reclaim 308 B.
+1     308 B  ~/.treehouse/adx-worker-2c6cbd/1/adx-worker
+🌳 Re-run with --all --prune-orphans --yes to delete these worktrees.
+pools actually present under that HOME:
+/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-2c6cbd/
+/tmp/fm-pool-after/user-home/.treehouse/adx-worker-2c6cbd/

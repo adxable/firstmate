@@ -1,0 +1,54 @@
+Same two-home world on the CHANGE under test, plus the guards it adds.
+Real tmux panes on a private socket, the real treehouse v2.3.0 binary, the real bin/fm-spawn.sh.
+
+
+=== S1a  home A takes the shared pool's slot, then its window closes and the slot is free ===
+spawned wa harness=codex kind=scout window=firstmate:fm-wa worktree=/private/tmp/fm-pool-after/user-home/.treehouse/adx-worker-2c6cbd/1/adx-worker
+1     available    ~/.treehouse/adx-worker-2c6cbd/1/adx-worker
+
+=== S1b  home B spawns into its own clone of the SAME repository ===
+spawned wb harness=codex kind=scout window=firstmate:fm-wb worktree=/private/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-2c6cbd/1/adx-worker
+home B worktree        : /private/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-2c6cbd/1/adx-worker
+home B wt common dir   : /private/tmp/fm-pool-after/homeB/adx-worker/.git
+home A clone           : /private/tmp/fm-pool-after/homeA/adx-worker/.git
+home B clone           : /private/tmp/fm-pool-after/homeB/adx-worker/.git
+recorded treehouse_root: [/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live]
+trusted: /private/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-2c6cbd/1/adx-worker
+trust: ACCEPTED - home B can start work
+
+=== S2   the two pools on disk ===
+home A pool:
+1     available    ~/.treehouse/adx-worker-2c6cbd/1/adx-worker
+home B pool:
+1     in-use       ~/.treehouse-homes/mate-live/.treehouse/adx-worker-2c6cbd/1/adx-worker
+                   zsh (18754), sleep (21394)
+
+=== S3   a slot that came back to the pool the record names ===
+NOTE: this lab rooted itself at /tmp, which is a symlink to /private/tmp on macOS, and
+teardown's pre-existing duplicate-slot screen then matched wb's record against itself.
+That is an artifact of the lab path, not of this change; 03-teardown-returns-to-recorded-root.txt
+re-drives the same scenario from a canonicalised path and the return goes through.
+REFUSED: task wb's recorded worktree /private/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-2c6cbd/1/adx-worker is also task wb's recorded worktree.
+Returning that pool slot would kill wb's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh wb; bin/fm-crew-state.sh wb), then re-run teardown.
+-- home B's own pool after teardown:
+1     available    ~/.treehouse-homes/mate-live/.treehouse/adx-worker-2c6cbd/1/adx-worker
+-- the shared pool, which this teardown must not have touched:
+1     available    ~/.treehouse/adx-worker-2c6cbd/1/adx-worker
+
+=== S4   a worker shell whose treehouse ignores the root (windows before: zsh ) ===
+error: treehouse get returned worktree '/private/tmp/fm-pool-after/user-home/.treehouse/adx-worker-2c6cbd/1/adx-worker', which is outside this home's own pool root '/private/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live', so wretry would work in the shared pool another home owns; the treehouse this spawn can see honors a configured root but the one the worker shell resolved ignored it, so make that shell's PATH resolve the same root-capable treehouse and spawn again; inspect window firstmate:fm-wretry
+windows after refusal: zsh 
+the retry the message prescribes, with a root-honouring treehouse:
+spawned wretry harness=codex kind=scout window=firstmate:fm-wretry worktree=/private/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live/.treehouse/adx-worker-2c6cbd/1/adx-worker
+
+=== S5   no treehouse on the spawn's PATH at all (windows before: fm-wretry zsh ) ===
+error: treehouse is not installed on this spawn's PATH, so wgone cannot be given a worktree from this home's own pool root '/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live'; install treehouse and spawn again
+windows after refusal: fm-wretry zsh 
+
+=== S6   a treehouse that lists no --root at all, asked by a home that HAS a root ===
+error: the installed treehouse ignores a configured pool root, so wdeaf would silently lease from the shared pool another home owns instead of this home's own '/tmp/fm-pool-after/user-home/.treehouse-homes/mate-live'; upgrade treehouse and spawn again
+
+=== S7   control: a home with NO root of its own, same degraded treehouse ===
+spawned wdeaf harness=codex kind=scout window=firstmate:fm-wdeaf worktree=/private/tmp/fm-pool-after/user-home/.treehouse/adx-worker-2c6cbd/1/adx-worker
+recorded treehouse_root for home A: []
