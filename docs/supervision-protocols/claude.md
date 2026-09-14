@@ -20,6 +20,7 @@ When this session owns supervision and away mode is not active:
 8. The turn-end guard (`bin/fm-turnend-guard.sh --claude`) remains the final backstop.
    It requires the PID-strict live-watcher and fresh-beacon predicate at the Stop boundary, while the mid-turn pull guard accepts a fresh beacon without a live process under Claude's between-turns auto-arm model.
    It allows the stop when a watcher is healthy or an open auto-arm generation claim owns recovery, while fresh failure epochs advance the bounded one-time attended fail-open progression described in [`turnend-guard.md`](../turnend-guard.md).
+   When nothing owns recovery it starts one watcher itself and reports `SUPERVISION RESTORED BY THE TURN-END GUARD`: that banner means the home is watched again, so continue normally and still do not arm by hand.
 9. Waiting on the hook-owned cycle is silent: do not send idle progress while the watcher is parked.
 
 The watcher itself remains `bin/fm-watch.sh`, and `bin/fm-watch-arm.sh` remains the verified arm wrapper that the Stop hook foregrounds.

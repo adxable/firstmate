@@ -167,6 +167,6 @@ The same suite covers the last-resort arm with the real `bin/fm-watch.sh` as a r
 The goal is continuity without a Pi, omp, or OpenCode model-memory re-arm step.
 No zero-latency guarantee is claimed because lock verification, watcher startup, and bounded retry delays remain deliberate safety work.
 OpenCode support targets persistent TUI sessions rather than headless `opencode run`.
-Claude depends on the Stop `asyncRewake` rewake, Cursor depends on its awaited stop-hook park, Grok retains native background-completion notifications, and Codex retains bounded foreground checkpoints.
+Claude depends on the Stop `asyncRewake` rewake for the automatic cycle, with the last-resort arm above as a supervision-only backstop that keeps a home watched without reclaiming the rewake, Cursor depends on its awaited stop-hook park, Grok retains native background-completion notifications, and Codex retains bounded foreground checkpoints.
 
 [`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current five-harness live evidence, the 2026-07-24 Stop-owned Claude auto-arm results, and exact opt-in commands.
