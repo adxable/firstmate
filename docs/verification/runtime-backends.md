@@ -1657,7 +1657,8 @@ Observed:
 | `get --lease --lease-holder` | present | present |
 | `return --force` under a non-default root | not reachable, the version has no non-default root | succeeds |
 
-So v2.0.1 cannot place a pool anywhere but the default root, and a secondmate home running against it silently keeps using the shared pool.
+So v2.0.1 cannot place a pool anywhere but the default root, which is why `treehouse_supports_root` in `bin/fm-treehouse-capability-lib.sh` probes for the flag rather than the version.
+The lease probe matches on both versions, so it cannot answer this question; a home that resolves a root of its own refuses to spawn when the root probe says no.
 Which release introduced the support was not tested; only these two versions were.
 
 `bin/fm-install-treehouse.sh` therefore pins v2.3.0, and the required real-Herdr CI lane runs `tests/fm-treehouse-root.test.sh` against that pin with `--fail-on-gate-skip 'treehouse not found'`.

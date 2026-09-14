@@ -438,6 +438,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-treehouse-capability-lib.sh
+. "$SCRIPT_DIR/fm-treehouse-capability-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -3179,6 +3181,10 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     exit 1
   }
   if [ -n "$SPAWN_TREEHOUSE_ROOT" ]; then
+    treehouse_supports_root || {
+      echo "error: the installed treehouse ignores a configured pool root, so $ID would silently lease from the shared pool another home owns instead of this home's own '$SPAWN_TREEHOUSE_ROOT'; upgrade treehouse and spawn again; inspect window $T" >&2
+      exit 1
+    }
     spawn_send_text_line "$WT_TARGET" "TREEHOUSE_ROOT=$(shell_quote "$SPAWN_TREEHOUSE_ROOT") treehouse get"
   else
     # This home needs no root of its own, so nothing is forced on the pane and

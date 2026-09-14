@@ -171,6 +171,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
 # shellcheck source=bin/fm-startup-memory-budget-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-startup-memory-budget-lib.sh"
+# shellcheck source=bin/fm-treehouse-capability-lib.sh
+. "$SCRIPT_DIR/fm-treehouse-capability-lib.sh"
 # shellcheck source=bin/fm-x-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
@@ -1412,11 +1414,16 @@ detect_local_tools() {
   for t in $COMMON_TOOLS; do
     command -v "$t" >/dev/null || missing_tool_diagnostic "$t"
   done
-  # The treehouse lease-support upgrade check is only relevant when the resolved
-  # backend actually requires treehouse (every backend except orca, which owns its
+  # The treehouse upgrade check is only relevant when the resolved backend
+  # actually requires treehouse (every backend except orca, which owns its
   # own worktrees); an orca home must not be told to upgrade a provider it never uses.
-  if fm_backend_list_contains "$TOOLS" treehouse \
-    && command -v treehouse >/dev/null 2>&1 && ! treehouse_supports_lease; then
+  # Root support is asked for only in a home that resolves a pool root of its own,
+  # since a home that resolves none never sends one; bin/fm-treehouse-root.sh owns
+  # that question, so a non-empty answer from it is the whole condition.
+  if fm_backend_list_contains "$TOOLS" treehouse && command -v treehouse >/dev/null 2>&1 \
+    && { ! treehouse_supports_lease \
+      || { [ -n "$("$SCRIPT_DIR/fm-treehouse-root.sh" 2>/dev/null)" ] \
+        && ! treehouse_supports_root; }; }; then
     echo "MISSING: treehouse (install: $(install_cmd treehouse))"
   fi
   if command -v no-mistakes >/dev/null 2>&1 && ! tool_version_at_least no-mistakes "$NO_MISTAKES_MIN"; then

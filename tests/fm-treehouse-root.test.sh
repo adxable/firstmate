@@ -286,6 +286,25 @@ EOF
 
 # --- the spawn records the root it leased from ------------------------------
 
+# write_treehouse_stub <fakebin> <yes|no>: a treehouse whose `get --help` either
+# lists --root among its global flags or does not, which is the whole interface
+# the capability probe reads. Real v2.3.0 lists it and real v2.0.1 does not; both
+# list --lease, which is why the lease probe cannot answer this question.
+write_treehouse_stub() {  # <fakebin> <yes|no>
+  local fakebin=$1 supports=$2
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" != get ] || [ "${2:-}" != --help ]; then
+  exit 0
+fi
+printf 'Acquire a worktree from the pool and open a subshell\n\nFlags:\n      --lease   Take a durable lease\n'
+SH
+  [ "$supports" != yes ] || cat >> "$fakebin/treehouse" <<'SH'
+printf '\nGlobal Flags:\n      --root string   Worktree root directory\n'
+SH
+  chmod +x "$fakebin/treehouse"
+}
+
 # make_spawn_case <name> <id> [secondmate]: a home, a project clone and a pooled
 # worktree, wired for the real spawn path with a fake terminal.
 # Echoes "<home>|<project>|<pool>|<fakebin>".
@@ -296,6 +315,9 @@ make_spawn_case() {  # <name> <id> [secondmate]
   project="$case_dir/project"
   pool="$case_dir/pool"
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
+  # The spawn asks the tool whether it honors a configured root before sending
+  # one, so the stub has to answer that question the way a real build does.
+  write_treehouse_stub "$fakebin" "${FM_TEST_STUB_TREEHOUSE_ROOT_SUPPORT:-yes}"
 
   mkdir -p "$home/state" "$home/config" "$home/projects"
   printf 'codex\n' > "$home/config/crew-harness"
@@ -547,6 +569,88 @@ test_task_returns_to_its_recorded_root() {
   pass "a task returns its worktree to the pool root its record names"
 }
 
+# --- the pool tool must be able to honour the root before one is sent ---------
+
+PROBE_LIB="$ROOT/bin/fm-treehouse-capability-lib.sh"
+
+# probe_says <yes|no>: run treehouse_supports_root against a stub built to
+# advertise root support or not, and echo the answer.
+probe_says() {  # <yes|no>
+  local dir stub
+  dir="$TMP_ROOT/probe-$1"
+  stub="$dir/bin"
+  mkdir -p "$stub"
+  write_treehouse_stub "$stub" "$1"
+  # shellcheck source=bin/fm-treehouse-capability-lib.sh
+  if ( PATH="$stub:$PATH"; . "$PROBE_LIB" && treehouse_supports_root ); then
+    printf 'supported\n'
+  else
+    printf 'unsupported\n'
+  fi
+}
+
+test_the_probe_reads_root_support_from_the_tool() {
+  [ "$(probe_says no)" = unsupported ] \
+    || fail "the probe claimed root support for a tool whose get --help lists no --root"
+  [ "$(probe_says yes)" = supported ] \
+    || fail "the probe denied root support for a tool whose get --help lists --root"
+  pass "the root-support probe answers from the pool tool's own help, not from its version"
+}
+
+# spawn_against_stub <name> <id> <kind> <yes|no>: one spawn whose treehouse stub
+# advertises root support or not. Echoes "<rc>|<combined output>|<home>".
+spawn_against_stub() {  # <name> <id> <kind> <yes|no>
+  local name=$1 id=$2 kind=$3 supports=$4 rec home project pool fakebin out rc
+  rec=$(FM_TEST_STUB_TREEHOUSE_ROOT_SUPPORT="$supports" make_spawn_case "$name" "$id" "$kind")
+  IFS='|' read -r home project pool fakebin <<EOF
+$rec
+EOF
+  out=$(FM_FAKE_PANE_LOG="$home/pane.log" \
+    fm_test_run_spawn "$home" "$pool" "$fakebin" "$id" "$project" --scout 2>&1) && rc=0 || rc=$?
+  printf '%s|%s|%s\n' "$rc" "$(printf '%s' "$out" | tr '\n' ' ')" "$home"
+}
+
+# A home with a pool root of its own must not launch into a tool that ignores it:
+# the worker would land in the shared pool another home owns, which is the exact
+# collision this whole mechanism removes, and nothing would say so.
+test_a_root_resolving_home_refuses_a_tool_that_ignores_the_root() {
+  local rec rc out home
+  rec=$(spawn_against_stub mate-old-tool th-root-old secondmate no)
+  IFS='|' read -r rc out home <<EOF
+$rec
+EOF
+  [ "$rc" -ne 0 ] || fail "a secondmate spawn was allowed against a tool that ignores the pool root"
+  case $out in
+    *treehouse*) ;;
+    *) fail "the refusal did not name the pool tool as the cause: $out" ;;
+  esac
+  case $out in
+    *upgrade*) ;;
+    *) fail "the refusal did not name upgrading the pool tool as the fix: $out" ;;
+  esac
+  # A root the tool could not honour must never reach the record, or teardown
+  # would later return the slot against a pool it never came from.
+  [ ! -f "$home/state/th-root-old.meta" ] \
+    || ! grep -q '^treehouse_root=' "$home/state/th-root-old.meta" \
+    || fail "the refused spawn still recorded a treehouse_root= the tool would have ignored"
+  pass "a home with its own pool root refuses a tool that ignores it, naming cause and fix, and records no root"
+}
+
+# The refusal is about sending a root, so a home that sends none never meets it.
+test_a_home_without_its_own_root_ignores_the_tools_root_support() {
+  local rec rc out home
+  rec=$(spawn_against_stub primary-old-tool th-root-old-primary primary no)
+  IFS='|' read -r rc out home <<EOF
+$rec
+EOF
+  [ "$rc" -eq 0 ] \
+    || fail "a home with no root of its own was refused over the tool's root support: $out"
+  [ ! -f "$home/state/th-root-old-primary.meta" ] \
+    || ! grep -q '^treehouse_root=' "$home/state/th-root-old-primary.meta" \
+    || fail "a home with no root of its own recorded a treehouse_root="
+  pass "a home that sends no root spawns normally whatever the pool tool supports"
+}
+
 test_a_home_without_its_own_root_is_left_alone
 test_secondmate_home_gets_its_own_root
 test_two_secondmate_homes_get_two_roots
@@ -561,5 +665,8 @@ else
   echo "skip: treehouse not found; the two-clone pool regression needs the real pool tool"
 fi
 test_spawn_leases_and_records_its_own_homes_root
+test_the_probe_reads_root_support_from_the_tool
+test_a_root_resolving_home_refuses_a_tool_that_ignores_the_root
+test_a_home_without_its_own_root_ignores_the_tools_root_support
 test_task_without_a_recorded_root_tears_down_as_before
 test_task_returns_to_its_recorded_root

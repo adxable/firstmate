@@ -274,7 +274,9 @@ Nothing is printed, no `TREEHOUSE_ROOT` is forced on the pane, and treehouse's o
 The root governs the pools a home's project worktrees come from.
 It does not govern the firstmate-repo lease a secondmate home itself occupies: that slot belongs to the primary that seeded it and is returned by the primary, both through treehouse's own default resolution, so a resolved root never strands a live home.
 `bin/fm-spawn.sh` records the resolved root as `treehouse_root=` in the task record, and `bin/fm-teardown.sh` returns the slot against that recorded value; a task with no recorded value, whether it was spawned in a home with no root of its own or before the record existed, keeps treehouse's own resolution and tears down exactly as before.
-The per-home root depends on the pool tool honoring a configured root, which treehouse v2.0.1 does not and v2.3.0 does, so on a pool tool without that support a secondmate home silently keeps using the shared pool.
+The per-home root depends on the pool tool honoring a configured root, which treehouse v2.0.1 does not and v2.3.0 does.
+A home that resolves a root of its own refuses to spawn against a tool that ignores one rather than silently leasing from the shared pool, and `bin/fm-bootstrap.sh` surfaces the upgrade at session start; the operator upgrades treehouse and spawns again.
+If a task somehow carries a recorded root the tool of the day ignored, its worktree really came from the shared pool and `treehouse return` answers `is not managed by treehouse`, wedging teardown: correct or remove that task's `treehouse_root=` so the return runs against the pool that actually holds the slot.
 
 ### What this costs
 
