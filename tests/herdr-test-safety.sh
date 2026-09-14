@@ -14,6 +14,25 @@ HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 . "$HERDR_TEST_SAFETY_DIR/bin/fm-herdr-lab.sh"
 
+# herdr_lab_home <dir>: a lab-owned $HOME for spawns this suite drives.
+#
+# bin/fm-treehouse-root.sh resolves a marker-bearing home's worktree pool root
+# under $HOME, so a spawn with FM_HOME pointing at a secondmate-shaped fixture
+# and an unpinned HOME builds a real pool inside the operator's own home, under
+# an id that can name a live secondmate. Pinning HOME moves only that root:
+# herdr resolves a named session under $HOME/.config/herdr and an explicit
+# --session ignores HERDR_SOCKET_PATH, and git reads $HOME/.gitconfig, so both
+# are linked through to the real home. Echoes the path.
+herdr_lab_home() {  # <dir>
+  local dir=$1 real=${HERDR_TEST_REAL_HOME:-${HOME:-}}
+  mkdir -p "$dir/.config"
+  [ -z "$real" ] || [ ! -d "$real/.config/herdr" ] || [ -e "$dir/.config/herdr" ] \
+    || ln -s "$real/.config/herdr" "$dir/.config/herdr"
+  [ -z "$real" ] || [ ! -f "$real/.gitconfig" ] || [ -e "$dir/.gitconfig" ] \
+    || ln -s "$real/.gitconfig" "$dir/.gitconfig"
+  printf '%s\n' "$dir"
+}
+
 # herdr_forget_inherited_pane: drop the Herdr PANE identity this test process
 # inherited from whatever terminal it was started in.
 #

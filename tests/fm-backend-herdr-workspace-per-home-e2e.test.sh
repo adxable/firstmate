@@ -68,6 +68,7 @@ herdr_forget_inherited_pane
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-herdr-e2e.XXXXXX")
 SESSION="fm-lab-herdr-e2e-$$"
 export HERDR_SESSION="$SESSION"
+LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home")
 WT1=; WT2=; WT1_ROOT=; WT2_ROOT=
 # A task spawned from a secondmate home leased from that home's own pool root,
 # recorded as treehouse_root= in its task record; returning it against the
@@ -142,7 +143,7 @@ PROJ2="$TMP_ROOT/scratch-project-2"; make_scratch_project "$PROJ2"
 # --- 1. primary-shaped home: a crewmate spawns into the "firstmate" space ---
 
 CM1_OUT="$TMP_ROOT/cm1.out"; CM1_ERR="$TMP_ROOT/cm1.err"
-FM_SPAWN_NO_GUARD=1 FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" \
+FM_SPAWN_NO_GUARD=1 FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" HOME="$LAB_HOME" \
   "$ROOT/bin/fm-spawn.sh" cm1 "$PROJ1" "sh -c 'echo primary-crew-ok'" --mode no-mistakes --yolo off --backend herdr \
   >"$CM1_OUT" 2>"$CM1_ERR"
 rc=$?
@@ -172,7 +173,7 @@ pass "real herdr E2E: the primary-shaped home's crewmate landed in the 'firstmat
 # exactly this call - AGENTS.md task herdr-sm-spaces-k4, requirement 3.)
 
 SM_OUT="$TMP_ROOT/sm.out"; SM_ERR="$TMP_ROOT/sm.err"
-FM_SPAWN_NO_GUARD=1 FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" \
+FM_SPAWN_NO_GUARD=1 FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" HOME="$LAB_HOME" \
   "$ROOT/bin/fm-spawn.sh" e2esm1 "$SM_HOME" "sh -c 'echo secondmate-launch-ok'" --secondmate --backend herdr \
   >"$SM_OUT" 2>"$SM_ERR"
 rc=$?
@@ -198,7 +199,7 @@ pass "real herdr E2E: a --secondmate spawn by the PRIMARY lands in the SECONDMAT
 # secondmate workspace (this exact path has never run before this test) -----
 
 CM2_OUT="$TMP_ROOT/cm2.out"; CM2_ERR="$TMP_ROOT/cm2.err"
-FM_SPAWN_NO_GUARD=1 FM_HOME="$SM_HOME" FM_ROOT_OVERRIDE="$ROOT" \
+FM_SPAWN_NO_GUARD=1 FM_HOME="$SM_HOME" FM_ROOT_OVERRIDE="$ROOT" HOME="$LAB_HOME" \
   "$ROOT/bin/fm-spawn.sh" cm2 "$PROJ2" "sh -c 'echo sm-crew-ok'" --mode no-mistakes --yolo off --backend herdr \
   >"$CM2_OUT" 2>"$CM2_ERR"
 rc=$?

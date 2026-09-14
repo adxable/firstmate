@@ -276,6 +276,7 @@ HERDR_LAB_SESSION=$(PATH="$HERDR_ORIGINAL_PATH" \
   "$HERDR_LAB_HELPER" name fm-herdr-presentation-projection)
 export HERDR_SESSION="$HERDR_LAB_SESSION" HERDR_LAB_SESSION
 LAB_READY=0
+LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home")
 RECORDED_WORKTREES=""
 LOCK_CONTENTION_OWNER_PID=
 # Releasing this file ends every fixture worktree occupant (see
@@ -473,6 +474,7 @@ occupy_task_worktree() {  # <meta>
 spawn_task() {  # <id> <home> <project>
   local id=$1 home=$2 project=$3 status=0
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    HOME="$LAB_HOME" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'while :; do sleep 60; done'" --mode no-mistakes --yolo off --backend herdr \
     || status=$?
   [ "$status" -ne 0 ] || occupy_task_worktree "$home/state/$id.meta"
@@ -501,6 +503,7 @@ finish_concurrent_expected_abort() {  # <id> <status> <stdout> <stderr>
 spawn_secondmate_task() {
   local id=$1 home=$2
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" \
+    HOME="$LAB_HOME" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$home" "sh -c 'while :; do sleep 60; done'" --secondmate --backend herdr
 }
 

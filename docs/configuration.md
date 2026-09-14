@@ -274,6 +274,7 @@ Nothing is printed, no `TREEHOUSE_ROOT` is forced on the pane, and treehouse's o
 The root governs the pools a home's project worktrees come from.
 It does not govern the firstmate-repo lease a secondmate home itself occupies: that slot belongs to the primary that seeded it and is returned by the primary, both through treehouse's own default resolution, so a resolved root never strands a live home.
 `bin/fm-spawn.sh` records the resolved root as `treehouse_root=` in the task record, and `bin/fm-teardown.sh` returns the slot against that recorded value; a task with no recorded value, whether it was spawned in a home with no root of its own or before the record existed, keeps treehouse's own resolution and tears down exactly as before.
+The per-home root depends on the pool tool honoring a configured root, which treehouse v2.0.1 does not and v2.3.0 does, so on a pool tool without that support a secondmate home silently keeps using the shared pool.
 
 ### What this costs
 
@@ -291,7 +292,7 @@ A slot is a linked worktree sharing its clone's object store, so what each added
 Nothing reclaims the home's abandoned slots in the shared root; that is ordinary pruning there, done by hand.
 
 Housekeeping no longer reaches the new pools on its own.
-`treehouse prune --all` with no root argument sweeps only the managed pools under the user-level root, which is `~/.treehouse`, so stale and merged worktrees inside each `$HOME/.treehouse-homes/<id>` accumulate until that root is pruned by name.
+`treehouse prune --all` with no root argument sweeps only the managed pools under the user-level root, which is `$HOME` and puts those pools in `~/.treehouse`, so stale and merged worktrees inside each `$HOME/.treehouse-homes/<id>` accumulate until that root is pruned by name.
 Prune one by name with `treehouse prune --root "$HOME/.treehouse-homes/<id>" --all --prune-orphans`, which is a dry run until you add `--yes`.
 
 Retiring a secondmate leaves that home's whole pool tree behind, and reclaiming it is the operator's call rather than teardown's.

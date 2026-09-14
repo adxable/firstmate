@@ -93,7 +93,7 @@ if fm_root_is_secondmate_home "$FM_HOME"; then
   IFS= read -r home_id < "$MARKER" || true
   home_id=${home_id//[[:space:]]/}
   case $home_id in
-    . | .. | */*)
+    '' | . | .. | */*)
       die "'$MARKER' must hold one secondmate id usable as a directory name, got '$home_id'" ;;
   esac
   printf '%s/%s/%s\n' "$HOME" "$HOMES_DIRNAME" "$home_id"
