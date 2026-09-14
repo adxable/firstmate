@@ -1641,7 +1641,7 @@ The per-home worktree pool root (docs/configuration.md "Worktree pool root") nee
 Both released versions below were probed on 2026-09-14, darwin-arm64, from the official release archives.
 
 ```sh
-treehouse --help                       # global flags, per version
+treehouse get --help                   # the flags bin/fm-treehouse-capability-lib.sh reads, per version
 strings treehouse | grep -c TREEHOUSE_ROOT
 TREEHOUSE_ROOT=<scratch> treehouse get --lease --lease-holder probe-holder
 TREEHOUSE_ROOT=<scratch> treehouse return --force <leased-worktree>
@@ -1651,7 +1651,7 @@ Observed:
 
 | capability | v2.0.1 | v2.3.0 |
 | --- | --- | --- |
-| `--root` in global flags | absent | present |
+| `--root` in `get --help` global flags | absent | present |
 | `TREEHOUSE_ROOT` referenced in the binary | 0 occurrences | 3 occurrences |
 | lease honors a configured root | no, leased into the default `~/.treehouse` pool | yes, `<root>/.treehouse/<pool>/1/<repo>` |
 | `get --lease --lease-holder` | present | present |

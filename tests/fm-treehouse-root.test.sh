@@ -658,6 +658,17 @@ resolves_in_path() {  # <path-list> <tool>
   return 1
 }
 
+# The stub cases above pin the classifier where no pool tool is installed, which
+# the portable lanes need. This one asks the INSTALLED build the exact question
+# production asks, so the CI pin and the probe are proven to agree rather than
+# assumed to: a stub can only confirm the assumption written into the stub.
+test_the_probe_accepts_the_installed_pool_tool() {
+  # shellcheck source=bin/fm-treehouse-capability-lib.sh
+  ( . "$PROBE_LIB" && treehouse_supports_root ) \
+    || fail "the installed pool tool answers no --root in 'treehouse get --help', so every home with a pool root of its own would refuse to spawn against it"
+  pass "the installed pool tool answers the root-capability probe the spawn asks it"
+}
+
 # spawn_against_stub <name> <id> <kind> <yes|no|absent>: one spawn whose treehouse
 # stub advertises root support, denies it, or is not installed at all.
 # Echoes "<rc>|<combined output>|<home>".
@@ -865,6 +876,7 @@ test_a_worktree_of_another_clone_is_refused
 if command -v treehouse >/dev/null 2>&1; then
   test_two_homes_two_clones_do_not_share_a_pool
   test_a_projects_own_root_survives_a_home_without_one
+  test_the_probe_accepts_the_installed_pool_tool
 else
   echo "skip: treehouse not found; the two-clone pool regression needs the real pool tool"
 fi
