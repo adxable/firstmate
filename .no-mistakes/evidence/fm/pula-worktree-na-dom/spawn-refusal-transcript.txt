@@ -1,0 +1,40 @@
+
+### secondmate home, treehouse that ignores --root
+$ fm-spawn.sh <id> <project> --scout   ; exit 1
+error: the installed treehouse ignores a configured pool root, so demo-old would silently lease from the shared pool another home owns instead of this home's own '/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.19TJjT/spawn-demo-old-tool/home/user-home/.treehouse-homes/demo-old-tool'; upgrade treehouse and spawn again
+treehouse_root recorded? no record file at all
+
+### secondmate home, no treehouse on PATH
+$ fm-spawn.sh <id> <project> --scout   ; exit 1
+error: treehouse is not installed on this spawn's PATH, so demo-absent cannot be given a worktree from this home's own pool root '/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.19TJjT/spawn-demo-no-tool/home/user-home/.treehouse-homes/demo-no-tool'; install treehouse and spawn again
+
+### secondmate home, slot came back from outside its own pool root
+$ fm-spawn.sh <id> <project> --scout   ; exit 1
+error: treehouse get returned worktree '/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.19TJjT/spawn-demo-foreign/outside-every-pool-root', which is outside this home's own pool root '/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.19TJjT/spawn-demo-foreign/home/user-home/.treehouse-homes/demo-foreign', so demo-foreign would work in the shared pool another home owns; the treehouse this spawn can see honors a configured root but the one the worker shell resolved ignored it, so make that shell's PATH resolve the same root-capable treehouse and spawn again; inspect window firstmate:fm-demo-foreign
+
+### secondmate home, slot from its own pool root
+$ fm-spawn.sh <id> <project> --scout   ; exit 0
+spawned demo-own harness=codex kind=scout window=firstmate:fm-demo-own worktree=/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.19TJjT/spawn-demo-own/home/user-home/.treehouse-homes/demo-own/pool/1
+recorded in state/demo-own.meta: treehouse_root=/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.19TJjT/spawn-demo-own/home/user-home/.treehouse-homes/demo-own
+line the pane was asked to run: TREEHOUSE_ROOT='/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.19TJjT/spawn-demo-own/home/user-home/.treehouse-homes/demo-own' treehouse get
+
+### primary home (no marker): nothing forced
+$ fm-spawn.sh <id> <project> --scout   ; exit 0
+spawned demo-primary harness=codex kind=scout window=firstmate:fm-demo-primary worktree=/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.19TJjT/spawn-demo-primary/pool
+treehouse_root recorded? 0
+line the pane was asked to run: treehouse get
+
+### identity marker holding '../elsewhere', which the shared secondmate predicate rejects
+$ fm-treehouse-root.sh   ; exit 0
+<nothing printed: the home is a primary here exactly as it is everywhere else>
+
+
+### identity marker holding an id that cannot name one directory
+$ FM_HOME=<home with marker holding .> fm-treehouse-root.sh   ; exit 1
+error: fm-treehouse-root.sh: '/tmp/fmid.eoW3RA/home/.fm-secondmate-home' must hold one secondmate id usable as a directory name, got '.'
+$ FM_HOME=<home with marker holding ..> fm-treehouse-root.sh   ; exit 1
+error: fm-treehouse-root.sh: '/tmp/fmid.eoW3RA/home/.fm-secondmate-home' must hold one secondmate id usable as a directory name, got '..'
+
+### a healthy marker, for contrast
+$ fm-treehouse-root.sh   ; exit 0
+/tmp/fmid.eoW3RA/user/.treehouse-homes/sm-kapitan-2

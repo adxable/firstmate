@@ -1,0 +1,19 @@
+### S4 a task leased from the home's own pool root tears down back into that pool
+leased from home B's own root: /private/tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/5/adx-worker
+home B's own pool BEFORE teardown:
+    1     leased       /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/1/adx-worker  (held by fm-b2)
+    2     leased       /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/2/adx-worker  (held by fm-b3)
+    3     leased       /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/3/adx-worker  (held by fm-b3)
+    4     leased       /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/4/adx-worker  (held by fm-b3)
+    5     leased       ~/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/5/adx-worker  (held by fm-teardown-case)
+the DEFAULT pool this shell would otherwise resolve (HOME=/private/tmp/fm-pool-live/sb.NyfZm6/user-home-B, no TREEHOUSE_ROOT):
+    🌳 No worktrees in pool.
+    teardown: 🌳 Worktree returned to pool.
+    teardown: teardown live-3 complete (window firstmate:fm-live-3, worktree /private/tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/5/adx-worker)
+    teardown rc=0
+home B's own pool AFTER teardown:
+    1     leased       /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/1/adx-worker  (held by fm-b2)
+    2     leased       /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/2/adx-worker  (held by fm-b3)
+    3     leased       /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/3/adx-worker  (held by fm-b3)
+    4     leased       /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/4/adx-worker  (held by fm-b3)
+    5     available    ~/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/5/adx-worker

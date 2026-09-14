@@ -1,0 +1,28 @@
+treehouse: /Users/adix/.local/bin/treehouse v2.3.0
+
+== which pool root does each home resolve? (bin/fm-treehouse-root.sh) ==
+primary home   -> ''  (empty: treehouse's own resolution stands)
+secondmate home-> '/private/tmp/fmpool.tH8UNw/user/.treehouse-homes/sm-kapitan-2'
+
+== BEFORE: no per-home root. The primary warms a slot, then gives it back. ==
+primary leased /private/tmp/fmpool.tH8UNw/user/.treehouse/adx-worker-3b48e3/1/adx-worker  (worktree of clone: primary/adx-worker)
+🌳 Worktree returned to pool.
+primary returned it; the slot stays in the pool, warm and free.
+secondmate asked its OWN clone for a worktree and got /private/tmp/fmpool.tH8UNw/user/.treehouse/adx-worker-3b48e3/1/adx-worker
+  -> that worktree is a worktree of clone: primary/adx-worker
+  -> THE BUG: the second mate was handed the OTHER home's clone.
+🌳 Worktree returned to pool.
+
+== AFTER: the second mate leases under the root its home resolves. ==
+🌳 Worktree returned to pool.
+primary again warmed and freed a slot at /private/tmp/fmpool.tH8UNw/user/.treehouse/adx-worker-3b48e3/1/adx-worker
+secondmate leased /private/tmp/fmpool.tH8UNw/user/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-3b48e3/1/adx-worker
+  -> worktree of clone: second/adx-worker
+  -> FIXED: the second mate can only ever get its own clone.
+
+== the slot returns to the root its record names ==
+-- treehouse status under the secondmate's own root, before return --
+   1     leased       ~/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-3b48e3/1/adx-worker  (held by second)
+   🌳 Worktree returned to pool.
+-- and after --
+   1     available    ~/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-3b48e3/1/adx-worker

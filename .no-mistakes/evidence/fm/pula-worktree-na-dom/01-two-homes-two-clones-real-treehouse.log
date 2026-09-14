@@ -1,0 +1,33 @@
+sandbox: /tmp/fm-pool-live/sb.NyfZm6
+treehouse: /Users/adix/.local/bin/treehouse v2.3.0
+
+### S1 resolver: which pool root does each home use
+primary-shaped home  -> rc=0 root=''
+secondmate home      -> rc=0 root='/tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7'
+bad id in marker    -> rc=0 out=
+
+### S2 the reported bug, on the real pool tool: one shared root
+home A leased: /tmp/fm-pool-live/sb.NyfZm6/shared-root/.treehouse/adx-worker-d892c0/1/adx-worker
+home B leased: /tmp/fm-pool-live/sb.NyfZm6/shared-root/.treehouse/adx-worker-d892c0/1/adx-worker
+home B's slot is backed by clone: /private/tmp/fm-pool-live/sb.NyfZm6/homeA/adx-worker/.git
+home B's own clone git dir      : /private/tmp/fm-pool-live/sb.NyfZm6/homeB/adx-worker/.git
+    trust: error: refusing to pre-register Claude trust: '/private/tmp/fm-pool-live/sb.NyfZm6/shared-root/.treehouse/adx-worker-d892c0/1/adx-worker' is not a worktree of project '/private/tmp/fm-pool-live/sb.NyfZm6/homeB/adx-worker'
+    claude-trust rc=1
+
+### S3 the fix: each home leases from its own root
+home A slot: /tmp/fm-pool-live/sb.NyfZm6/user-home-A/.treehouse/adx-worker-d892c0/1/adx-worker
+home B slot: /tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0/1/adx-worker
+pool dir A : /private/tmp/fm-pool-live/sb.NyfZm6/user-home-A/.treehouse/adx-worker-d892c0
+pool dir B : /private/tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7/.treehouse/adx-worker-d892c0
+B slot backed by: /private/tmp/fm-pool-live/sb.NyfZm6/homeB/adx-worker/.git
+claude-trust for B's own-pool slot rc=0
+
+pool layout under home B's own root (/tmp/fm-pool-live/sb.NyfZm6/user-home-B/.treehouse-homes/mate-7):
+<rootB>
+<rootB>/.treehouse
+<rootB>/.treehouse/adx-worker-d892c0
+<rootB>/.treehouse/adx-worker-d892c0/1
+<rootB>/.treehouse/adx-worker-d892c0/1/adx-worker
+<rootB>/.treehouse/adx-worker-d892c0/treehouse-state.json
+<rootB>/.treehouse/adx-worker-d892c0/treehouse-state.lock
+<rootB>/.treehouse/.gitignore

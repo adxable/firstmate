@@ -1,0 +1,63 @@
+FM_TEST_BEGIN 2026-09-14T20:18:41Z tests/fm-backend-herdr-workspace-per-home-e2e.test.sh family=real-herdr-gated expected_gate_skip=herdr
+ok - real herdr E2E: a primary-shaped home spawns a crewmate on the herdr backend
+ok - real herdr E2E: the primary-shaped home's crewmate landed in the 'firstmate' workspace
+ok - real herdr E2E: the primary spawns a --secondmate task on the herdr backend
+ok - real herdr E2E: a --secondmate spawn by the PRIMARY lands in the SECONDMATE's own labeled workspace, distinct from the primary's
+ok - real herdr E2E: a crewmate spawns successfully FROM a secondmate-shaped home's own fm-spawn.sh process
+ok - real herdr E2E: a crewmate spawned FROM the secondmate-shaped home lands in the secondmate's OWN workspace - falls out of per-home resolution, no glue needed
+ok - real herdr E2E: list_live from the primary's own context sees only the primary's own task
+ok - real herdr E2E: list_live from the secondmate's own context sees only tasks in the secondmate's own workspace (both its own tab and its crewmate's)
+ok - real herdr E2E: tearing down cm1 closes only its own tab - the secondmate's and cm2's tabs survive untouched
+ok - real herdr E2E: tearing down cm2 closes only its own tab - the secondmate's own tab (same workspace) survives untouched
+FM_TEST_END 2026-09-14T20:19:20Z tests/fm-backend-herdr-workspace-per-home-e2e.test.sh exit=0 duration_ms=38469 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T20:19:20Z tests/fm-backend-herdr-launcher-workspace-e2e.test.sh family=real-herdr-gated expected_gate_skip=herdr
+ok - real herdr E2E: with one 'firstmate' workspace and no herdr parent, a crewmate still lands in this home's own workspace without stealing focus
+ok - real herdr E2E: the normal unique-label path is unchanged when the launcher's own pane identifies the workspace
+ok - real herdr E2E: presentation spaces still create the isolated child workspace and bind it under the launcher's exact parent, without stealing focus
+ok - real herdr E2E: with two 'firstmate' workspaces, a worker spawned from inside the second one lands in that exact workspace
+ok - real herdr E2E: the duplicate-labeled sibling workspace is left entirely untouched and focus is preserved
+ok - real herdr E2E: with a duplicated home label, a projected worker still hangs off the launcher's exact workspace and the sibling stays untouched
+ok - real herdr E2E: an ambiguous home label with no launcher identity refuses before any worker endpoint exists
+ok - real herdr E2E: a launcher pane that no longer exists refuses before any worker endpoint exists
+ok - real herdr E2E: a secondmate launching its own worker gets the same exact-workspace guarantee, and its same-labeled sibling is untouched
+ok - real herdr E2E: a --secondmate launch still stands up that secondmate's own workspace instead of inheriting the launcher's
+ok - real herdr E2E: teardown closes only the worker's own pane and leaves the launcher, its workspace, and the same-labeled sibling intact
+ok - real herdr E2E: isolated lab session removed and default fleet session unchanged
+FM_TEST_END 2026-09-14T20:20:35Z tests/fm-backend-herdr-launcher-workspace-e2e.test.sh exit=0 duration_ms=75159 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T20:20:35Z tests/fm-backend-herdr-presentation-e2e.test.sh family=real-herdr-gated expected_gate_skip=herdr
+ok - real Herdr lab: an opted-out spawn retains the Stage 1 Herdr command sequence with zero ordering calls
+ok - real Herdr lab: a home that configured nothing is projected by default on herdr 0.9.0
+ok - real Herdr lab: every projected create, task-tab create, seeded prune, and move preserves active workspace and tab
+warning: herdr presentation cleanup could not verify the exact pane; refusing focus-unsafe pane close
+ok - real Herdr lab: active seeded-tab pruning refuses the exact pane and preserves exact focus
+ok - real Herdr lab: bounded lock contention warns and falls back flat without projection or focus drift
+ok - real Herdr lab: concurrent primary workers form one stable contiguous block without active workspace/tab drift
+ok - real Herdr lab: forced workspace.move failure leaves a successful worker in default order with a warning and no cleanup
+ok - real Herdr lab: concurrent post-create abort cleanup stays serialized with exact focus restoration
+ok - real Herdr lab: Treehouse commands and metadata shape are byte-identical except for endpoint IDs and spawn incarnation
+ok - real Herdr lab: exact task-pane close removes the projected workspace with no unrestored wrong-focus interval
+ok - real Herdr lab: concurrent projected cleanup is serialized and leaves active workspace/tab unchanged
+ok - real Herdr lab: three repeated concurrent create/order/cleanup waves have zero active workspace or tab drift
+ok - real Herdr lab: the primary presentation setting inherits into real secondmate homes
+ok - real Herdr lab: primary and two secondmate homes each own a top-level contiguous child block
+ok - real Herdr lab: concurrent primary/A/B spawns preserve parent order and exact focus
+ok - real Herdr lab: session lock contention from a secondmate home falls back flat with no journal
+ok - real Herdr lab: Hi Bit and Wheelhouse-style same-identity restarts reclaim one nested space with exact focus and idempotence
+ok - real Herdr lab: secondmate restart binding and reclaim stay isolated to the exact child home and parent
+ok - real Herdr lab: concurrent cross-home recoveries replace exact husks under one session lock with no focus drift
+ok - real Herdr lab: legacy projection labels and flat secondmate tabs are left unmigrated
+ok - real Herdr lab: multi-home exact-pane teardowns restore captain focus without workspace close authority
+warning: no exact herdr presentation token match for missing1; leaving any stale space untouched and spawning flat
+warning: no exact herdr presentation token match for renamed1; leaving any stale space untouched and spawning flat
+warning: 2 exact herdr presentation token matches for duplicate1 are quarantined; inspecting only for duplicate-agent risk
+warning: quarantined herdr presentation for duplicate1 is dead or agent-free; exact bound reclaim may proceed, otherwise spawning flat
+warning: 2 exact herdr presentation token matches for duplicate1 are quarantined; inspecting only for duplicate-agent risk
+error: quarantined herdr presentation for duplicate1 has a live pane; refusing duplicate launch
+ok - real Herdr lab: missing, renamed, and duplicate tokens trigger zero destructive or adoptive calls, and live duplicate risk refuses launch
+ok - real Herdr lab validation completed on Herdr 0.9.0 with the default-session tripwire intact
+FM_TEST_END 2026-09-14T20:35:16Z tests/fm-backend-herdr-presentation-e2e.test.sh exit=0 duration_ms=880616 gate_skip=false
+FM_TEST_SUMMARY total=3 failed=0 skipped_gate=0 duration_ms=994488
+FM_TEST_SUMMARY_FAMILY family=real-herdr-gated count=3 duration_ms=994244 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-backend-herdr-presentation-e2e.test.sh duration_ms=880616
+FM_TEST_SLOWEST rank=2 script=tests/fm-backend-herdr-launcher-workspace-e2e.test.sh duration_ms=75159
+FM_TEST_SLOWEST rank=3 script=tests/fm-backend-herdr-workspace-per-home-e2e.test.sh duration_ms=38469

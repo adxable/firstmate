@@ -1,0 +1,26 @@
+this home's own pool root: /private/tmp/fm-pool-live/spawn.ur8wYv/home/user-home/.treehouse-homes/mate-live
+
+### S6 a real treehouse v2.0.1 ignores a configured pool root
+v2.0.1 asked for root '/private/tmp/fm-pool-live/spawn.ur8wYv/pool-old' and leased: /private/tmp/fm-pool-live/spawn.ur8wYv/home/user-home/.treehouse/project-f77904/1/project
+  -> IGNORED the root (this is the collision the refusal prevents)
+
+### S7 capability probe against the two REAL builds
+probe against real v2.0.1 -> rc=1 (1 = installed but ignores a root)
+probe against real v2.3.0 -> rc=0 (0 = honours a root)
+
+### S8 the spawn a secondmate home really runs, against each real build
+pane will settle in the slot this home's own pool handed over: /private/tmp/fm-pool-live/spawn.ur8wYv/home/user-home/.treehouse-homes/mate-live/.treehouse/project-f77904/1/project
+
+-- spawn with real treehouse v2.0.1 on PATH --
+    error: the installed treehouse ignores a configured pool root, so live-spawn would silently lease from the shared pool another home owns instead of this home's own '/private/tmp/fm-pool-live/spawn.ur8wYv/home/user-home/.treehouse-homes/mate-live'; upgrade treehouse and spawn again
+    spawn rc=1
+    task record present: no
+    treehouse_root recorded: ''
+
+-- operator upgrades, spawns the same id again with real treehouse v2.3.0 --
+    spawned live-spawn harness=codex kind=scout window=firstmate:fm-live-spawn worktree=/private/tmp/fm-pool-live/spawn.ur8wYv/home/user-home/.treehouse-homes/mate-live/.treehouse/project-f77904/1/project
+    spawn rc=0
+grep: /private/tmp/fm-pool-live/spawn.ur8wYv/home/pane.log: No such file or directory
+    acquisition line sent to the pane: 
+    treehouse_root recorded: '/private/tmp/fm-pool-live/spawn.ur8wYv/home/user-home/.treehouse-homes/mate-live'
+    worktree recorded:       '/private/tmp/fm-pool-live/spawn.ur8wYv/home/user-home/.treehouse-homes/mate-live/.treehouse/project-f77904/1/project'

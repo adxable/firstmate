@@ -1,0 +1,20 @@
+# Why the three real-Herdr e2e suites stopped running on darwin after this branch pinned HOME
+
+## The pre-fix lab HOME and the session socket it implies (tests/herdr-test-safety.sh at de523ef)
+### with TMPDIR=/tmp
+pre-fix lab home: /private/tmp/fm-herdr-lab.Uq6k23/lab-home
+session socket:   /private/tmp/fm-herdr-lab.Uq6k23/lab-home/.config/herdr/sessions/fm-lab-0123456789abcdef-999999-32767/herdr.sock
+socket length:    112 (sun_path cap 104)
+RESULT: would FAIL the new case
+
+### with the operator's default macOS TMPDIR
+pre-fix lab home: /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-herdr-lab.dOXbrk/lab-home
+session socket:   /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-herdr-lab.dOXbrk/lab-home/.config/herdr/sessions/fm-lab-0123456789abcdef-999999-32767/herdr.sock
+socket length:    156 (sun_path cap 104)
+RESULT: would FAIL the new case
+
+## What real herdr 0.9.0 does with that HOME (server started exactly as fm_backend_herdr_server_ensure does)
+-- foreground server under LAB HOME for 4s --
+server EXITED rc=1
+log: Error: Custom { kind: InvalidInput, error: "local socket name length exceeds capacity of sun_path of sockaddr_un" }
+  PID COMMAND

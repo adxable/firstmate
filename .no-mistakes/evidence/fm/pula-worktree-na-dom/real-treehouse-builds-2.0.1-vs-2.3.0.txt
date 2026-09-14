@@ -1,0 +1,24 @@
+old build: v2.0.1   new build: v2.3.0
+
+### 1. does the real v2.0.1 honour TREEHOUSE_ROOT at all?
+asked v2.0.1 for root '/private/tmp/fmold.cN7Y5H/wanted-root'
+v2.0.1 leased:  /private/tmp/fmold.cN7Y5H/user/.treehouse/project-0cd135/1/project
+  -> IGNORED the root; it leased from the shared user-level pool. This is the silent collision the refusal exists to stop.
+v2.3.0 leased:  /private/tmp/fmold.cN7Y5H/wanted-root/.treehouse/project-0cd135/1/project
+  -> honoured
+
+### 2. the probe fm-spawn runs, asked of each real build
+  v2.0.1 -> treehouse_supports_root rc=1   (installed but ignores one)
+  v2.3.0 -> treehouse_supports_root rc=0   (honours a root)
+
+### 3. what a second mate's spawn does, against each real build
+-- real treehouse v2.0.1 on PATH --
+$ fm-spawn.sh live-spawn <project> --scout   ; exit 1
+   error: the installed treehouse ignores a configured pool root, so live-spawn would silently lease from the shared pool another home owns instead of this home's own '/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.7c0CmC/spawn-real-builds/home/user-home/.treehouse-homes/real-builds'; upgrade treehouse and spawn again
+   task record written? no
+
+-- the operator upgrades, exactly as the refusal said, and spawns the SAME id --
+$ fm-spawn.sh live-spawn <project> --scout   ; exit 0
+   spawned live-spawn harness=codex kind=scout window=firstmate:fm-live-spawn worktree=/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.7c0CmC/spawn-real-builds/home/user-home/.treehouse-homes/real-builds/pool/1
+   acquisition line sent to the pane: TREEHOUSE_ROOT='/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.7c0CmC/spawn-real-builds/home/user-home/.treehouse-homes/real-builds' treehouse get
+   state/live-spawn.meta: treehouse_root=/private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-treehouse-root.7c0CmC/spawn-real-builds/home/user-home/.treehouse-homes/real-builds

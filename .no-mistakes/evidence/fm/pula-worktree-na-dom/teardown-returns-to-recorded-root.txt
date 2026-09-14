@@ -1,0 +1,29 @@
+treehouse: v2.3.0
+the home's own pool root, from bin/fm-treehouse-root.sh: /private/tmp/fmtd.xI82mW/user/.treehouse-homes/sm-kapitan-2
+
+== the task record fm-spawn writes, for a slot leased under the home's own root ==
+leased: /private/tmp/fmtd.xI82mW/user/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker
+   1     leased       ~/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker  (held by fm-task-x1)
+state/task-x1.meta will carry: treehouse_root=/private/tmp/fmtd.xI82mW/user/.treehouse-homes/sm-kapitan-2
+$ fm-teardown.sh task-x1 --force   ; exit 0
+   teardown: reaping leaked worktree process(es) for task-x1: 11019
+   teardown task-x1 complete (window firstmate:fm-task-x1, worktree /private/tmp/fmtd.xI82mW/user/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker)
+   pool after:
+   1     available    ~/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker
+
+== adversarial: an ambient TREEHOUSE_ROOT pointing at some other pool must not win ==
+leased: /private/tmp/fmtd.xI82mW/user/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker
+$ TREEHOUSE_ROOT=/private/tmp/fmtd.xI82mW/decoy-root fm-teardown.sh task-x2 --force   ; exit 0
+   teardown: reaping leaked worktree process(es) for task-x2: 15874
+   teardown task-x2 complete (window firstmate:fm-task-x2, worktree /private/tmp/fmtd.xI82mW/user/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker)
+   pool after:
+   1     available    ~/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker
+   decoy root contents: <none means nothing was returned into it>
+
+== a task record with no treehouse_root= (spawned before this change) ==
+leased: /private/tmp/fmtd.xI82mW/user/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker
+$ fm-teardown.sh task-old --force   ; exit 0
+   teardown: reaping leaked worktree process(es) for task-old: 20365
+   teardown task-old complete (window firstmate:fm-task-old, worktree /private/tmp/fmtd.xI82mW/user/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker)
+   pool after:
+   1     available    ~/.treehouse-homes/sm-kapitan-2/.treehouse/adx-worker-e10eac/1/adx-worker

@@ -1,0 +1,13 @@
+### S9 the pane settles in a slot from this home's own pool root
+home's own pool root: /private/tmp/fm-pool-live/spawn2.3w3BA5/home/user-home/.treehouse-homes/mate-live2
+slot handed over:     /private/tmp/fm-pool-live/spawn2.3w3BA5/home/user-home/.treehouse-homes/mate-live2/.treehouse/project-4ef79b/1/project
+    spawned live-own harness=codex kind=scout window=firstmate:fm-live-own worktree=/private/tmp/fm-pool-live/spawn2.3w3BA5/home/user-home/.treehouse-homes/mate-live2/.treehouse/project-4ef79b/1/project
+    spawn rc=0
+    line the pane was asked to run: TREEHOUSE_ROOT='/private/tmp/fm-pool-live/spawn2.3w3BA5/home/user-home/.treehouse-homes/mate-live2' treehouse get
+    treehouse_root recorded:        /private/tmp/fm-pool-live/spawn2.3w3BA5/home/user-home/.treehouse-homes/mate-live2
+
+### S10 adversarial: the pane's own treehouse leases from ANOTHER pool root
+slot handed over by the other pool: /private/tmp/fm-pool-live/spawn2.3w3BA5/another-homes-root/.treehouse/project-4ef79b/1/project
+    error: treehouse get returned worktree '/private/tmp/fm-pool-live/spawn2.3w3BA5/another-homes-root/.treehouse/project-4ef79b/1/project', which is outside this home's own pool root '/private/tmp/fm-pool-live/spawn2.3w3BA5/home/user-home/.treehouse-homes/mate-live2', so live-foreign would work in the shared pool another home owns; the treehouse this spawn can see honors a configured root but the one the worker shell resolved ignored it, so make that shell's PATH resolve the same root-capable treehouse and spawn again; inspect window firstmate:fm-live-foreign
+    spawn rc=1
+    task record present: no
