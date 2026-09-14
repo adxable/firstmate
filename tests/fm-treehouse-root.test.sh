@@ -342,17 +342,43 @@ make_spawn_case() {  # <name> <id> [secondmate]
   git -C "$project" worktree add --quiet --detach "$pool" "$sha"
 
   # Replace the fixture's tmux with one that also records every plain send-keys
-  # payload, so the acquisition line the pane is asked to run can be replayed.
+  # payload, so the acquisition line the pane is asked to run can be replayed,
+  # and that keeps a register of the windows it created: fm_backend_tmux_create_task
+  # refuses a task window that already exists, so a spawn refused after creating
+  # one blocks the very retry its message asks for.
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
+reg="${0%/*}/.windows"
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window|set-window-option) exit 0 ;;
+  list-windows) [ ! -f "$reg" ] || cat "$reg"; exit 0 ;;
+  new-window)
+    name=; prev=
+    for a in "$@"; do
+      [ "$prev" != -n ] || name=$a
+      prev=$a
+    done
+    [ -z "$name" ] || printf '%s\n' "$name" >> "$reg"
+    printf '@%s\n' "$(wc -l < "$reg" | tr -d ' ')"
+    exit 0
+    ;;
+  kill-window)
+    name=; prev=
+    for a in "$@"; do
+      [ "$prev" != -t ] || name=${a##*:}
+      prev=$a
+    done
+    if [ -n "$name" ] && [ -f "$reg" ]; then
+      grep -vxF "$name" "$reg" > "$reg.next" || true
+      mv "$reg.next" "$reg"
+    fi
+    exit 0
+    ;;
+  has-session|new-session|set-window-option) exit 0 ;;
   send-keys)
     if [ -n "${FM_FAKE_PANE_LOG:-}" ]; then
       prev=
@@ -789,6 +815,31 @@ EOF
   pass "a home with no root of its own is unaffected by wherever its worktree comes from"
 }
 
+# Both capability refusals prescribe fixing the pool tool and spawning the same
+# id again, so neither may leave an endpoint behind: the backend refuses a task
+# window it already holds, which would turn the prescribed retry into a second
+# failure with an unrelated cause.
+test_a_refused_capability_spawn_leaves_no_endpoint_behind() {
+  local rec home project pool fakebin out rc
+  rec=$(FM_TEST_STUB_TREEHOUSE_ROOT_SUPPORT=no \
+    make_spawn_case mate-retry-after-refusal th-root-retry secondmate)
+  IFS='|' read -r home project pool fakebin <<EOF
+$rec
+EOF
+  out=$(FM_FAKE_PANE_LOG="$home/pane.log" \
+    fm_test_run_spawn "$home" "$pool" "$fakebin" th-root-retry "$project" --scout 2>&1) && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "fixture is vacuous: the spawn was not refused over the pool tool"
+
+  # The operator does exactly what the refusal asked: the tool of the day now
+  # honours a configured root, and the same id is spawned again.
+  write_treehouse_stub "$fakebin" yes
+  out=$(FM_FAKE_PANE_LOG="$home/pane.log" \
+    fm_test_run_spawn "$home" "$pool" "$fakebin" th-root-retry "$project" --scout 2>&1) \
+    || fail "the retry the refusal asked for was blocked by what the refused spawn left behind: $out"
+  pass "a spawn refused over the pool tool leaves no endpoint, so the retry it prescribes runs"
+}
+
 # The refusal is about sending a root, so a home that sends none never meets it.
 test_a_home_without_its_own_root_ignores_the_tools_root_support() {
   local rec rc out home
@@ -821,6 +872,7 @@ test_spawn_leases_and_records_its_own_homes_root
 test_the_probe_reads_root_support_from_the_tool
 test_a_root_resolving_home_refuses_a_tool_that_ignores_the_root
 test_a_root_resolving_home_names_an_absent_pool_tool_as_absent
+test_a_refused_capability_spawn_leaves_no_endpoint_behind
 test_a_root_resolving_home_refuses_a_slot_outside_its_root
 test_a_root_resolving_home_accepts_a_slot_from_its_own_root
 test_a_home_without_its_own_root_accepts_any_slot

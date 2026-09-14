@@ -2711,6 +2711,43 @@ if [ -e "$STATE/$ID.backlog-close" ] || [ -L "$STATE/$ID.backlog-close" ]; then
   exit 1
 fi
 
+# The pool root this home leases from, recorded further down as treehouse_root=
+# so teardown never re-derives it. Empty on the relaunch, secondmate and orca
+# paths, which acquire no pool slot, and empty for a home that needs no root of
+# its own. bin/fm-treehouse-root.sh owns the resolution.
+#
+# Resolved and checked HERE, before any endpoint exists on any backend: both
+# refusals below tell the operator to fix the pool tool and spawn the same id
+# again, and a surface this attempt left behind would make that retry die on a
+# task window that already exists. Neither the resolution nor the probe needs
+# anything the endpoint provides, so nothing forces them to run later.
+SPAWN_TREEHOUSE_ROOT=
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  # This home is handed over explicitly rather than left to the child's fallback
+  # chain, so the root recorded below is the one this spawn resolved even when
+  # FM_HOME was never exported into it.
+  SPAWN_TREEHOUSE_ROOT=$(FM_HOME="$FM_HOME" \
+    "$FM_ROOT/bin/fm-treehouse-root.sh") || {
+    echo "error: could not resolve this home's treehouse pool root; refusing to launch $ID into a pool that may belong to another home" >&2
+    exit 1
+  }
+  if [ -n "$SPAWN_TREEHOUSE_ROOT" ]; then
+    SPAWN_TREEHOUSE_ROOT_SUPPORT=0
+    treehouse_supports_root || SPAWN_TREEHOUSE_ROOT_SUPPORT=$?
+    case $SPAWN_TREEHOUSE_ROOT_SUPPORT in
+      0) ;;
+      127)
+        echo "error: treehouse is not installed on this spawn's PATH, so $ID cannot be given a worktree from this home's own pool root '$SPAWN_TREEHOUSE_ROOT'; install treehouse and spawn again" >&2
+        exit 1
+        ;;
+      *)
+        echo "error: the installed treehouse ignores a configured pool root, so $ID would silently lease from the shared pool another home owns instead of this home's own '$SPAWN_TREEHOUSE_ROOT'; upgrade treehouse and spawn again" >&2
+        exit 1
+        ;;
+    esac
+  fi
+fi
+
 W="fm-$ID"
 # SPAWN_ADOPTED_ENDPOINT: does $T name an endpoint that existed BEFORE this
 # spawn ran? An adoption reuses the task's recorded endpoint and its recorded
@@ -3148,12 +3185,6 @@ rovo_endpoint_cleanup() {
   fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID" 2>/dev/null || true
 }
 
-# The pool root this home leases from, recorded below as treehouse_root= so
-# teardown never re-derives it. Empty on the relaunch, secondmate and orca paths,
-# which acquire no pool slot, and empty for a home that needs no root of its own.
-# bin/fm-treehouse-root.sh owns the resolution.
-SPAWN_TREEHOUSE_ROOT=
-
 if [ "$RELAUNCH" -eq 1 ]; then
   # No worktree is acquired: the recorded one is reused as-is. What must be
   # proven instead is that the adopted endpoint's shell is actually sitting in
@@ -3172,28 +3203,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  # This home is handed over explicitly rather than left to the child's fallback
-  # chain, so the root recorded below is the one this spawn resolved even when
-  # FM_HOME was never exported into it.
-  SPAWN_TREEHOUSE_ROOT=$(FM_HOME="$FM_HOME" \
-    "$FM_ROOT/bin/fm-treehouse-root.sh") || {
-    echo "error: could not resolve this home's treehouse pool root; refusing to launch $ID into a pool that may belong to another home; inspect window $T" >&2
-    exit 1
-  }
   if [ -n "$SPAWN_TREEHOUSE_ROOT" ]; then
-    SPAWN_TREEHOUSE_ROOT_SUPPORT=0
-    treehouse_supports_root || SPAWN_TREEHOUSE_ROOT_SUPPORT=$?
-    case $SPAWN_TREEHOUSE_ROOT_SUPPORT in
-      0) ;;
-      127)
-        echo "error: treehouse is not installed on this spawn's PATH, so $ID cannot be given a worktree from this home's own pool root '$SPAWN_TREEHOUSE_ROOT'; install treehouse and spawn again; inspect window $T" >&2
-        exit 1
-        ;;
-      *)
-        echo "error: the installed treehouse ignores a configured pool root, so $ID would silently lease from the shared pool another home owns instead of this home's own '$SPAWN_TREEHOUSE_ROOT'; upgrade treehouse and spawn again; inspect window $T" >&2
-        exit 1
-        ;;
-    esac
     spawn_send_text_line "$WT_TARGET" "TREEHOUSE_ROOT=$(shell_quote "$SPAWN_TREEHOUSE_ROOT") treehouse get"
   else
     # This home needs no root of its own, so nothing is forced on the pane and
