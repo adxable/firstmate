@@ -305,6 +305,9 @@ EOF
       "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" >/dev/null 2>&1 || true
     LAB_READY=0
   fi
+  # The lab HOME lives outside TMP_ROOT, short enough for herdr to bind its
+  # session socket under it (tests/herdr-test-safety.sh).
+  [ -z "${LAB_HOME:-}" ] || rm -rf "$LAB_HOME"
   rm -rf "$TMP_ROOT"
   rm -f "$WORKTREE_OCCUPANT_RELEASE"
 }
@@ -314,7 +317,7 @@ PATH="$HERDR_ORIGINAL_PATH" \
   || fail "could not provision the isolated Herdr lab"
 LAB_READY=1
 
-LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home") \
+LAB_HOME=$(herdr_lab_home) \
   || fail "could not build a lab-owned HOME for this suite's spawns"
 
 lab() {

@@ -75,11 +75,14 @@ cleanup_all() {
   [ -n "$WT2" ] && command -v treehouse >/dev/null 2>&1 \
     && HOME="${LAB_HOME:-$HOME}" treehouse return --force "$WT2" >/dev/null 2>&1
   herdr_safe_stop_and_delete "$SESSION"
+  # The lab HOME lives outside TMP_ROOT, short enough for herdr to bind its
+  # session socket under it (tests/herdr-test-safety.sh).
+  [ -z "${LAB_HOME:-}" ] || rm -rf "$LAB_HOME"
   rm -rf "$TMP_ROOT"
 }
 trap cleanup_all EXIT
 fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
-LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home") \
+LAB_HOME=$(herdr_lab_home) \
   || fail "could not build a lab-owned HOME for this suite's spawns"
 
 # shellcheck source=/dev/null
@@ -229,7 +232,12 @@ pass "real herdr E2E: list_live from the secondmate's own context sees only task
 # --- 5. teardown closes the RIGHT tab, and no other ------------------------
 
 TD1_OUT="$TMP_ROOT/td1.out"
-HOME="$LAB_HOME" \
+# FM_HOME names the home cm1 was spawned from, so teardown anchors the shared
+# Treehouse project lock in that home's state directory - the same lock the
+# spawn took. Without it FM_HOME falls back to FM_ROOT_OVERRIDE, and teardown
+# either takes a different lock than the spawn or, in a checkout with no
+# untracked state/ directory, refuses to resolve one at all.
+HOME="$LAB_HOME" FM_HOME="$PRIMARY_HOME" \
   FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
   FM_CONFIG_OVERRIDE="$PRIMARY_HOME/config" \
   "$ROOT/bin/fm-teardown.sh" cm1 >"$TD1_OUT" 2>&1
@@ -249,7 +257,8 @@ WT1=
 pass "real herdr E2E: tearing down cm1 closes only its own tab - the secondmate's and cm2's tabs survive untouched"
 
 TD2_OUT="$TMP_ROOT/td2.out"
-FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$SM_HOME/state" FM_DATA_OVERRIDE="$SM_HOME/data" \
+FM_HOME="$SM_HOME" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$SM_HOME/state" FM_DATA_OVERRIDE="$SM_HOME/data" \
   FM_CONFIG_OVERRIDE="$SM_HOME/config" \
   "$ROOT/bin/fm-teardown.sh" cm2 >"$TD2_OUT" 2>&1
 rc=$?

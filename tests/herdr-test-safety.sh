@@ -14,7 +14,7 @@ HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 . "$HERDR_TEST_SAFETY_DIR/bin/fm-herdr-lab.sh"
 
-# herdr_lab_home <dir>: a lab-owned $HOME for spawns this suite drives.
+# herdr_lab_home: a lab-owned $HOME for spawns this suite drives. Echoes its path.
 #
 # bin/fm-treehouse-root.sh resolves a marker-bearing home's worktree pool root
 # under $HOME, so a spawn with FM_HOME pointing at a secondmate-shaped fixture
@@ -22,9 +22,23 @@ HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # an id that can name a live secondmate. Pinning HOME moves only that root:
 # herdr resolves a named session under $HOME/.config/herdr and an explicit
 # --session ignores HERDR_SOCKET_PATH, and git reads $HOME/.gitconfig, so both
-# are linked through to the real home. Echoes the path.
-herdr_lab_home() {  # <dir>
-  local dir=$1 real=${HOME:-}
+# are linked through to the real home.
+#
+# The home is its own SHORT, physically resolved directory rather than one under
+# the caller's TMP_ROOT, for two reasons a suite cannot work around from outside:
+#   - herdr binds a named session's socket at
+#     $HOME/.config/herdr/sessions/<session>/herdr.sock, and a unix socket path
+#     is capped by sun_path - 104 bytes on darwin - so a HOME under a mktemp
+#     TMP_ROOT makes `herdr server` die with "local socket name length exceeds
+#     capacity of sun_path of sockaddr_un" before the suite's first spawn;
+#   - treehouse records a leased worktree under the literal $HOME it resolved,
+#     while fm-spawn records the pane's physically resolved cwd, so a HOME
+#     reached through a symlink makes teardown's `treehouse return` report the
+#     slot as "not managed by treehouse".
+# It sits outside the caller's TMP_ROOT, so the caller's cleanup has to remove
+# it: every suite here already does, beside its own `rm -rf "$TMP_ROOT"`.
+herdr_lab_home() {
+  local real=${HOME:-} dir tmp
   [ -n "$real" ] || {
     printf 'herdr_lab_home: HOME is not set, so the lab home cannot reach the real herdr config\n' >&2
     return 1
@@ -34,10 +48,11 @@ herdr_lab_home() {  # <dir>
       "$real/.config/herdr" >&2
     return 1
   }
+  tmp=$(cd /tmp 2>/dev/null && pwd -P) || return 1
+  dir=$(mktemp -d "$tmp/fmlab.XXXXXX") || return 1
   mkdir -p "$dir/.config" || return 1
-  [ -e "$dir/.config/herdr" ] || ln -s "$real/.config/herdr" "$dir/.config/herdr" || return 1
-  [ ! -f "$real/.gitconfig" ] || [ -e "$dir/.gitconfig" ] \
-    || ln -s "$real/.gitconfig" "$dir/.gitconfig"
+  ln -s "$real/.config/herdr" "$dir/.config/herdr" || return 1
+  [ ! -f "$real/.gitconfig" ] || ln -s "$real/.gitconfig" "$dir/.gitconfig"
   printf '%s\n' "$dir"
 }
 
