@@ -1044,6 +1044,72 @@ test_stuck_generation_claim_is_superseded_and_rearms() {
 # Identity is mandatory at read time: a bare identityless one-line arming
 # ledger naming an unrelated live pid is NOT an open claim - it must neither
 # defer the hook nor survive as the current entry, whatever the beacon says.
+# An "arming" claim is a PROMISE that a watcher is on its way. The stuck proof
+# credits that promise while the beacon is cold, and it used to credit it for a
+# whole guard grace - 300s - during which both Stop participants stand down and
+# the turn ends with nothing watching. Arming with nothing beating is not a
+# 300s operation: bin/fm-watch-arm.sh confirms or fails a watcher inside its own
+# 10s window (30s on MSYS), and the hook makes at most three attempts. The claim
+# must expire on that arming budget, not on the watcher grace.
+#
+# The two signals are driven apart deliberately here and the verdict must
+# survive losing either one, so the case cannot go quietly vacuous: an aged
+# ledger alone supersedes only while the beacon is cold, and a cold beacon alone
+# supersedes only once the ledger passes the budget. The grace stays at its
+# default 300 throughout - the aged ledger below is 120s old, well inside it -
+# so a regression back to grace-only crediting fails all three assertions
+# together.
+test_arming_claim_expires_on_the_arm_budget_not_the_watcher_grace() {
+  local dir out status pid identity aged
+  dir=$(make_primary_dir "$TMP_ROOT/v2-arming-budget")
+  : > "$dir/state/task1.meta"
+  write_arm_fixture "$dir" actionable
+  sleep 120 &
+  pid=$!
+  identity=$(fm_test_pid_identity "$pid") || fail "could not compute a claim pid-identity"
+  aged=$(( $(date +%s) - 120 ))
+
+  # 1. ledger past the arming budget, beacon cold: nothing is arming, supersede.
+  printf 'epoch=101 owner_pid=%s outcome=arming updated_at=1\n%s\n' "$pid" "$identity" \
+    > "$dir/state/.claude-autoarm-epoch"
+  fm_touch_epoch "$aged" "$dir/state/.claude-autoarm-epoch"
+  : > "$dir/state/.last-watcher-beat"
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  expect_code 2 "$status" "a 120s arming claim with no beacon must be superseded well inside the 300s grace"
+  assert_present "$dir/state/arm-ran" "a beaconless arming claim aged past the arm budget left the home unarmed"
+  [ "$(epoch_field "$dir" epoch)" -gt 101 ] \
+    || fail "the beaconless aged claim was not superseded: $(epoch_field "$dir" epoch)"
+
+  # 2. same aged ledger, but a watcher IS beating: the beacon half still gates,
+  # so the claim stays open and nothing re-arms.
+  rm -f "$dir/state/arm-ran"
+  printf 'epoch=201 owner_pid=%s outcome=arming updated_at=1\n%s\n' "$pid" "$identity" \
+    > "$dir/state/.claude-autoarm-epoch"
+  fm_touch_epoch "$aged" "$dir/state/.claude-autoarm-epoch"
+  : > "$dir/state/.last-watcher-beat"
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  expect_code 0 "$status" "an aged arming claim whose watcher is still beating must keep the gate closed"
+  assert_absent "$dir/state/arm-ran" "a beating watcher did not protect an aged arming claim from a double arm"
+  [ "$(epoch_field "$dir" epoch)" = 201 ] \
+    || fail "an aged claim with a fresh beacon was superseded: $(epoch_field "$dir" epoch)"
+
+  # 3. cold beacon, but the claim was taken seconds ago: this is every healthy
+  # Stop, and arming over it would be the regression.
+  rm -f "$dir/state/arm-ran"
+  printf 'epoch=301 owner_pid=%s outcome=arming updated_at=%s\n%s\n' "$pid" "$(date +%s)" "$identity" \
+    > "$dir/state/.claude-autoarm-epoch"
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "a claim taken seconds ago is genuinely still arming and must keep the gate closed"
+  assert_absent "$dir/state/arm-ran" "a claim inside its arming budget was stolen and double-armed"
+  [ "$(epoch_field "$dir" epoch)" = 301 ] \
+    || fail "a claim inside its arming budget was superseded: $(epoch_field "$dir" epoch)"
+  pass "auto-arm: an arming claim expires on the arm layer's budget, not the watcher grace"
+}
+
 test_identityless_ledger_never_defers() {
   local dir out status pid
   dir=$(make_primary_dir "$TMP_ROOT/v2-identityless-ledger")
@@ -1217,6 +1283,7 @@ test_stuck_live_legacy_owner_is_retired_and_reclaimed
 test_stopped_legacy_owner_is_reclaimed_with_term_pending
 test_open_generation_claim_defers_without_any_lock
 test_stuck_generation_claim_is_superseded_and_rearms
+test_arming_claim_expires_on_the_arm_budget_not_the_watcher_grace
 test_identityless_ledger_never_defers
 test_superseded_owner_never_reinvokes_the_arm
 test_superseded_owner_goes_silent_and_never_double_translates

@@ -245,6 +245,19 @@ if [ "$CLAUDE_MODE" -eq 0 ]; then
   block_stop
 fi
 
+restored_stop() {
+  local rule
+  rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  {
+    printf '●%s\n' "$rule"
+    printf '●  SUPERVISION RESTORED BY THE TURN-END GUARD\n'
+    printf '●  This turn was about to end with nothing watching: the Stop-owned auto-arm claimed nothing and no live watcher held this home. A replacement watcher is running now.\n'
+    printf '●  Do NOT run an arm command. Continue normally; the next turn end hands the cycle back to the automatic Stop-owned arm.\n'
+    printf '●%s\n' "$rule"
+  } >&2
+  exit 2
+}
+
 # --- --claude cooperative path -----------------------------------------------
 # The Stop-owned auto-arm fires on the same Stop event. Give it a brief bounded
 # window to prove it owns recovery for this event epoch before consuming one of
@@ -454,8 +467,29 @@ if autoarm_owns_recovery; then
   exit 0
 fi
 
-# The auto-arm genuinely failed to establish: consume the bounded re-block
-# budget before considering the verified one-time attended fail-open.
+# --- last-resort arm ----------------------------------------------------------
+# Nothing owns recovery for this Stop event. Until this point the guard's only
+# lever was a forced continuation, which asks the MODEL to repair supervision
+# and is bounded by both the block budget and the harness's own consecutive-
+# block override; when it runs out, or when the auto-arm stands down silently on
+# every firing, the turn ends with nothing watching and no later Stop event to
+# try again. Establish supervision directly first, then keep the unchanged
+# continuation logic below. bin/fm-guard-last-resort-arm.sh owns the launch, the
+# verification, and the home scoping; it is a backstop, never a second arming
+# owner, and it never runs while the auto-arm claims anything.
+if "$SCRIPT_DIR/fm-guard-last-resort-arm.sh" >/dev/null 2>&1; then
+  # Supervision exists again, so ending this turn is no longer blind. Still
+  # spend one bounded continuation so the Stop-owned auto-arm reclaims
+  # ownership of the cycle on the next turn end; allow the stop once that
+  # budget is exhausted or unaccountable.
+  budget_account_current_epoch || exit 0
+  [ "$COUNT" -le "$BLOCK_BUDGET" ] || exit 0
+  restored_stop
+fi
+
+# The auto-arm genuinely failed to establish and no watcher could be started:
+# consume the bounded re-block budget before considering the verified one-time
+# attended fail-open.
 budget_account_current_epoch || block_stop
 terminal_fail_open
 terminal_status=$?

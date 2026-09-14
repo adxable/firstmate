@@ -1255,11 +1255,10 @@ fm_failure_episode_reset() {
 #     reused pid can never authenticate someone else's stale entry.
 #   - A claim is OPEN (fm_autoarm_claim_open) while its outcome is "arming",
 #     its owner pid is alive, its recorded identity successfully recomputes
-#     and matches that pid, and it is not STUCK - stuck meaning both the
-#     ledger entry and the watcher beacon (state/.last-watcher-beat) are older
-#     than the guard grace, which proves the owner hung mid-arm with nothing
-#     supervising (every legitimate arming phase with no watcher is bounded in
-#     seconds, while a healthy hours-long cycle keeps the beacon beating).
+#     and matches that pid, and it is not STUCK (fm_autoarm_arming_stuck owns
+#     that proof: the watcher beacon older than the guard grace, so nothing is
+#     supervising, AND the ledger entry older than the arming budget, so
+#     nothing can still honestly be arming either).
 #   - Every firing DEFERS (exits 0) to an open claim; anything else - a
 #     terminal outcome, a dead or identity-mismatched owner, a stuck owner, an
 #     identityless entry, or no claim at all - lets the next firing take
@@ -1348,18 +1347,69 @@ fm_autoarm_ledger_read() {  # <state-dir>
   return 0
 }
 
+# fm_autoarm_arming_stuck <state-dir> [grace]
+# The STUCK proof shared by both claim predicates: an "arming" claim whose
+# owner produced no supervision and is never going to.
+#
+# Both halves must hold. The watcher beacon must be older than the guard grace,
+# which is what proves no watcher is running for this home - a healthy
+# hours-long foregrounded cycle keeps beating, so this half alone never fires on
+# one. The ledger entry must additionally be older than the ARMING BUDGET: how
+# long arming can honestly still be in progress with no beacon at all. That
+# budget is the arm layer's own confirmation window, not the watcher grace,
+# because those measure different things. The grace bounds how stale a running
+# watcher's beacon may get between polls; arming with nothing beating is bounded
+# by bin/fm-watch-arm.sh's confirm window per attempt, times the hook's bounded
+# attempts, times the confirm-plus-successor phases inside one attempt. Crediting
+# a beaconless "arming" claim for a full 300s grace let a hung owner keep both
+# Stop participants standing down for five minutes per Stop event - and forever
+# when no further Stop event came (docs/watcher-continuity.md "Last-resort arm at
+# the Stop boundary").
+#
+# The budget can only ever be SHORTER than the grace: it is clamped to it, so
+# this predicate is strictly more willing to declare a claim stuck than the
+# grace-only form it replaces, never less. Declaring one stuck too eagerly costs
+# at most one extra arm that the watcher singleton dedupes, while the superseded
+# owner still goes silent; the reverse mistake costs the home its supervision.
+fm_autoarm_arming_stuck() {  # <state-dir> [grace]
+  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} budget confirm attempts
+  case "$grace" in
+    ''|*[!0-9]*|0) grace=300 ;;
+  esac
+  [ "$(fm_path_age "$state/.last-watcher-beat")" -ge "$grace" ] || return 1
+  budget=${FM_CLAUDE_AUTOARM_ARMING_BUDGET:-}
+  case "$budget" in
+    ''|*[!0-9]*|0)
+      # Same OSTYPE switch bin/fm-watch-arm.sh derives its own confirm window
+      # from, and the same bounded attempt count bin/fm-claude-stop-autoarm.sh
+      # accepts, so all three move together.
+      case "${OSTYPE:-}" in
+        msys*|mingw*|cygwin*) confirm=30 ;;
+        *) confirm=10 ;;
+      esac
+      confirm=${FM_ARM_CONFIRM_TIMEOUT:-$confirm}
+      case "$confirm" in ''|*[!0-9]*|0) confirm=10 ;; esac
+      attempts=${FM_CLAUDE_AUTOARM_ATTEMPTS:-2}
+      case "$attempts" in 1|2|3) : ;; *) attempts=2 ;; esac
+      budget=$(( attempts * (confirm + 1) * 2 ))
+      [ "$budget" -ge 60 ] || budget=60
+      ;;
+  esac
+  [ "$budget" -le "$grace" ] || budget=$grace
+  [ "$(fm_path_age "$state/.claude-autoarm-epoch")" -ge "$budget" ]
+}
+
 # True while the CURRENT ledger claim is open and healthy - the defer predicate
 # both Stop participants use. Open means: outcome "arming", a live owner whose
 # mandatory recorded identity recomputes and matches its pid, and not stuck
-# (the contract comment above owns the stuck proof). fm_path_age reports an
-# absent beacon as ancient, which is exactly right: arming for a full grace
-# window without producing a first beat is the same hang. An identityless
+# (fm_autoarm_arming_stuck above owns the stuck proof). fm_path_age reports an
+# absent beacon as ancient, which is exactly right: arming past the arming
+# budget without producing a first beat is the same hang. An identityless
 # entry is never open: real generation claims always record identity, a legacy
 # build's entry gets its deference from its held role-carrying lock through
 # the legacy shim, and anything else must not defer.
 fm_autoarm_claim_open() {  # <state-dir> [grace]
-  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} epoch current
-  epoch="$state/.claude-autoarm-epoch"
+  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} current
   case "$grace" in
     ''|*[!0-9]*|0) grace=300 ;;
   esac
@@ -1370,10 +1420,7 @@ fm_autoarm_claim_open() {  # <state-dir> [grace]
   current=$(fm_pid_identity "$FM_AUTOARM_OWNER" 2>/dev/null) || return 1
   [ -n "$current" ] || return 1
   [ "$current" = "$FM_AUTOARM_IDENTITY" ] || return 1
-  if [ "$(fm_path_age "$epoch")" -ge "$grace" ] \
-    && [ "$(fm_path_age "$state/.last-watcher-beat")" -ge "$grace" ]; then
-    return 1
-  fi
+  fm_autoarm_arming_stuck "$state" "$grace" && return 1
   return 0
 }
 
@@ -1499,9 +1546,8 @@ fm_autoarm_reset_owned() {  # <state-dir> <gen>
 #   3. a recorded pid-identity that no longer matches the live pid is
 #      abandonment on its own (pid reuse after a group kill), and otherwise
 #   4. the ledger's owner_pid is exactly that pid and its outcome is present
-#      and either is not "arming", or is "arming" while both the ledger entry
-#      and the watcher beacon are older than the guard grace (the same stuck
-#      proof as fm_autoarm_claim_open).
+#      and either is not "arming", or is "arming" while fm_autoarm_arming_stuck
+#      holds (the same stuck proof as fm_autoarm_claim_open).
 fm_autoarm_claim_abandoned() {  # <state-dir> [grace]
   local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} epoch lock role pid owner outcome recorded current
   lock="$state/.claude-autoarm.lock"
@@ -1527,8 +1573,7 @@ fm_autoarm_claim_abandoned() {  # <state-dir> [grace]
   case "$outcome" in
     '') return 1 ;;
     arming)
-      [ "$(fm_path_age "$epoch")" -ge "$grace" ] || return 1
-      [ "$(fm_path_age "$state/.last-watcher-beat")" -ge "$grace" ] || return 1
+      fm_autoarm_arming_stuck "$state" "$grace" || return 1
       return 0
       ;;
   esac
