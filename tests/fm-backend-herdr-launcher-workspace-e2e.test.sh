@@ -65,7 +65,7 @@ cleanup_all() {
   [ "$CLEANED" = 0 ] || return 0
   CLEANED=1
   for wt in ${WORKTREES[@]+"${WORKTREES[@]}"}; do
-    [ -n "$wt" ] && treehouse return --force "$wt" >/dev/null 2>&1
+    [ -n "$wt" ] && HOME="${LAB_HOME:-$HOME}" treehouse return --force "$wt" >/dev/null 2>&1
   done
   WORKTREES=()
   "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" || status=$?
@@ -428,7 +428,8 @@ pass "real herdr E2E: a --secondmate launch still stands up that secondmate's ow
 
 # --- 8. teardown closes only the worker's own pane --------------------------
 
-FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
+HOME="$LAB_HOME" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
   FM_CONFIG_OVERRIDE="$PRIMARY_HOME/config" \
   "$ROOT/bin/fm-teardown.sh" dupC >"$TMP_ROOT/teardown.out" 2>&1
 status=$?
