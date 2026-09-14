@@ -1786,7 +1786,7 @@ reconcile_requests_detached() {
 }
 
 watcher_cleanup() {
-  local cleanup_status=0 owns_lock=0 transition=release-lock
+  local cleanup_status=0 owns_lock=0 transition=release-lock watcher_monitor_was_on
   if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "${WATCHER_PID:-}" ]; then
     owns_lock=1
     if [ "${WATCHER_RECOVERY_PENDING:-0}" -eq 1 ] \
@@ -1801,6 +1801,25 @@ watcher_cleanup() {
     && ! fm_recovery_transition "$WATCHER_DOWNTIME_MARKER" "$transition" "$WATCH_LOCK" downtime; then
     echo "watcher: recovery state could not be persisted; retaining stale lock evidence" >&2
     cleanup_status=1
+  fi
+  # This close is the last moment anything in this home is running. Hand off to
+  # the detached silence sentry, which reports if no turn ever picks the wake up
+  # (bin/fm-silence-sentry.sh owns every condition, including staying silent on
+  # a healthy home). It arms nothing and can never fail this cleanup.
+  #
+  # Launched detached in its own process group and deliberately NOT waited for.
+  # This trap runs INSIDE the watcher process, and that process is bounded by
+  # callers: bin/fm-watch-checkpoint.sh wraps the whole watcher in `timeout
+  # <n>`, and a kill at that bound discards the wake line the watcher had
+  # already written. Anything synchronous here is charged against that budget,
+  # so the gating, the fork of the watch loop, and its confirmation all belong
+  # in the sentry's own process rather than on the close path.
+  if [ "$owns_lock" -eq 1 ] && [ -x "$FM_ROOT/bin/fm-silence-sentry.sh" ]; then
+    watcher_monitor_was_on=0
+    case $- in *m*) watcher_monitor_was_on=1 ;; esac
+    set -m 2>/dev/null || true
+    nohup "$FM_ROOT/bin/fm-silence-sentry.sh" --arm >/dev/null 2>&1 </dev/null &
+    [ "$watcher_monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
   fi
   return "$cleanup_status"
 }

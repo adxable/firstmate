@@ -1761,6 +1761,17 @@ fm_super_main() {
 
 # Run only when executed, not when sourced (tests source the classifiers).
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  # One-shot alarm dispatch. This file owns config/wedge-alarm's directive
+  # parsing, platform default, bounded dispatch, and argv safety, so another
+  # in-home reporter that must reach the captain outside the terminal pane
+  # (bin/fm-silence-sentry.sh) calls that owner here instead of restating the
+  # contract. It must be EXECUTED, never sourced: the library-mode branch below
+  # pins the notifier seam to "discard" precisely so no sourced context can fire
+  # a real notification, and that guard stays intact.
+  if [ "${1:-}" = --alarm ]; then
+    wedge_alarm_notify "${2:-}" "${3:-}"
+    exit 0
+  fi
   fm_super_main "$@"
 else
   # Library mode: these functions were SOURCED (only tests do this - production

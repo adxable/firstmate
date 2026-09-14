@@ -9,6 +9,8 @@ The durable marker and tmux flash remain as additional signals.
 
 `config/wedge-alarm` is local and gitignored.
 It lists channel directives, one per non-empty, non-comment line, and every listed non-`off` channel fires best-effort.
+These channels have a second consumer: `bin/fm-silence-sentry.sh` reaches them through the daemon's one-shot `--alarm` entry when a home stops watching and no turn ever picks the wake up ([`watcher-continuity.md`](watcher-continuity.md#silence-with-no-stop-boundary)).
+That entry must be executed rather than sourced, because the library-mode guard pins the notifier seam to `discard` so no sourced context can fire a real notification.
 `FM_WEDGE_ALARM_CHANNEL` overrides the file with one directive for focused testing.
 
 - `off` disables every active alert while retaining the durable marker and tmux flash.
