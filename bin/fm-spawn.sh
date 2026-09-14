@@ -3181,10 +3181,19 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     exit 1
   }
   if [ -n "$SPAWN_TREEHOUSE_ROOT" ]; then
-    treehouse_supports_root || {
-      echo "error: the installed treehouse ignores a configured pool root, so $ID would silently lease from the shared pool another home owns instead of this home's own '$SPAWN_TREEHOUSE_ROOT'; upgrade treehouse and spawn again; inspect window $T" >&2
-      exit 1
-    }
+    SPAWN_TREEHOUSE_ROOT_SUPPORT=0
+    treehouse_supports_root || SPAWN_TREEHOUSE_ROOT_SUPPORT=$?
+    case $SPAWN_TREEHOUSE_ROOT_SUPPORT in
+      0) ;;
+      127)
+        echo "error: treehouse is not installed on this spawn's PATH, so $ID cannot be given a worktree from this home's own pool root '$SPAWN_TREEHOUSE_ROOT'; install treehouse and spawn again; inspect window $T" >&2
+        exit 1
+        ;;
+      *)
+        echo "error: the installed treehouse ignores a configured pool root, so $ID would silently lease from the shared pool another home owns instead of this home's own '$SPAWN_TREEHOUSE_ROOT'; upgrade treehouse and spawn again; inspect window $T" >&2
+        exit 1
+        ;;
+    esac
     spawn_send_text_line "$WT_TARGET" "TREEHOUSE_ROOT=$(shell_quote "$SPAWN_TREEHOUSE_ROOT") treehouse get"
   else
     # This home needs no root of its own, so nothing is forced on the pane and

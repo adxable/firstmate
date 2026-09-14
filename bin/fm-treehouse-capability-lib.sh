@@ -20,7 +20,18 @@
 # another home's pool. That refusal is the single enforcement point for this
 # invariant; there is deliberately no earlier session-start copy of it, because
 # a second place to state one rule is a second place for it to drift.
+#
+# The answer is three-valued because that refusal is the only diagnosis its
+# operator gets, and "too old" and "not there at all" need different fixes: a
+# help text that lists no --root would also be what an absent binary produces,
+# and telling an operator to upgrade a tool they never installed names the wrong
+# remedy. 127 is the shell's own not-found status, so the caller reads the same
+# number whichever side reported it.
+#   0   the tool honors a configured root
+#   1   the tool is installed but ignores one
+#   127 the tool is not on this process's PATH
 
 treehouse_supports_root() {
+  command -v treehouse >/dev/null 2>&1 || return 127
   treehouse get --help 2>&1 | grep -Eq '(^|[^[:alnum:]_-])--root([^[:alnum:]_-]|$)'
 }

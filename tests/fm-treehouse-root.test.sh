@@ -317,7 +317,12 @@ make_spawn_case() {  # <name> <id> [secondmate]
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
   # The spawn asks the tool whether it honors a configured root before sending
   # one, so the stub has to answer that question the way a real build does.
-  write_treehouse_stub "$fakebin" "${FM_TEST_STUB_TREEHOUSE_ROOT_SUPPORT:-yes}"
+  # "absent" drops the stub entirely, which is the host that never installed the
+  # pool tool; the case that asks for it also has to take treehouse off PATH.
+  case ${FM_TEST_STUB_TREEHOUSE_ROOT_SUPPORT:-yes} in
+    absent) rm -f "$fakebin/treehouse" ;;
+    *) write_treehouse_stub "$fakebin" "${FM_TEST_STUB_TREEHOUSE_ROOT_SUPPORT:-yes}" ;;
+  esac
 
   mkdir -p "$home/state" "$home/config" "$home/projects"
   printf 'codex\n' > "$home/config/crew-harness"
@@ -582,7 +587,7 @@ probe_says() {  # <yes|no>
   mkdir -p "$stub"
   write_treehouse_stub "$stub" "$1"
   # shellcheck source=bin/fm-treehouse-capability-lib.sh
-  if ( PATH="$stub:$PATH"; . "$PROBE_LIB" && treehouse_supports_root ); then
+  if ( . "$PROBE_LIB" && PATH="$stub:$PATH" treehouse_supports_root ); then
     printf 'supported\n'
   else
     printf 'unsupported\n'
@@ -597,15 +602,34 @@ test_the_probe_reads_root_support_from_the_tool() {
   pass "the root-support probe answers from the pool tool's own help, not from its version"
 }
 
-# spawn_against_stub <name> <id> <kind> <yes|no>: one spawn whose treehouse stub
-# advertises root support or not. Echoes "<rc>|<combined output>|<home>".
-spawn_against_stub() {  # <name> <id> <kind> <yes|no>
-  local name=$1 id=$2 kind=$3 supports=$4 rec home project pool fakebin out rc
+# path_without_treehouse: this PATH minus every directory holding a treehouse
+# executable. The developer's own machine may well have the real tool installed,
+# and fm_test_run_spawn only PREPENDS the fakebin, so dropping the stub is not
+# enough on its own to reproduce a host that has no pool tool at all.
+path_without_treehouse() {
+  local IFS=: dir out=''
+  # shellcheck disable=SC2031 # probe_says prepends its stub inside its own subshell; this reads the suite's own PATH.
+  for dir in $PATH; do
+    [ -n "$dir" ] || dir=.
+    [ ! -x "$dir/treehouse" ] || continue
+    out="${out:+$out:}$dir"
+  done
+  printf '%s\n' "$out"
+}
+
+# spawn_against_stub <name> <id> <kind> <yes|no|absent>: one spawn whose treehouse
+# stub advertises root support, denies it, or is not installed at all.
+# Echoes "<rc>|<combined output>|<home>".
+spawn_against_stub() {  # <name> <id> <kind> <yes|no|absent>
+  local name=$1 id=$2 kind=$3 supports=$4 rec home project pool fakebin out rc runpath
   rec=$(FM_TEST_STUB_TREEHOUSE_ROOT_SUPPORT="$supports" make_spawn_case "$name" "$id" "$kind")
   IFS='|' read -r home project pool fakebin <<EOF
 $rec
 EOF
-  out=$(FM_FAKE_PANE_LOG="$home/pane.log" \
+  # shellcheck disable=SC2031 # probe_says prepends its stub inside its own subshell; this reads the suite's own PATH.
+  runpath=$PATH
+  [ "$supports" != absent ] || runpath=$(path_without_treehouse)
+  out=$(FM_FAKE_PANE_LOG="$home/pane.log" PATH="$runpath" \
     fm_test_run_spawn "$home" "$pool" "$fakebin" "$id" "$project" --scout 2>&1) && rc=0 || rc=$?
   printf '%s|%s|%s\n' "$rc" "$(printf '%s' "$out" | tr '\n' ' ')" "$home"
 }
@@ -634,6 +658,30 @@ EOF
     || ! grep -q '^treehouse_root=' "$home/state/th-root-old.meta" \
     || fail "the refused spawn still recorded a treehouse_root= the tool would have ignored"
   pass "a home with its own pool root refuses a tool that ignores it, naming cause and fix, and records no root"
+}
+
+# An absent pool tool answers the capability probe exactly as a too-old one does,
+# so the refusal has to tell them apart: an operator sent to upgrade a tool that
+# was never installed is chasing the wrong remedy, and this refusal is the only
+# diagnosis they get.
+test_a_root_resolving_home_names_an_absent_pool_tool_as_absent() {
+  local rec rc out home
+  rec=$(spawn_against_stub mate-no-tool th-root-absent secondmate absent)
+  IFS='|' read -r rc out home <<EOF
+$rec
+EOF
+  [ "$rc" -ne 0 ] || fail "a secondmate spawn was allowed with no pool tool installed at all"
+  case $out in
+    *"not installed"*) ;;
+    *) fail "the refusal did not name the pool tool as missing: $out" ;;
+  esac
+  case $out in
+    *upgrade*) fail "the refusal told the operator to upgrade a tool that is not installed: $out" ;;
+  esac
+  [ ! -f "$home/state/th-root-absent.meta" ] \
+    || ! grep -q '^treehouse_root=' "$home/state/th-root-absent.meta" \
+    || fail "the refused spawn still recorded a treehouse_root= no tool could honour"
+  pass "a home with its own pool root names an absent pool tool as missing rather than as too old"
 }
 
 # The refusal is about sending a root, so a home that sends none never meets it.
@@ -667,6 +715,7 @@ fi
 test_spawn_leases_and_records_its_own_homes_root
 test_the_probe_reads_root_support_from_the_tool
 test_a_root_resolving_home_refuses_a_tool_that_ignores_the_root
+test_a_root_resolving_home_names_an_absent_pool_tool_as_absent
 test_a_home_without_its_own_root_ignores_the_tools_root_support
 test_task_without_a_recorded_root_tears_down_as_before
 test_task_returns_to_its_recorded_root
