@@ -403,10 +403,6 @@ EOF
     || fail "a secondmate spawn recorded root '$mate_recorded', not its home's '$mate_expected'"
   [ "$(leased_root_of_pane "$mate_home")" = "$mate_expected" ] \
     || fail "the secondmate's pane was asked to acquire a worktree from a different root than its record names"
-  # A home's first spawn under its own root meets a root directory that does not
-  # exist yet; the spawn must not depend on the pool tool to create it.
-  [ -d "$mate_expected" ] \
-    || fail "the first spawn in a secondmate home left its pool root '$mate_expected' missing"
   pass "a spawn records and acquires from its own home's pool root, and forces nothing when the home has none"
 }
 

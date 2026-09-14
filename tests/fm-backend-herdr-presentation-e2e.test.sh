@@ -276,7 +276,6 @@ HERDR_LAB_SESSION=$(PATH="$HERDR_ORIGINAL_PATH" \
   "$HERDR_LAB_HELPER" name fm-herdr-presentation-projection)
 export HERDR_SESSION="$HERDR_LAB_SESSION" HERDR_LAB_SESSION
 LAB_READY=0
-LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home")
 RECORDED_WORKTREES=""
 LOCK_CONTENTION_OWNER_PID=
 # Releasing this file ends every fixture worktree occupant (see
@@ -286,11 +285,8 @@ LOCK_CONTENTION_OWNER_PID=
 # is one an occupant can miss between two polls.
 WORKTREE_OCCUPANT_RELEASE="$TMP_ROOT.released"
 SUITE_PID=$$
-# A task spawned from a secondmate home leased from that home's own pool root,
-# recorded as treehouse_root= beside its worktree; returning it against the
-# default root would leave the lease held. An absent record keeps the bare form.
 cleanup_all() {
-  local wt root
+  local wt
   : > "$WORKTREE_OCCUPANT_RELEASE" 2>/dev/null || true
   if [ -n "$LOCK_CONTENTION_OWNER_PID" ]; then
     kill "$LOCK_CONTENTION_OWNER_PID" 2>/dev/null || true
@@ -299,14 +295,8 @@ cleanup_all() {
   fi
   while IFS= read -r wt; do
     [ -n "$wt" ] || continue
-    root=${wt#*|}; wt=${wt%%|*}
-    [ -n "$wt" ] || continue
     [ -d "$wt" ] || continue
-    if [ -n "$root" ] && [ "$root" != "$wt" ]; then
-      TREEHOUSE_ROOT="$root" "$REAL_TREEHOUSE" return --force "$wt" >/dev/null 2>&1 || true
-    else
-      "$REAL_TREEHOUSE" return --force "$wt" >/dev/null 2>&1 || true
-    fi
+    "$REAL_TREEHOUSE" return --force "$wt" >/dev/null 2>&1 || true
   done <<EOF
 $RECORDED_WORKTREES
 EOF
@@ -319,6 +309,8 @@ EOF
   rm -f "$WORKTREE_OCCUPANT_RELEASE"
 }
 trap cleanup_all EXIT
+LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home") \
+  || fail "could not build a lab-owned HOME for this suite's spawns"
 
 PATH="$HERDR_ORIGINAL_PATH" \
   "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" \
@@ -394,11 +386,10 @@ assert_cleanup_focus_preserved() {  # <line-count> <pane-id> <expected-focus>
 }
 
 remember_meta_worktree() {  # <meta>
-  local wt root
+  local wt
   wt=$(grep '^worktree=' "$1" | cut -d= -f2-)
-  root=$(grep '^treehouse_root=' "$1" | cut -d= -f2-)
   [ -n "$wt" ] || fail "metadata did not record a worktree"
-  RECORDED_WORKTREES="${RECORDED_WORKTREES}${wt}|${root}"$'\n'
+  RECORDED_WORKTREES="${RECORDED_WORKTREES}${wt}"$'\n'
   printf '%s' "$wt"
 }
 

@@ -68,27 +68,16 @@ herdr_forget_inherited_pane
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-herdr-e2e.XXXXXX")
 SESSION="fm-lab-herdr-e2e-$$"
 export HERDR_SESSION="$SESSION"
-LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home")
-WT1=; WT2=; WT1_ROOT=; WT2_ROOT=
-# A task spawned from a secondmate home leased from that home's own pool root,
-# recorded as treehouse_root= in its task record; returning it against the
-# default root would leave the lease held. An absent record keeps the bare form.
-return_task_worktree() {  # <worktree> <recorded-root>
-  [ -n "$1" ] || return 0
-  command -v treehouse >/dev/null 2>&1 || return 0
-  if [ -n "$2" ]; then
-    TREEHOUSE_ROOT="$2" treehouse return --force "$1" >/dev/null 2>&1
-  else
-    treehouse return --force "$1" >/dev/null 2>&1
-  fi
-}
+WT1=; WT2=
 cleanup_all() {
-  return_task_worktree "$WT1" "$WT1_ROOT"
-  return_task_worktree "$WT2" "$WT2_ROOT"
+  [ -n "$WT1" ] && command -v treehouse >/dev/null 2>&1 && treehouse return --force "$WT1" >/dev/null 2>&1
+  [ -n "$WT2" ] && command -v treehouse >/dev/null 2>&1 && treehouse return --force "$WT2" >/dev/null 2>&1
   herdr_safe_stop_and_delete "$SESSION"
   rm -rf "$TMP_ROOT"
 }
 trap cleanup_all EXIT
+LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home") \
+  || fail "could not build a lab-owned HOME for this suite's spawns"
 fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
 
 # shellcheck source=/dev/null
@@ -153,7 +142,6 @@ CM1_META="$PRIMARY_HOME/state/cm1.meta"
 [ -f "$CM1_META" ] || fail "no meta written for cm1"
 assert_contains_local "$(cat "$CM1_META")" "backend=herdr" "cm1 meta missing backend=herdr"
 WT1=$(grep '^worktree=' "$CM1_META" | cut -d= -f2-)
-WT1_ROOT=$(grep '^treehouse_root=' "$CM1_META" | cut -d= -f2-)
 CM1_PANE=$(grep '^herdr_pane_id=' "$CM1_META" | cut -d= -f2-)
 [ -n "$CM1_PANE" ] || fail "cm1 meta missing herdr_pane_id"
 pass "real herdr E2E: a primary-shaped home spawns a crewmate on the herdr backend"
@@ -209,7 +197,6 @@ CM2_META="$SM_HOME/state/cm2.meta"
 [ -f "$CM2_META" ] || fail "no meta written for cm2 (recorded in the SECONDMATE's own state dir - it did its own spawning)"
 assert_contains_local "$(cat "$CM2_META")" "backend=herdr" "cm2 meta missing backend=herdr"
 WT2=$(grep '^worktree=' "$CM2_META" | cut -d= -f2-)
-WT2_ROOT=$(grep '^treehouse_root=' "$CM2_META" | cut -d= -f2-)
 CM2_PANE=$(grep '^herdr_pane_id=' "$CM2_META" | cut -d= -f2-)
 [ -n "$CM2_PANE" ] || fail "cm2 meta missing herdr_pane_id"
 pass "real herdr E2E: a crewmate spawns successfully FROM a secondmate-shaped home's own fm-spawn.sh process"

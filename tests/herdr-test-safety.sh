@@ -25,10 +25,18 @@ HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # are linked through to the real home. Echoes the path.
 herdr_lab_home() {  # <dir>
   local dir=$1 real=${HERDR_TEST_REAL_HOME:-${HOME:-}}
-  mkdir -p "$dir/.config"
-  [ -z "$real" ] || [ ! -d "$real/.config/herdr" ] || [ -e "$dir/.config/herdr" ] \
-    || ln -s "$real/.config/herdr" "$dir/.config/herdr"
-  [ -z "$real" ] || [ ! -f "$real/.gitconfig" ] || [ -e "$dir/.gitconfig" ] \
+  [ -n "$real" ] || {
+    printf 'herdr_lab_home: HOME is not set, so the lab home cannot reach the real herdr config\n' >&2
+    return 1
+  }
+  [ -d "$real/.config/herdr" ] || {
+    printf 'herdr_lab_home: %s does not exist, so a spawn under the lab home would not find the lab session; start herdr once first\n' \
+      "$real/.config/herdr" >&2
+    return 1
+  }
+  mkdir -p "$dir/.config" || return 1
+  [ -e "$dir/.config/herdr" ] || ln -s "$real/.config/herdr" "$dir/.config/herdr" || return 1
+  [ ! -f "$real/.gitconfig" ] || [ -e "$dir/.gitconfig" ] \
     || ln -s "$real/.gitconfig" "$dir/.gitconfig"
   printf '%s\n' "$dir"
 }

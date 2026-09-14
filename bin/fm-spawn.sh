@@ -3179,14 +3179,6 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     exit 1
   }
   if [ -n "$SPAWN_TREEHOUSE_ROOT" ]; then
-    # A home's first spawn under its own root meets a directory that does not
-    # exist yet. Current treehouse creates it, but the pinned CI version's
-    # behavior there is unverified, so make it exist here rather than depend on
-    # the pool tool.
-    mkdir -p "$SPAWN_TREEHOUSE_ROOT" 2>/dev/null || {
-      echo "error: could not create this home's treehouse pool root '$SPAWN_TREEHOUSE_ROOT'; refusing to launch $ID; inspect window $T" >&2
-      exit 1
-    }
     spawn_send_text_line "$WT_TARGET" "TREEHOUSE_ROOT=$(shell_quote "$SPAWN_TREEHOUSE_ROOT") treehouse get"
   else
     # This home needs no root of its own, so nothing is forced on the pane and
