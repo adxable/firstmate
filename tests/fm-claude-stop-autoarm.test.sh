@@ -1041,9 +1041,6 @@ test_stuck_generation_claim_is_superseded_and_rearms() {
   pass "auto-arm: a hung generation owner with no watcher beat is superseded so re-arming self-heals"
 }
 
-# Identity is mandatory at read time: a bare identityless one-line arming
-# ledger naming an unrelated live pid is NOT an open claim - it must neither
-# defer the hook nor survive as the current entry, whatever the beacon says.
 # An "arming" claim is a PROMISE that a watcher is on its way. The stuck proof
 # credits that promise while the beacon is cold, and it used to credit it for a
 # whole guard grace - 300s - during which both Stop participants stand down and
@@ -1110,6 +1107,9 @@ test_arming_claim_expires_on_the_arm_budget_not_the_watcher_grace() {
   pass "auto-arm: an arming claim expires on the arm layer's budget, not the watcher grace"
 }
 
+# Identity is mandatory at read time: a bare identityless one-line arming
+# ledger naming an unrelated live pid is NOT an open claim - it must neither
+# defer the hook nor survive as the current entry, whatever the beacon says.
 test_identityless_ledger_never_defers() {
   local dir out status pid
   dir=$(make_primary_dir "$TMP_ROOT/v2-identityless-ledger")

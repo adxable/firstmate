@@ -108,8 +108,8 @@ esac
 kill -0 "$WATCHER" 2>/dev/null \
   || fail "the guard-armed watcher (pid $WATCHER) did not survive Claude tearing the Stop hook down"
 
-BEAT_AT=$( (stat -f %m "$HOME_DIR/state/.last-watcher-beat" 2>/dev/null \
-  || stat -c %Y "$HOME_DIR/state/.last-watcher-beat" 2>/dev/null) || true)
+BEAT_AT=$( (stat -c %Y "$HOME_DIR/state/.last-watcher-beat" 2>/dev/null \
+  || stat -f %m "$HOME_DIR/state/.last-watcher-beat" 2>/dev/null) || true)
 case "$BEAT_AT" in
   ''|*[!0-9]*) fail "the guard-armed watcher never wrote a liveness beacon" ;;
 esac

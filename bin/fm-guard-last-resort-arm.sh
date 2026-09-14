@@ -55,15 +55,16 @@ WATCH="$SCRIPT_DIR/fm-watch.sh"
 GRACE=${FM_GUARD_GRACE:-300}
 case "$GRACE" in ''|*[!0-9]*|0) GRACE=300 ;; esac
 
-# The confirmation budget is the arm layer's own, from the same OSTYPE switch
-# bin/fm-watch-arm.sh uses: Git Bash/MSYS pays a much higher fork cost while the
-# watcher completes its pre-lock migration. A tighter hand-set window gives up
-# on a watcher the arm layer would have confirmed.
+# The confirmation budget is the arm layer's own: the same FM_ARM_CONFIRM_TIMEOUT
+# over the same OSTYPE default bin/fm-watch-arm.sh reads, because Git Bash/MSYS
+# pays a much higher fork cost while the watcher completes its pre-lock
+# migration. A tighter window would give up on a watcher the arm layer would
+# have confirmed, and a second knob for the same window would drift from it.
 case "${OSTYPE:-}" in
   msys*|mingw*|cygwin*) CONFIRM_DEFAULT=30 ;;
   *) CONFIRM_DEFAULT=10 ;;
 esac
-CONFIRM=${FM_CLAUDE_GUARD_ARM_CONFIRM:-$CONFIRM_DEFAULT}
+CONFIRM=${FM_ARM_CONFIRM_TIMEOUT:-$CONFIRM_DEFAULT}
 case "$CONFIRM" in ''|*[!0-9]*|0) CONFIRM=$CONFIRM_DEFAULT ;; esac
 
 [ -x "$WATCH" ] || { echo "guard-arm: FAILED - no watcher script at $WATCH"; exit 1; }

@@ -1377,24 +1377,19 @@ fm_autoarm_arming_stuck() {  # <state-dir> [grace]
     ''|*[!0-9]*|0) grace=300 ;;
   esac
   [ "$(fm_path_age "$state/.last-watcher-beat")" -ge "$grace" ] || return 1
-  budget=${FM_CLAUDE_AUTOARM_ARMING_BUDGET:-}
-  case "$budget" in
-    ''|*[!0-9]*|0)
-      # Same OSTYPE switch bin/fm-watch-arm.sh derives its own confirm window
-      # from, and the same bounded attempt count bin/fm-claude-stop-autoarm.sh
-      # accepts, so all three move together.
-      case "${OSTYPE:-}" in
-        msys*|mingw*|cygwin*) confirm=30 ;;
-        *) confirm=10 ;;
-      esac
-      confirm=${FM_ARM_CONFIRM_TIMEOUT:-$confirm}
-      case "$confirm" in ''|*[!0-9]*|0) confirm=10 ;; esac
-      attempts=${FM_CLAUDE_AUTOARM_ATTEMPTS:-2}
-      case "$attempts" in 1|2|3) : ;; *) attempts=2 ;; esac
-      budget=$(( attempts * (confirm + 1) * 2 ))
-      [ "$budget" -ge 60 ] || budget=60
-      ;;
+  # Same OSTYPE switch bin/fm-watch-arm.sh derives its own confirm window from,
+  # and the same bounded attempt count bin/fm-claude-stop-autoarm.sh accepts, so
+  # all three move together.
+  case "${OSTYPE:-}" in
+    msys*|mingw*|cygwin*) confirm=30 ;;
+    *) confirm=10 ;;
   esac
+  confirm=${FM_ARM_CONFIRM_TIMEOUT:-$confirm}
+  case "$confirm" in ''|*[!0-9]*|0) confirm=10 ;; esac
+  attempts=${FM_CLAUDE_AUTOARM_ATTEMPTS:-2}
+  case "$attempts" in 1|2|3) : ;; *) attempts=2 ;; esac
+  budget=$(( attempts * (confirm + 1) * 2 ))
+  [ "$budget" -ge 60 ] || budget=60
   [ "$budget" -le "$grace" ] || budget=$grace
   [ "$(fm_path_age "$state/.claude-autoarm-epoch")" -ge "$budget" ]
 }

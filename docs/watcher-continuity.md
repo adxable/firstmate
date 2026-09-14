@@ -33,7 +33,7 @@ The hook's exit-2 rewake is never delivered, which upstream issue 4209 reports i
 
 `bin/fm-turnend-guard.sh --claude` therefore owns a last-resort arm, implemented by `bin/fm-guard-last-resort-arm.sh`.
 It runs only after the guard has already concluded that nothing owns recovery for this Stop event, so it never competes with the Stop-owned auto-arm and is a backstop rather than a second arming owner.
-It launches this home's own `bin/fm-watch.sh`, detached in its own process group so tearing down the synchronous hook cannot take the replacement with it, and confirms it against the same `fm_watcher_healthy` honesty gate the arm layer uses, inside a window derived from `bin/fm-watch-arm.sh`'s own `FM_CLAUDE_GUARD_ARM_CONFIRM`.
+It launches this home's own `bin/fm-watch.sh`, detached in its own process group so tearing down the synchronous hook cannot take the replacement with it, and confirms it against the same `fm_watcher_healthy` honesty gate the arm layer uses, inside the arm layer's own `FM_ARM_CONFIRM_TIMEOUT` window over the same OSTYPE default `bin/fm-watch-arm.sh` reads.
 The arm itself is never budget-limited; only the follow-up block is, so an exhausted block budget now ends the turn with a watcher running instead of ending it blind.
 The only process it ever signals is the child it forked, so it can never reach a sibling home's watcher.
 
@@ -43,7 +43,7 @@ At a Stop a turn is by definition ending, so "supervision is needed and no watch
 Nothing in this path runs mid-turn, and an aging beacon is never treated as a fault on its own.
 
 An `arming` claim is a promise that a watcher is on its way, and the stuck proof bounds how long that promise is credited while nothing is beating.
-That bound is the arm layer's own confirmation window through `fm_autoarm_arming_stuck`, not the watcher beacon grace: `bin/fm-watch-arm.sh` confirms or fails a watcher inside `FM_ARM_CONFIRM_TIMEOUT`, and the hook makes at most `FM_CLAUDE_AUTOARM_ATTEMPTS` attempts, so a beaconless claim older than `FM_CLAUDE_AUTOARM_ARMING_BUDGET` is hung rather than slow.
+That bound is the arm layer's own confirmation window through `fm_autoarm_arming_stuck`, not the watcher beacon grace: `bin/fm-watch-arm.sh` confirms or fails a watcher inside `FM_ARM_CONFIRM_TIMEOUT`, and the hook makes at most `FM_CLAUDE_AUTOARM_ATTEMPTS` attempts, so a beaconless claim older than those attempts can honestly take - `FM_CLAUDE_AUTOARM_ATTEMPTS` times the confirm-plus-successor phases, with a 60s floor - is hung rather than slow.
 The budget is clamped to the grace, so the proof is strictly more willing to declare a claim stuck than the grace-only form it replaces and never less.
 A claim declared stuck too eagerly costs at most one extra arm the watcher singleton dedupes; the reverse mistake costs the home its supervision.
 
