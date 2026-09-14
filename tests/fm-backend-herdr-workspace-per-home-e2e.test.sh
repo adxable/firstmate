@@ -76,9 +76,9 @@ cleanup_all() {
   rm -rf "$TMP_ROOT"
 }
 trap cleanup_all EXIT
+fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
 LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home") \
   || fail "could not build a lab-owned HOME for this suite's spawns"
-fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
 
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-backend.sh"

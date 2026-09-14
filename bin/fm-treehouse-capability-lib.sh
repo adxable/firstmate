@@ -16,8 +16,10 @@
 # match) and v2.3.0 (match); the lease probe matches on BOTH, so it cannot stand
 # in for this one. See docs/verification/runtime-backends.md "Treehouse".
 #
-# Consumers: bin/fm-bootstrap.sh surfaces an upgrade at session start, and
-# bin/fm-spawn.sh refuses a spawn that would otherwise share another home's pool.
+# Consumer: bin/fm-spawn.sh, which refuses a spawn that would otherwise share
+# another home's pool. That refusal is the single enforcement point for this
+# invariant; there is deliberately no earlier session-start copy of it, because
+# a second place to state one rule is a second place for it to drift.
 
 treehouse_supports_root() {
   treehouse get --help 2>&1 | grep -Eq '(^|[^[:alnum:]_-])--root([^[:alnum:]_-]|$)'

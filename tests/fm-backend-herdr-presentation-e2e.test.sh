@@ -309,13 +309,13 @@ EOF
   rm -f "$WORKTREE_OCCUPANT_RELEASE"
 }
 trap cleanup_all EXIT
-LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home") \
-  || fail "could not build a lab-owned HOME for this suite's spawns"
-
 PATH="$HERDR_ORIGINAL_PATH" \
   "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" \
   || fail "could not provision the isolated Herdr lab"
 LAB_READY=1
+
+LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home") \
+  || fail "could not build a lab-owned HOME for this suite's spawns"
 
 lab() {
   PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" "$@"

@@ -52,8 +52,7 @@
 #          on a feature branch instead of its default branch - a crewmate's work
 #          landed in the primary instead of its own worktree; restore it per the line.
 #          treehouse is also MISSING when its installed version lacks
-#          "treehouse get --lease" support, and, in a home that resolves a
-#          worktree pool root of its own, when it lacks "--root" support.
+#          "treehouse get --lease" support.
 #          no-mistakes is also MISSING when its installed version is older than
 #          1.46.0 (structured pipeline attestation floor; see CONTRIBUTING.md).
 #          The AXI-family floor policy is owned beside GH_AXI_MIN and
@@ -172,8 +171,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
 # shellcheck source=bin/fm-startup-memory-budget-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-startup-memory-budget-lib.sh"
-# shellcheck source=bin/fm-treehouse-capability-lib.sh
-. "$SCRIPT_DIR/fm-treehouse-capability-lib.sh"
 # shellcheck source=bin/fm-x-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
@@ -1415,16 +1412,11 @@ detect_local_tools() {
   for t in $COMMON_TOOLS; do
     command -v "$t" >/dev/null || missing_tool_diagnostic "$t"
   done
-  # The treehouse upgrade check is only relevant when the resolved backend
-  # actually requires treehouse (every backend except orca, which owns its
+  # The treehouse lease-support upgrade check is only relevant when the resolved
+  # backend actually requires treehouse (every backend except orca, which owns its
   # own worktrees); an orca home must not be told to upgrade a provider it never uses.
-  # Root support is asked for only in a home that resolves a pool root of its own,
-  # since a home that resolves none never sends one; bin/fm-treehouse-root.sh owns
-  # that question, so a non-empty answer from it is the whole condition.
-  if fm_backend_list_contains "$TOOLS" treehouse && command -v treehouse >/dev/null 2>&1 \
-    && { ! treehouse_supports_lease \
-      || { [ -n "$("$SCRIPT_DIR/fm-treehouse-root.sh" 2>/dev/null)" ] \
-        && ! treehouse_supports_root; }; }; then
+  if fm_backend_list_contains "$TOOLS" treehouse \
+    && command -v treehouse >/dev/null 2>&1 && ! treehouse_supports_lease; then
     echo "MISSING: treehouse (install: $(install_cmd treehouse))"
   fi
   if command -v no-mistakes >/dev/null 2>&1 && ! tool_version_at_least no-mistakes "$NO_MISTAKES_MIN"; then

@@ -73,9 +73,9 @@ cleanup_all() {
   return "$status"
 }
 trap cleanup_all EXIT
+"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" || fail "could not provision isolated Herdr lab session"
 LAB_HOME=$(herdr_lab_home "$TMP_ROOT/lab-home") \
   || fail "could not build a lab-owned HOME for this suite's spawns"
-"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" || fail "could not provision isolated Herdr lab session"
 
 lab() { "$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" "$@"; }
 
