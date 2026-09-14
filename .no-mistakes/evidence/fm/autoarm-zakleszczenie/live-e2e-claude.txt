@@ -1,0 +1,1 @@
+ok - Claude 2.1.247 (Claude Code) live E2E: the turn-end guard restored supervision over a wedged auto-arm claim mutex, and its watcher outlived the session (beacon 3s)

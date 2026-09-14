@@ -1,0 +1,7 @@
+### after the Stop hook process exited
+watch.lock pid        : 80573
+process alive         : yes
+process cmd           : bash <HOME>/bin/fm-watch.sh
+beacon age (s)        : 8
+autoarm ledger written: no (mutex still wedged - the auto-arm never claimed)
+wedge holder still up : yes

@@ -1,0 +1,11 @@
+### PRE-FIX (base b8798ff) - same wedged home, same Stop event, five consecutive Stop events
+Stop #1 -> exit 2 | watcher: NONE | banner: TURN WOULD END BLIND
+Stop #2 -> exit 2 | watcher: NONE | banner: TURN WOULD END BLIND
+Stop #3 -> exit 2 | watcher: NONE | banner: TURN WOULD END BLIND
+Stop #4 -> exit 2 | watcher: NONE | banner: TURN WOULD END BLIND
+Stop #5 -> exit 2 | watcher: NONE | banner: TURN WOULD END BLIND
+
+### after five Stop events on pre-fix code
+watch.lock present : NO
+beacon present     : NO
+the home is unwatched, and only another turn end can retry

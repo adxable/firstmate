@@ -1,0 +1,24 @@
+### real Claude Code 2.1.247 (Claude Code), isolated project + isolated FM_HOME
+### the auto-arm claim micro-mutex is wedged by a live pid for the whole session
+
+--- what the model said (stream-json) ---
+assistant: READY
+assistant: ACK
+
+--- the Stop-hook feedback the model actually received, verbatim ---
+Stop hook feedback:
+[[ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-turnend-guard.sh --claude]: ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  SUPERVISION RESTORED BY THE TURN-END GUARD
+●  This turn was about to end with nothing watching: the Stop-owned auto-arm claimed nothing and no live watcher held this home. A replacement watcher is running now.
+●  Do NOT run an arm command. Continue normally; the next turn end hands the cycle back to the automatic Stop-owned arm.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+--- did the Stop-owned auto-arm ever claim? ---
+no ledger written: the mutex stayed wedged for the whole session, so the auto-arm stood down silently on every firing
+
+--- supervision after Claude exited and tore the Stop hook down ---
+watch.lock pid : 72305
+alive          : yes
+command        : bash <LAB>/project/bin/fm-watch.sh
+beacon age (s) : 3

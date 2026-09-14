@@ -1,0 +1,2 @@
+### sensitivity probe A: bin/fm-turnend-guard.sh restored from the parent commit b8798ff
+not ok - the guard left the home unwatched: ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

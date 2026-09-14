@@ -1,0 +1,2 @@
+### sensitivity probe B: bin/fm-wake-lib.sh restored from the parent commit b8798ff
+not ok - a 120s arming claim with no beacon must be superseded well inside the 300s grace: expected exit 2, got 0

@@ -1,0 +1,7 @@
+### Stop event #1 against the wedged home (real bin/fm-turnend-guard.sh --claude)
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  SUPERVISION RESTORED BY THE TURN-END GUARD
+●  This turn was about to end with nothing watching: the Stop-owned auto-arm claimed nothing and no live watcher held this home. A replacement watcher is running now.
+●  Do NOT run an arm command. Continue normally; the next turn end hands the cycle back to the automatic Stop-owned arm.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### guard exit: 2

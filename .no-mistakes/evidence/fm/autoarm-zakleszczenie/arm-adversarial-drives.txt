@@ -1,0 +1,19 @@
+### adversarial drives of bin/fm-guard-last-resort-arm.sh (real script, isolated home)
+### 'watchers' counts detached (ppid 1) fm-watch.sh processes owned by this home
+
+A) no supervision need at all (no task in flight):
+guard-arm: FAILED - no supervision need
+   exit=1  watchers: 0
+
+B) away mode owns supervision (state/.afk present):
+guard-arm: FAILED - away mode owns supervision
+   exit=1  watchers: 0
+
+C) supervision needed, nothing watching -> the arm establishes one:
+guard-arm: started pid=53529
+   exit=0  watchers: 1
+
+D) run again with that healthy watcher still holding the home (must NOT start a second):
+guard-arm: present pid=53529
+   exit=0  watchers: 1
+   lock pid before=53529 after=53529 -> same watcher, nothing replaced
