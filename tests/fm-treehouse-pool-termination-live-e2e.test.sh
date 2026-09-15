@@ -393,11 +393,11 @@ DIRTY_SHA=$(git -C "$ACQ_WT" rev-parse HEAD)
 [ -n "$(git -C "$ACQ_WT" status --porcelain)" ] \
   || fail "the dirty case could not leave uncommitted changes in $ACQ_WT"
 [ "$(pool_status_of "$ACQ_WT")" = dirty ] \
-  || fail "treehouse $TREEHOUSE_VERSION reports $ACQ_WT as '$(pool_status_of "$ACQ_WT")' rather than dirty while it carries uncommitted changes; the record's "Acquire-time reuse narrowed in v2.3.0" note that a dirty slot and an unlanded one are both skipped needs re-deriving"
+  || fail "treehouse $TREEHOUSE_VERSION reports $ACQ_WT as '$(pool_status_of "$ACQ_WT")' rather than dirty while it carries uncommitted changes; the record's \"Acquire-time reuse narrowed in v2.3.0\" note that a dirty slot and an unlanded one are both skipped needs re-deriving"
 pass "the pool reads a worktree carrying uncommitted changes as dirty"
 
 DIRTY_ACQ=$(cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-dirty 2>/dev/null) \
-  || fail "treehouse $TREEHOUSE_VERSION refused to acquire at all while the only existing slot was dirty; the record's "Acquire-time reuse narrowed in v2.3.0" note that the pool skips such a slot rather than failing outright needs re-deriving"
+  || fail "treehouse $TREEHOUSE_VERSION refused to acquire at all while the only existing slot was dirty; the record's \"Acquire-time reuse narrowed in v2.3.0\" note that the pool skips such a slot rather than failing outright needs re-deriving"
 note "acquire with that worktree dirty and unleased handed out: $DIRTY_ACQ"
 [ "$DIRTY_ACQ" != "$ACQ_WT" ] \
   || fail "treehouse $TREEHOUSE_VERSION handed out the worktree carrying uncommitted changes, which it had reused while clean; the record's note that on v2.3.0 an acquire-time detach costs neither committed branch position nor unlanded edits no longer holds"
