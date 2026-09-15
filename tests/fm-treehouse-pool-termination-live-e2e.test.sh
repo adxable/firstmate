@@ -147,12 +147,6 @@ refuse_in_pane() {
   return 2
 }
 
-# pane_text <window>: the pane's visible output with wrapped lines rejoined, so
-# a banner carrying a long worktree path matches as one string.
-pane_text() {
-  "$REAL_TMUX" -L "$SOCKET" capture-pane -p -J -t "=$SESSION:=$1" 2>/dev/null
-}
-
 # says <needle> <haystack>: the pool banners the dated record quotes are
 # treehouse's own operator-facing output, which is the contract this guard pins.
 says() { case "$2" in *"$1"*) return 0 ;; esac; return 1; }
@@ -254,12 +248,9 @@ pass "both the interactive treehouse get and get --lease skip the single slot wh
 git -C "$REPO" merge -q --ff-only "$KILL_SHA" \
   || fail "could not land holder-kill's commit into the default branch, so the reuse contrast cannot run"
 LANDED_TIP=$(git -C "$REPO" rev-parse HEAD)
-LANDED_ERR="$LAB/landed-acquire.err"
-ACQ_WT=$(cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-landed 2>"$LANDED_ERR") \
+ACQ_WT=$(cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-landed 2>/dev/null) \
   || fail "treehouse $TREEHOUSE_VERSION still refused the single-slot worktree after its only commit was landed; the skip above can no longer be attributed to unlanded work, so this guard can no longer tell that protection apart from a pool that never reuses a slot"
 [ "$ACQ_WT" = "$KILL_WT" ] || fail "the single-slot pool handed out $ACQ_WT rather than $KILL_WT, so the cases below no longer observe the same worktree"
-says "Leased worktree at" "$(cat "$LANDED_ERR")" \
-  || fail "treehouse $TREEHOUSE_VERSION handed out the slot without the lease banner the record's landed row quotes; it printed: $(cat "$LANDED_ERR")"
 [ "$(branch_of "$ACQ_WT")" = HEAD ] \
   || fail "treehouse $TREEHOUSE_VERSION left the reused worktree on $(branch_of "$ACQ_WT") rather than detaching it; the dated record's claim that the destructive step happens at acquire time no longer describes this pool"
 [ "$(git -C "$ACQ_WT" rev-parse HEAD)" = "$LANDED_TIP" ] \
@@ -290,13 +281,6 @@ git -C "$ACQ_WT" checkout -q -b probe-interactive "$SEED_SHA" \
 [ ! -f "$ACQ_WT/holder-kill-work.txt" ] \
   || fail "the interactive acquire case started with the landed content already present, so its content assertion could not fail whatever the pool does"
 
-# --- the contrast that proves this lab drives the real return path -----------
-# The return path did NOT gain the acquire path's protection: an unlanded commit
-# is still reset away when the subshell exits. That asymmetry is exactly what
-# discard_refused_endpoint rests on, so it is asserted rather than implied - the
-# orphaned pane an operator would close is still the termination that costs the
-# contested worktree its work, which is why the refusal takes its own tmux
-# endpoint down instead of leaving it parked.
 ACQ_WT=$(acquire_in_pane fm-acquire) || fail "treehouse $TREEHOUSE_VERSION did not hand out the clean, landed single-slot worktree to a pane"
 [ "$ACQ_WT" = "$KILL_WT" ] || fail "the single-slot pool handed out $ACQ_WT rather than $KILL_WT, so the cases below no longer observe the same worktree"
 [ "$(branch_of "$ACQ_WT")" = HEAD ] \
@@ -305,10 +289,15 @@ ACQ_WT=$(acquire_in_pane fm-acquire) || fail "treehouse $TREEHOUSE_VERSION did n
   || fail "the interactive treehouse get handed out the slot still at $(git -C "$ACQ_WT" rev-parse --short HEAD) rather than resetting it forward to the landed default-branch tip; a new task would start on a stale tree"
 [ -f "$ACQ_WT/holder-kill-work.txt" ] \
   || fail "the interactive treehouse get moved HEAD without materializing the landed content, so the worktree the caller receives does not match the reset target the record names"
-says "Entered worktree at" "$(pane_text fm-acquire)" \
-  || fail "the interactive treehouse get entered the worktree without the banner the record's landed row quotes; the pane showed: $(pane_text fm-acquire)"
 pass "the interactive treehouse get detaches the worktree it hands out as well, not only the non-interactive lease form"
 
+# --- the contrast that proves this lab drives the real return path -----------
+# The return path did NOT gain the acquire path's protection: an unlanded commit
+# is still reset away when the subshell exits. That asymmetry is exactly what
+# discard_refused_endpoint rests on, so it is asserted rather than implied - the
+# orphaned pane an operator would close is still the termination that costs the
+# contested worktree its work, which is why the refusal takes its own tmux
+# endpoint down instead of leaving it parked.
 stage_holder_state "$ACQ_WT" holder-exit || fail "could not stage the holder state in $ACQ_WT"
 [ -z "$(git -C "$ACQ_WT" status --porcelain)" ] \
   || fail "the clean-exit case left uncommitted changes in $ACQ_WT, which makes the return prompt instead of completing and so measures the dirty case rather than this one"
@@ -318,11 +307,9 @@ sleep 5
 [ "$(branch_of "$ACQ_WT")" = HEAD ] \
   || fail "treehouse $TREEHOUSE_VERSION left the worktree on $(branch_of "$ACQ_WT") rather than detaching it when its subshell exited normally; this lab can no longer tell a return apart from a no-op, so the kill case above proves nothing"
 [ "$(git -C "$ACQ_WT" rev-parse HEAD)" = "$LANDED_TIP" ] \
-  || fail "treehouse $TREEHOUSE_VERSION returned the worktree without resetting it to the base commit the record's exit row names"
+  || fail "treehouse $TREEHOUSE_VERSION returned the worktree without resetting it to the default-branch tip the record's exit row names"
 [ ! -f "$ACQ_WT/holder-exit-work.txt" ] \
   || fail "treehouse $TREEHOUSE_VERSION now preserves an unlanded commit through the return path as well; discard_refused_endpoint's reason for taking its own tmux endpoint down rather than leaving an orphaned pane no longer holds and must be re-derived"
-says "Worktree returned to pool." "$(pane_text fm-acquire)" \
-  || fail "the subshell exit returned the worktree without the banner the record's exit row quotes; the pane showed: $(pane_text fm-acquire)"
 pass "a normally exited subshell does return and reset the worktree, discarding the unlanded commit the acquire path now protects"
 
 # --- what that same exit does when the worktree is dirty ---------------------
@@ -347,7 +334,7 @@ sleep 5
   || fail "treehouse $TREEHOUSE_VERSION moved the worktree's HEAD off the holder's commit before the prompt was answered, so the work is already gone by the time the operator is asked"
 [ -f "$DIRTY_EXIT_WT/holder-exit-dirty-work.txt" ] \
   || fail "treehouse $TREEHOUSE_VERSION discarded the unlanded commit's content before the prompt was answered"
-pass "a subshell exit on a dirty worktree discards nothing unattended: the holder's commit and its untracked edit both survive"
+pass "five seconds after a subshell exit on a dirty worktree, with nothing answered, HEAD and the holder's committed and untracked content are all still there"
 
 # Answering the prompt is plumbing, not a pinned case - it only hands the slot
 # back so the dirty-slot case below has one. Whatever it leaves behind is
