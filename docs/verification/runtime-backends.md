@@ -260,6 +260,8 @@ tmux -L "$socket" kill-window -t "=$session:=fm-x"      # hang-up case
 treehouse get --lease --lease-holder probe               # acquire case, work unlanded
 git -C "$repo" merge --ff-only "$holder_sha"             # land it
 treehouse get --lease --lease-holder probe               # acquire case, work landed
+git -C "$worktree" checkout -b probe-interactive         # clean branch at the reset target
+tmux -L "$socket" send-keys -t "$session:fm-y" 'treehouse get' Enter   # acquire case, interactive form
 tmux -L "$socket" send-keys -t "$session:fm-y" 'exit' Enter   # ordinary-exit case
 ```
 
@@ -305,7 +307,8 @@ It also narrows, without removing, what `worktree_owner_conflict` in `bin/fm-spa
 The pool no longer hands a live task's slot to a newcomer once that task has committed anything, so the residual window is a task whose worktree is still clean and still at the base commit - a freshly spawned worker that has not committed yet, which is exactly the window in which a reset is silent.
 This home's own `state/<id>.meta` records remain the ownership truth, because the pool's own check cannot see that a slot is owned, only that its content is safe to discard.
 
-Drift guard: `FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 tests/fm-treehouse-pool-termination-live-e2e.test.sh`, which reruns the hang-up, the unlanded-work skip, the landed-work reuse, the ordinary exit and the dirty-slot skip against the installed binaries and fails naming both versions if any of them changes.
+Drift guard: `FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 tests/fm-treehouse-pool-termination-live-e2e.test.sh`, which reruns the hang-up, the unlanded-work skip, the landed-work reuse under `get --lease`, the same reuse and detach under the interactive `treehouse get` sent into a pane, the ordinary exit and the dirty-slot skip against the installed binaries and fails naming both versions if any of them changes.
+The interactive case puts the returned slot back on a clean branch at the reset target first, because a returned slot is already detached and would leave that acquire nothing to detach, so both halves of the row above are pinned rather than one standing in for the other.
 
 ### Cleanup endpoint identity
 

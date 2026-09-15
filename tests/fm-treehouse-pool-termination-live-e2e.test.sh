@@ -184,6 +184,20 @@ fi
   || fail "could not release the contrast lease on $ACQ_WT"
 pass "landing that commit is the only change needed to get the same slot handed back out, reset to the default-branch tip"
 
+# --- the same detach, on the interactive acquire form ------------------------
+# The record's acquire row claims BOTH forms detach, and the interactive
+# `treehouse get` is the one fm-spawn.sh sends into the worker's own pane, so it
+# is pinned directly here rather than inferred from the lease form above.
+# The returned slot is already detached, which would leave a pane acquire
+# nothing to take away, so it is put back on a branch first. That branch sits at
+# the landed tip and carries no edits, so it is clean and its HEAD IS the reset
+# target: v2.3.0's narrowed rule permits the reuse, and branch position is the
+# only thing left for the acquire to detach.
+git -C "$ACQ_WT" checkout -q -b probe-interactive "$LANDED_TIP" \
+  || fail "could not put the returned slot on a clean branch at the landed tip, so the interactive acquire case cannot run"
+[ -z "$(git -C "$ACQ_WT" status --porcelain)" ] \
+  || fail "the interactive acquire case started with uncommitted changes in $ACQ_WT, so the pool could skip it for dirtiness and a detach below would not be attributable to the acquire"
+
 # --- the contrast that proves this lab drives the real return path -----------
 # The return path did NOT gain the acquire path's protection: an unlanded commit
 # is still reset away when the subshell exits. That asymmetry is exactly what
@@ -193,6 +207,12 @@ pass "landing that commit is the only change needed to get the same slot handed 
 # endpoint down instead of leaving it parked.
 ACQ_WT=$(acquire_in_pane fm-acquire) || fail "treehouse $TREEHOUSE_VERSION did not hand out the clean, landed single-slot worktree to a pane"
 [ "$ACQ_WT" = "$KILL_WT" ] || fail "the single-slot pool handed out $ACQ_WT rather than $KILL_WT, so the cases below no longer observe the same worktree"
+[ "$(branch_of "$ACQ_WT")" != probe-interactive ] \
+  || fail "the interactive treehouse get handed the pane its worktree still on probe-interactive; the record's claim that BOTH acquire forms detach before the caller can inspect the worktree no longer holds for the form fm-spawn.sh sends into the worker's own pane"
+[ "$(git -C "$ACQ_WT" rev-parse HEAD)" = "$LANDED_TIP" ] \
+  || fail "the interactive treehouse get reused the slot without resetting it to the landed default-branch tip, so the reset target the record names is not the one the interactive acquire uses"
+pass "the interactive treehouse get detaches the worktree it hands out as well, not only the non-interactive lease form"
+
 stage_holder_state "$ACQ_WT" holder-exit || fail "could not stage the holder state in $ACQ_WT"
 "$REAL_TMUX" -L "$SOCKET" send-keys -t "=$SESSION:=fm-acquire" 'exit' Enter || fail "could not exit the task subshell"
 sleep 5
