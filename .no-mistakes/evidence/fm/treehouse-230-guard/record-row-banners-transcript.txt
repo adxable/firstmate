@@ -1,0 +1,33 @@
+### treehouse v2.3.0 / tmux 3.7b / Darwin arm64
+
+=== ROW: interactive 'treehouse get' acquire, pane output ===
+treehouse get
+zrecompile:zcompile:99: invalid zwc file: /Users/adix/.zcompdump-MacBook Pro (AO)-5.9.zwc
+➜  repo git:(main) treehouse get
+🌳 Setting up worktree...
+🌳 Entered worktree at /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-record-probe.p0BFW9/repo/.treehouse/repo-49a030/1/repo. Type 'exit' to return.
+
+=== ROW: 'exit' typed in the subshell, worktree CLEAN (unlanded commit) ===
+exit
+➜  repo git:(holder1) exit
+🌳 Worktree returned to pool.
+➜  repo git:(main) 
+--- worktree after: branch=HEAD holder1.txt=dropped
+
+=== ROW: 'treehouse get --lease' acquire, stderr banner ===
+🌳 Setting up worktree...
+🌳 Leased worktree at /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-record-probe.p0BFW9/repo/.treehouse/repo-49a030/1/repo. Run 'treehouse return /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-record-probe.p0BFW9/repo/.treehouse/repo-49a030/1/repo' to release it.
+
+=== ROW: acquire while the slot holds unlanded work (refusal) ===
+🌳 Setting up worktree...
+all 1 worktrees are in use or dirty (max_trees = 1). Run 'treehouse status' to see details, or increase max_trees in treehouse.toml
+--- rc above: 1
+--- pool status: available
+--- worktree untouched: branch=holder2 holder2.txt=present
+
+=== ROW: 'exit' typed in the subshell, worktree DIRTY ===
+exit
+➜  repo git:(holder3) ✗ exit
+🌳 Worktree has uncommitted changes.
+Clean worktree and return to pool? [Y/n] 
+--- 6s later, nothing answered: HEAD-unmoved=yes holder3.txt=present uncommitted.txt=present

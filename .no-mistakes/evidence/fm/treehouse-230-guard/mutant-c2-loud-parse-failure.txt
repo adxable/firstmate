@@ -1,0 +1,8 @@
+# tmux version: tmux 3.7b
+# treehouse version: v2.3.0
+# uname: Darwin arm64
+# kill case worktree: /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-termination.75s7CF/repo/.treehouse/repo-40cdb8/1/repo
+ok - a killed pane leaves the acquired worktree on its branch, with its committed and its uncommitted content, on v2.3.0
+ok - both the interactive treehouse get and get --lease skip the single slot while it holds an unlanded commit, even though the pool reads it free, on v2.3.0
+ok - landing that commit is the only change needed to get the same slot handed back out, reset to the default-branch tip
+not ok - treehouse v2.3.0 did not hand out the clean, landed single-slot worktree to a pane

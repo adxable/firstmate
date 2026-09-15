@@ -1,0 +1,6 @@
+# tmux version: tmux 3.7b
+# treehouse version: v2.3.0
+# uname: Darwin arm64
+# kill case worktree: /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-termination.BVS19W/repo/.treehouse/repo-4f324d/1/repo
+ok - a killed pane leaves the acquired worktree on its branch, with its committed and its uncommitted content, on v2.3.0
+not ok - treehouse v2.3.0 handed out the single-slot worktree to get --lease while it still carried holder-kill's unlanded commit; that reclaim resets the slot, so the unlanded-work protection v2.3.0 added in kunchenguid/treehouse#104 is gone and a dead task's committed work can be discarded at acquire time again

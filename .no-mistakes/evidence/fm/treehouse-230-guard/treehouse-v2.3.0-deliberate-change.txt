@@ -1,0 +1,20 @@
+Deliberateness determination the intent requires, checked against treehouse's own sources.
+
+1) Upstream release notes, kunchenguid/treehouse v2.3.0 (gh api repos/kunchenguid/treehouse/releases/tags/v2.3.0):
+* **get:** skip reclaiming a pool slot that holds unlanded work ([#104](https://github.com/kunchenguid/treehouse/issues/104)) ([04d8725](https://github.com/kunchenguid/treehouse/commit/04d87252f918dc3942318817b74413bf55f5b3eb))
+
+2) Upstream README 'How It Works', acquire step (gh api repos/kunchenguid/treehouse/contents/README.md):
+  ┌──────────────────────────────────────────────────────┐
+  │  Scan pool for a safely reusable worktree            │
+  │  (idle, unleased, clean, and HEAD merged into the    │
+  │  exact reset target; skip if safety is unprovable)   │
+  └──────────┬───────────────────────────────────────────┘
+
+3) The installed binary itself (strings /Users/adix/.local/bin/treehouse), v2.3.0:
+HEAD not merged into %s
+all %d worktrees are in use or dirty (max_trees = %d)
+cannot prove HEAD is merged into default branch
+hasUnlandedClass
+
+Conclusion: v2.3.0 narrowed acquire-time reuse on purpose (fix #104, issue #79).
+So the expectation moves and the guard is rewritten - not the code fitted to the test.

@@ -1,0 +1,15 @@
+# tmux version: tmux 3.7b
+# treehouse version: v2.3.0
+# uname: Darwin arm64
+# kill case worktree: /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-termination.PuxEYy/repo/.treehouse/repo-d6949d/1/repo
+ok - a killed pane leaves the acquired worktree on its branch, with its committed and its uncommitted content, on v2.3.0
+ok - both the interactive treehouse get and get --lease skip the single slot while it holds an unlanded commit, even though the pool reads it free, on v2.3.0
+ok - landing that commit is the only change needed to get the same slot handed back out, reset to the default-branch tip
+ok - the interactive treehouse get detaches the worktree it hands out as well, not only the non-interactive lease form
+ok - a normally exited subshell does return and reset the worktree, discarding the unlanded commit the acquire path now protects
+ok - five seconds after a subshell exit on a dirty worktree, with nothing answered, HEAD and the holder's committed and untracked content are all still there
+ok - the pool reuses this worktree while it is clean and unleased, which is the contrast that makes the dirty case falsifiable
+ok - the pool reads a worktree carrying uncommitted changes as dirty
+# acquire with that worktree dirty and unleased handed out: /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-termination.PuxEYy/repo/.treehouse/repo-d6949d/2/repo
+ok - the same worktree it reused while clean is skipped and left untouched once dirty, which is what bounds the acquire-time detach
+# all fm-treehouse-pool-termination live tests passed

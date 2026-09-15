@@ -1,0 +1,8 @@
+===== mutant-b2 =====
+ok - five seconds after a subshell exit on a dirty worktree, with nothing answered, HEAD and the holder's committed and untracked content are all still there
+ok - the pool reuses this worktree while it is clean and unleased, which is the contrast that makes the dirty case falsifiable
+not ok - treehouse v2.3.0 reports /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-termination.IGGLQA/repo/.treehouse/repo-15804f/1/repo as 'dirty' rather than dirty while it carries uncommitted changes; the record's "Acquire-time reuse narrowed in v2.3.0" note that a dirty slot and an unlanded one are both skipped needs re-deriving
+===== mutant-b3 =====
+ok - the pool reuses this worktree while it is clean and unleased, which is the contrast that makes the dirty case falsifiable
+ok - the pool reads a worktree carrying uncommitted changes as dirty
+not ok - treehouse v2.3.0 refused to acquire at all while the only existing slot was dirty; the record's "Acquire-time reuse narrowed in v2.3.0" note that the pool skips such a slot rather than failing outright needs re-deriving

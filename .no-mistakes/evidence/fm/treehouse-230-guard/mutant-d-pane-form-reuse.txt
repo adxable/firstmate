@@ -1,0 +1,6 @@
+# tmux version: tmux 3.7b
+# treehouse version: v2.3.0
+# uname: Darwin arm64
+# kill case worktree: /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-termination.VWBYXt/repo/.treehouse/repo-6bbac3/1/repo
+ok - a killed pane leaves the acquired worktree on its branch, with its committed and its uncommitted content, on v2.3.0
+not ok - the interactive treehouse get handed a pane the single-slot worktree while it still carried holder-kill's unlanded commit, even though get --lease refused it; the worker spawn path fm-spawn.sh uses can discard a dead task's committed work again

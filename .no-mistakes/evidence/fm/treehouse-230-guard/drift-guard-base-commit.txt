@@ -1,0 +1,6 @@
+# tmux version: tmux 3.7b
+# treehouse version: v2.3.0
+# uname: Darwin arm64
+# kill case worktree: /private/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T/fm-pool-termination.DZZjGY/repo/.treehouse/repo-1b9981/1/repo
+ok - a killed pane leaves the acquired worktree on its branch, with its content, on v2.3.0
+not ok - treehouse v2.3.0 did not hand out the single-slot worktree again
