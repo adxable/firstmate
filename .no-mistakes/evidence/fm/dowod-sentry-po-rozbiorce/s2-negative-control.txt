@@ -1,0 +1,23 @@
+# negative control: only the watcher's close is stopped from arming the sentry
+diff --git a/bin/fm-watch.sh b/bin/fm-watch.sh
+index cd6db54..16f5a8d 100755
+--- a/bin/fm-watch.sh
++++ b/bin/fm-watch.sh
+@@ -1814,7 +1814,7 @@ watcher_cleanup() {
+   # already written. Anything synchronous here is charged against that budget,
+   # so the gating, the fork of the watch loop, and its confirmation all belong
+   # in the sentry's own process rather than on the close path.
+-  if [ "$owns_lock" -eq 1 ] && [ -x "$FM_ROOT/bin/fm-silence-sentry.sh" ]; then
++  if false; then # NEGATIVE CONTROL: close does not arm the sentry
+     watcher_monitor_was_on=0
+     case $- in *m*) watcher_monitor_was_on=1 ;; esac
+     set -m 2>/dev/null || true
+
+2.1.247 (Claude Code)
+FM_TEST_BEGIN 2026-09-15T19:59:53Z tests/fm-silence-sentry-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+not ok - Claude 2.1.247 (Claude Code): no watcher cycle in this session armed a sentry at its close
+FM_TEST_END 2026-09-15T20:03:28Z tests/fm-silence-sentry-live-e2e.test.sh exit=1 duration_ms=215584 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=215682
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=215584 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-silence-sentry-live-e2e.test.sh duration_ms=215584
+RUN_EXIT=1

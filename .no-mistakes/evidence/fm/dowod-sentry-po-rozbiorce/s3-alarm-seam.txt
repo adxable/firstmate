@@ -1,0 +1,18 @@
+=== A: the seam the record names is set (what the live test does) ===
+sentry reported silence; durable marker written:
+silence detected at 2026-09-15T22:05:06+0200
+home=/var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T//fm-s3.nf0lEr/homeA
+unwatched-seconds=5
+wake-sequence=1
+-- recorder.log (where the notification went) --
+recorder CAPTURED channel=osascript summary=firstmate home /var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T//fm-s3.nf0lEr/homeA has not been watched for 0m: it delivered a signal wake about task1.status and no turn ever finished handling it. Quota exhaustion or a dead session will look exactly like this. Nothing was restarted - check the session.
+-- os-notifier.log (real macOS notifier invocations) --
+[empty above = no notification posted on the host]
+
+=== B: counterfactual, seam unset - the same report reaches the OS notifier ===
+sentry reported silence
+-- os-notifier.log (fake osascript stood in for Notification Center) --
+osascript CALLED: -e on run argv -e display notification (item 1 of argv) with title (item 2 of argv) sound name "Basso" -e end run firstmate home /var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T//fm-s3.nf0lEr/homeB has not been watched for 0m: it delivered a signal wake about task1.status and no turn ever finished handling it. Quota exhaustion or a dead session will look exactly like this. Nothing was restarted - check the session. firstmate: home stopped watching
+
+=== surviving sentry processes from this drive ===
+40567 bash /tmp/s3-seam-drive.sh /Users/adix/.no-mistakes/worktrees/7185135c4488/01M2KA22ZNVD1FY0KEQACDT3Q1 /var/folders/kn/79nnc4xn1850m1bqhs2lmrjw0000gn/T//fm-s3.nf0lEr

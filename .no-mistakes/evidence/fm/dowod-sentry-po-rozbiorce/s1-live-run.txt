@@ -1,0 +1,7 @@
+2.1.247 (Claude Code)
+FM_TEST_BEGIN 2026-09-15T19:57:30Z tests/fm-silence-sentry-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+ok - Claude 2.1.247 (Claude Code) live E2E: a watcher close inside the session armed the silence sentry over wake 1, and it outlived Claude tearing the session down, then reaped cleanly (pid 67476)
+FM_TEST_END 2026-09-15T19:59:11Z tests/fm-silence-sentry-live-e2e.test.sh exit=0 duration_ms=100159 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=100257
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=100159 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-silence-sentry-live-e2e.test.sh duration_ms=100159

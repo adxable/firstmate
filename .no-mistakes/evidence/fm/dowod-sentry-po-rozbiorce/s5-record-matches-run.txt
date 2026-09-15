@@ -1,0 +1,14 @@
+# record block as pasted in docs/verification/supervision.md
+2.1.247 (Claude Code)
+FM_TEST_BEGIN 2026-09-15T19:42:55Z tests/fm-silence-sentry-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+ok - Claude 2.1.247 (Claude Code) live E2E: a watcher close inside the session armed the silence sentry over wake 1, and it outlived Claude tearing the session down, then reaped cleanly (pid 32137)
+FM_TEST_END 2026-09-15T19:44:05Z tests/fm-silence-sentry-live-e2e.test.sh exit=0 duration_ms=70913 gate_skip=false
+
+# this run, on this machine, same command
+2.1.247 (Claude Code)
+FM_TEST_BEGIN 2026-09-15T19:57:30Z tests/fm-silence-sentry-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+ok - Claude 2.1.247 (Claude Code) live E2E: a watcher close inside the session armed the silence sentry over wake 1, and it outlived Claude tearing the session down, then reaped cleanly (pid 67476)
+FM_TEST_END 2026-09-15T19:59:11Z tests/fm-silence-sentry-live-e2e.test.sh exit=0 duration_ms=100159 gate_skip=false
+
+# normalised (run-specific timestamp, pid and duration masked) -- diff:
+IDENTICAL: the pasted block is exactly what the shipped command emits on this machine
