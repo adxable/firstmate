@@ -156,6 +156,13 @@ home_is_watched() { # <home>
   [ "$(( now - beat ))" -lt "$FM_GUARD_GRACE" ]
 }
 
+# The durable queue is the contract this record points into: a sentry may only
+# be watching a sequence that is actually queued.
+row_is_queued() { # <home> <seq>
+  awk -F '\t' -v want="$2" 'NF >= 5 && $2 == want { hit = 1 } END { exit(hit ? 0 : 1) }' \
+    "$1/state/.wake-queue" 2>/dev/null
+}
+
 sentry_pid() { # <home>
   awk -F '\t' 'NR == 1 { print $1 }' "$1/state/.silence-sentry" 2>/dev/null || true
 }
@@ -484,6 +491,48 @@ test_marker_is_retired_once_the_home_cycles_again() {
   pass "fm-silence-sentry: a new watcher cycle retires the previous silence record"
 }
 
+# A sentry holding a wake some turn already finished is not this home's sentry
+# any more, it is seconds from retiring itself. The incident's own shape puts a
+# fresh wake right behind it: the turn acknowledges, ends, the Stop-owned
+# auto-arm brings a watcher up, and that watcher closes again immediately on an
+# already-actionable status. Deferring to the lingering generation would leave
+# that fresh wake watched by nobody at all.
+test_arms_over_a_fresh_wake_while_the_previous_sentry_lingers() {
+  local dir first second watched i=0
+  dir=$(make_home lingering)
+  queue_one_unhandled_wake "$dir"
+  : > "$ALARM_LOG"
+
+  # A poll long enough that this sentry cannot notice anything change under it.
+  FM_SILENCE_POLL_SECS=900 FM_SILENCE_ALARM_SECS=3600 FM_HOME="$dir" \
+    "$dir/bin/fm-silence-sentry.sh" --arm || fail "arm exited nonzero"
+  first=$(sentry_pid "$dir")
+  [ -n "$first" ] || fail "arm recorded no sentry"
+
+  # The woken turn handles and acknowledges that wake, then ends.
+  drain_wake "$dir"
+  acknowledge_wake "$dir"
+
+  # A watcher comes back, closes on a fresh actionable wake, and arms over it.
+  FM_SILENCE_POLL_SECS=900 FM_SILENCE_ALARM_SECS=3600 \
+    run_watcher_to_actionable_close "$dir"
+  while [ "$i" -lt 200 ] && [ "$(sentry_pid "$dir")" = "$first" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+
+  second=$(sentry_pid "$dir")
+  retire_pid "$first"
+  [ -n "$second" ] && [ "$second" != "$first" ] \
+    || fail "the fresh wake got no sentry: the previous generation still holds the record"
+  watched=$(awk -F '\t' 'NR == 1 { print $3 }' "$dir/state/.silence-sentry" 2>/dev/null || true)
+  [ "$watched" != 1 ] \
+    || fail "the new sentry is watching the wake that was already acknowledged"
+  row_is_queued "$dir" "$watched" \
+    || fail "the new sentry is watching wake $watched, which is not in this home's queue"
+  pass "fm-silence-sentry: arms over a fresh wake while the previous sentry lingers"
+}
+
 test_arm_is_a_singleton_per_home() {
   local dir first second
   dir=$(make_home singleton)
@@ -645,6 +694,7 @@ test_silent_while_a_watcher_is_live
 test_no_report_before_the_deadline_elapses
 test_never_arms_over_its_own_standing_report
 test_marker_is_retired_once_the_home_cycles_again
+test_arms_over_a_fresh_wake_while_the_previous_sentry_lingers
 test_arm_is_a_singleton_per_home
 test_report_stands_until_a_turn_consumes_it
 test_deadline_is_floored_at_the_watcher_grace

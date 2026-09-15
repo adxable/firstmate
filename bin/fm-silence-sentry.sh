@@ -187,6 +187,15 @@ retire_presented_alarm() {
   rm -f "$ALARM_MARKER" 2>/dev/null || true
 }
 
+# Retire this generation's record, never a successor's. A sentry superseded
+# while it was already evaluating can reach its own exit after the newer one
+# published, and a record removed there would leave the live sentry unrecorded:
+# invisible to the singleton gate, and standing down itself on its next poll.
+retire_own_record() { # <me>
+  [ "$(awk -F '\t' 'NR == 1 { print $1 }' "$SENTRY_RECORD" 2>/dev/null || true)" = "$1" ] || return 0
+  rm -f "$SENTRY_RECORD" 2>/dev/null || true
+}
+
 # Evaluate the four conditions once. Prints the reason this home is NOT in
 # silence on stdout when it is healthy. Exit 0 = in silence, 1 = healthy.
 evaluate_silence() { # <target-seq>
@@ -256,7 +265,7 @@ report_silence() { # <target-seq> <queued-epoch> <kind> <key> <silent-secs>
 }
 
 arm() {
-  local row seq stamp kind key pid identity recorded
+  local row seq stamp kind key pid identity recorded watched
 
   [ -d "$STATE" ] || return 0
   [ -x "$WATCH" ] || return 0
@@ -284,13 +293,20 @@ arm() {
   IFS=$'\t' read -r seq stamp kind key <<< "$row"
   case "$seq" in ''|*[!0-9]*) return 0 ;; esac
 
-  # Singleton: one sentry per home. A recorded sentry whose process is gone, or
-  # whose pid has been recycled onto an unrelated process, is not one.
+  # Singleton: one sentry per home AND per wake. A recorded sentry whose process
+  # is gone, or whose pid has been recycled onto an unrelated process, is not
+  # one; neither is one still holding a wake some turn has since finished. That
+  # sentry is seconds from retiring itself, and deferring to it would leave the
+  # wake this close just queued with nobody watching it at all - the exact
+  # silence this exists to report. Superseding it is already the contract: the
+  # child publishes the record and the older generation stands down.
   if [ -r "$SENTRY_RECORD" ]; then
     recorded=$(awk -F '\t' 'NR == 1 { print $1 }' "$SENTRY_RECORD" 2>/dev/null || true)
     if fm_pid_alive "$recorded"; then
       identity=$(awk -F '\t' 'NR == 1 { print $2 }' "$SENTRY_RECORD" 2>/dev/null || true)
-      if [ "$identity" = "$(fm_pid_identity "$recorded" 2>/dev/null || true)" ]; then
+      watched=$(awk -F '\t' 'NR == 1 { print $3 }' "$SENTRY_RECORD" 2>/dev/null || true)
+      if [ "$identity" = "$(fm_pid_identity "$recorded" 2>/dev/null || true)" ] \
+        && [ "$watched" = "$seq" ]; then
         return 0
       fi
     fi
@@ -355,7 +371,7 @@ watch_loop() { # <seq> <queued-epoch> <kind> <key>
       silent=$(( now - armed ))
       if [ "$silent" -ge "$DEADLINE_SECS" ]; then
         report_silence "$seq" "$stamp" "$kind" "$key" "$silent"
-        rm -f "$SENTRY_RECORD" 2>/dev/null || true
+        retire_own_record "$me"
         return 0
       fi
     else
@@ -363,7 +379,7 @@ watch_loop() { # <seq> <queued-epoch> <kind> <key>
       # consumed it, so a standing marker always means "a silence report is
       # still waiting for the captain", never "it was once silent".
       retire_presented_alarm
-      rm -f "$SENTRY_RECORD" 2>/dev/null || true
+      retire_own_record "$me"
       return 0
     fi
     sleep "$POLL_SECS"
