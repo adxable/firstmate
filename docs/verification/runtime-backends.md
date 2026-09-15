@@ -324,6 +324,7 @@ treehouse v2.3.0 narrowed which slots the acquire will reuse at all, so that det
 Its release notes list `get: skip reclaiming a pool slot that holds unlanded work` ([kunchenguid/treehouse#104](https://github.com/kunchenguid/treehouse/pull/104), fixing [#79](https://github.com/kunchenguid/treehouse/issues/79)), and its README's "How It Works" acquire step now reads "idle, unleased, clean, and HEAD merged into the exact reset target; skip if safety is unprovable".
 On v2.1.1 a worktree carrying uncommitted changes read `dirty` and was skipped, but one carrying committed work on a feature branch read clean and idle once its owner was gone, so the next acquire reclaimed it and reset those commits away; that detach lost committed branch position rather than unlanded edits.
 On v2.3.0 both are skipped, so an acquire-time detach costs neither.
+A skip is not a failure: with `max_trees` raised to 2 the pool built a second slot and left the dirty one untouched, while the exit 1 the table's unlanded row records is what that skip becomes once the cap is reached, as it is at `max_trees = 1` there.
 
 That narrowing covers the acquire path only.
 The return path an ordinary subshell `exit` runs still resets an unlanded commit away, as the table's second row records.

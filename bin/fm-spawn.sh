@@ -2366,7 +2366,7 @@ discard_refused_endpoint() {
 # treehouse v2.3.0 narrows that window without closing it: its acquire now skips
 # a slot whose HEAD is not merged into the reset target, so a task that has
 # committed anything is protected by the pool as well. What is left is the task
-# whose worktree is still clean and still at the base commit - a worker that has
+# whose worktree is still clean and still at the reset target - a worker that has
 # not committed yet - which is precisely the case where the reset is silent. The
 # pool can only see whether a slot's content is safe to discard, never whether
 # it is owned.
