@@ -2314,13 +2314,16 @@ real_path_or_raw() {  # <path>
 #
 # Ending that endpoint is SAFE ON TMUX AND ONLY ON TMUX, which is why this
 # takes the endpoint back on that surface and nowhere else. Verified with real
-# binaries on tmux 3.7b with treehouse v2.1.1
+# binaries on tmux 3.7b with treehouse v2.3.0
 # (docs/verification/runtime-backends.md "Endpoint kill and worktree-pool
 # safety", pinned by tests/fm-treehouse-pool-termination-live-e2e.test.sh): a
 # hung-up tmux pane leaves the worktree exactly as it stands, while the
 # ordinary subshell exit an operator would type into that orphan runs the
 # pool's return-and-reset path and detaches the contested worktree off its own
-# branch. The pool is also the worktree provider for herdr, zellij and cmux,
+# branch. treehouse v2.3.0 stopped the ACQUIRE path from reclaiming a slot that
+# holds unlanded work, but left that return path resetting it, so the orphaned
+# pane remains the termination this refusal has to avoid.
+# The pool is also the worktree provider for herdr, zellij and cmux,
 # and nothing establishes that closing a herdr pane, a zellij tab or a cmux
 # workspace hangs the shell up rather than letting that return complete, so on
 # those surfaces this refuses to guess and names the residue instead: the
@@ -2360,6 +2363,13 @@ discard_refused_endpoint() {
 # as `available` while it still owns its worktree. Handing that slot to a second
 # task lets the newcomer reset the branch out from under work that has not
 # landed. This home's own state/<id>.meta records are the ownership truth.
+# treehouse v2.3.0 narrows that window without closing it: its acquire now skips
+# a slot whose HEAD is not merged into the reset target, so a task that has
+# committed anything is protected by the pool as well. What is left is the task
+# whose worktree is still clean and still at the base commit - a worker that has
+# not committed yet - which is precisely the case where the reset is silent. The
+# pool can only see whether a slot's content is safe to discard, never whether
+# it is owned.
 #
 # Liveness here is the recorded ENDPOINT's continued existence, not a running
 # harness agent: an idle endpoint still owns its worktree and may hold unlanded
