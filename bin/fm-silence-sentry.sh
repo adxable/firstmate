@@ -72,9 +72,11 @@
 # The deadline is generous on purpose. Any turn that ENDS re-arms the watcher and
 # retires this sentry through condition 2, so the only shape the deadline has to
 # outlast is a single turn that runs past it without ever finishing the wake it
-# was handed. The default is 30 minutes, floored at the watcher grace so it can
-# never be more eager than the staleness bound the rest of the stack already
-# applies.
+# was handed. A turn that does run past it IS reported, and that residual is
+# named and costed in docs/watcher-continuity.md rather than left here. The
+# default and where its number comes from sit with the value below; every home
+# can lower it, and it is floored at the watcher grace so it can never be more
+# eager than the staleness bound the rest of the stack already applies.
 #
 # HOME SCOPING IS ABSOLUTE. Every path derives from this home's FM_HOME /
 # FM_STATE_OVERRIDE. This script signals no process at all - not even its own
@@ -85,13 +87,13 @@
 #   bin/fm-silence-sentry.sh --arm     arm a detached sentry and return at once
 #                                      (called from bin/fm-watch.sh's close)
 #   bin/fm-silence-sentry.sh --watch   the polling loop itself; --arm forks this
-#   bin/fm-silence-sentry.sh --status  print this home's current sentry state
-#   bin/fm-silence-sentry.sh --check   evaluate the four conditions once and exit
-#                                      0 when the home is in silence, 1 when not
+#   bin/fm-silence-sentry.sh --check   print this home's deadline, then evaluate
+#                                      the four conditions once and exit 0 when
+#                                      the home is in silence, 1 when not
 #
 # Environment:
-#   FM_SILENCE_ALARM_SECS  deadline before reporting (default 1800, floored at
-#                          the guard grace)
+#   FM_SILENCE_ALARM_SECS  deadline before reporting, overriding this home's
+#                          config/silence-deadline; floored at the guard grace
 #   FM_SILENCE_POLL_SECS   how often the loop re-evaluates (default 30)
 #   FM_WEDGE_ALARM_EXEC    bin/fm-supervise-daemon.sh's own notifier seam, which
 #                          this reporter inherits with its channels; a test sets
@@ -102,6 +104,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 WATCH="$SCRIPT_DIR/fm-watch.sh"
 DAEMON="$SCRIPT_DIR/fm-supervise-daemon.sh"
 
@@ -121,8 +124,21 @@ ALARM_TITLE='firstmate: home stopped watching'
 GRACE=${FM_GUARD_GRACE:-300}
 case "$GRACE" in ''|*[!0-9]*|0) GRACE=300 ;; esac
 
-DEADLINE_SECS=${FM_SILENCE_ALARM_SECS:-1800}
-case "$DEADLINE_SECS" in ''|*[!0-9]*|0) DEADLINE_SECS=1800 ;; esac
+# 45 minutes, and the number is a judgement rather than a measurement, so its
+# provenance stands with it. Below it the detector lies about long turns: on
+# 2026-09-15 this home ran stretches of roughly nineteen minutes with nothing
+# beating while work was genuinely in progress, and an alarm that cried wolf
+# every four minutes for an hour that night is exactly how a domain learns to
+# ignore a task's alarms. Above it detection costs real time: at 45 minutes the
+# 2026-09-14 failure would have reported at 11:15, against the 11:42 a human
+# actually noticed it. A home whose turns are shorter is entitled to go lower
+# through config/silence-deadline, which is why this is a per-home number and
+# not a constant.
+DEADLINE_DEFAULT=2700
+DEADLINE_SECS=${FM_SILENCE_ALARM_SECS:-}
+[ -n "$DEADLINE_SECS" ] \
+  || DEADLINE_SECS=$(head -n 1 "$CONFIG/silence-deadline" 2>/dev/null || true)
+case "$DEADLINE_SECS" in ''|*[!0-9]*|0) DEADLINE_SECS=$DEADLINE_DEFAULT ;; esac
 # Never more eager than the staleness bound the rest of the stack already uses.
 [ "$DEADLINE_SECS" -ge "$GRACE" ] || DEADLINE_SECS=$GRACE
 
@@ -351,31 +367,7 @@ watch_loop() { # <seq> <queued-epoch> <kind> <key>
   done
 }
 
-print_status() {
-  local row seq recorded
-  printf 'home=%s\n' "$FM_HOME"
-  printf 'deadline-seconds=%s\n' "$DEADLINE_SECS"
-  recorded=$(awk -F '\t' 'NR == 1 { print $1 }' "$SENTRY_RECORD" 2>/dev/null || true)
-  if fm_pid_alive "$recorded"; then
-    printf 'sentry=live pid=%s\n' "$recorded"
-  else
-    printf 'sentry=none\n'
-  fi
-  row=$(oldest_queued_row) || row=''
-  if [ -n "$row" ]; then
-    seq=$(printf '%s' "$row" | cut -f1)
-    printf 'oldest-unhandled-wake=%s\n' "$seq"
-  else
-    printf 'oldest-unhandled-wake=none\n'
-  fi
-  if [ -e "$ALARM_MARKER" ]; then
-    printf 'alarm=raised\n'
-  else
-    printf 'alarm=none\n'
-  fi
-}
-
-case "${1:---status}" in
+case "${1:---help}" in
   --arm) arm ;;
   --watch)
     shift
@@ -383,6 +375,7 @@ case "${1:---status}" in
     watch_loop "$1" "$2" "$3" "$4"
     ;;
   --check)
+    printf 'deadline-seconds=%s\n' "$DEADLINE_SECS"
     row=$(oldest_queued_row) || row=''
     if [ -z "$row" ]; then
       echo "no unhandled wake"
@@ -396,7 +389,6 @@ case "${1:---status}" in
     echo "$reason"
     exit 1
     ;;
-  --status) print_status ;;
   -h|--help) sed -n '/^# Usage:/,/^[^#]/p' "${BASH_SOURCE[0]}" | sed -n '/^#/p' | sed 's/^# \{0,1\}//' ;;
   *) echo "silence-sentry: unknown argument: $1" >&2; exit 2 ;;
 esac

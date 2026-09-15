@@ -79,7 +79,17 @@ Two signals that look plausible were measured and rejected: elapsed unwatched ti
 The sentry reports only when supervision is still needed here, no live identity-matched watcher holds this home's lock with a fresh beacon, the wake it was armed over is still queued and unacknowledged, and away mode is inactive, for the whole deadline.
 Each healthy shape trips a different one of those: an idle home fails the need test and never arms a sentry at all, a watcher parked on a long external wait is alive and beating, and a turn that handles the wake acknowledges it when it is done.
 A turn that merely ENDS also retires the sentry, because the Stop-owned auto-arm brings a watcher back.
-The deadline therefore only has to outlast a single turn that runs past it without ever finishing the wake it was handed; it defaults to 30 minutes and is floored at the watcher grace, so it is never more eager than the staleness bound the rest of the stack already applies.
+The deadline therefore only has to outlast a single turn that runs past it without ever finishing the wake it was handed; it defaults to 45 minutes, is settable per home in `config/silence-deadline` (seconds, `FM_SILENCE_ALARM_SECS` overrides it), and is floored at the watcher grace, so it is never more eager than the staleness bound the rest of the stack already applies.
+
+That default is a judgement, and its two bounds are recorded so the next reader moves it on evidence rather than instinct.
+Below it the detector lies: on 2026-09-15 this home ran stretches of roughly nineteen minutes with nothing beating while work was genuinely in progress, and an alarm that cried wolf every four minutes for an hour that night is exactly how a domain learns to ignore that task's alarms.
+Above it detection costs real time: at 45 minutes the 2026-09-14 failure would have reported at 11:15, against the 11:42 a human actually noticed it.
+A home whose turns are reliably shorter is entitled to lower it and get the earlier detection.
+
+A third residual follows from that number, and it is a false report rather than a missed one.
+A turn that genuinely runs longer than the deadline without acknowledging its wake is reported as silence: the captain gets the `SILENT HOME` banner, the durable `state/.silence-alarm`, and a queued `check` wake, all naming quota exhaustion or a dead session, about a session that is alive and working.
+The cost is the detector's credibility, which is why the number is set where a turn rarely reaches it and why a home that lowers it accepts that trade knowingly.
+Nothing is restarted or lost in that case - the report is report-only - and the next turn that acknowledges the wake retires the marker.
 
 The close path pays nothing for it.
 `watcher_cleanup` runs inside the watcher process, and callers bound that process from outside: `bin/fm-watch-checkpoint.sh` wraps the whole watcher in `timeout <n>`, and a kill at that bound discards the wake line the watcher had already written.

@@ -482,18 +482,54 @@ test_report_stands_until_a_turn_consumes_it() {
   pass "fm-silence-sentry: a report stands until a turn consumes it, then retires"
 }
 
+# The deadline the home will actually apply, read off the only mode that
+# evaluates it. --check exits 1 on this idle fixture, which is the verdict, not
+# a failure to answer.
+checked_deadline() { # <home> [env assignments...]
+  local dir=$1
+  shift
+  env "$@" FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --check 2>/dev/null || true
+}
+
 # The deadline is floored at the watcher grace, so the sentry can never be more
 # eager than the staleness bound the rest of the stack already applies.
 test_deadline_is_floored_at_the_watcher_grace() {
   local dir out
   dir=$(make_home floored)
-  out=$(FM_SILENCE_ALARM_SECS=1 FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --status)
+  out=$(checked_deadline "$dir" FM_SILENCE_ALARM_SECS=1)
   assert_contains "$out" "deadline-seconds=$FM_GUARD_GRACE" \
     "a deadline below the grace must be raised to the grace, not honoured"
-  out=$(FM_SILENCE_ALARM_SECS=4242 FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --status)
+  out=$(checked_deadline "$dir" FM_SILENCE_ALARM_SECS=4242)
   assert_contains "$out" "deadline-seconds=4242" \
     "a deadline above the grace must be honoured as configured"
   pass "fm-silence-sentry: the report deadline is floored at the watcher grace"
+}
+
+# One machine runs several homes, so the threshold cannot live in the ambient
+# environment alone: a home whose turns are shorter has to be able to lower it
+# on its own, and one that sets nothing gets the 45-minute default.
+test_deadline_is_settable_per_home() {
+  local dir out
+  dir=$(make_home tuned)
+  out=$(checked_deadline "$dir" FM_SILENCE_ALARM_SECS=)
+  assert_contains "$out" "deadline-seconds=2700" \
+    "a home that configures nothing must get the 45-minute default"
+
+  printf '900\n' > "$dir/config/silence-deadline"
+  out=$(checked_deadline "$dir" FM_SILENCE_ALARM_SECS=)
+  assert_contains "$out" "deadline-seconds=900" \
+    "this home's own config/silence-deadline must be what it applies"
+
+  printf 'whenever\n' > "$dir/config/silence-deadline"
+  out=$(checked_deadline "$dir" FM_SILENCE_ALARM_SECS=)
+  assert_contains "$out" "deadline-seconds=2700" \
+    "an unreadable threshold must fall back to the default, never to no deadline"
+
+  printf '900\n' > "$dir/config/silence-deadline"
+  out=$(checked_deadline "$dir" FM_SILENCE_ALARM_SECS=1200)
+  assert_contains "$out" "deadline-seconds=1200" \
+    "an explicit environment override must win over the file"
+  pass "fm-silence-sentry: the report deadline is settable per home"
 }
 
 # --- termination: a sentry must never outlive its subject --------------------
@@ -568,5 +604,6 @@ test_marker_is_retired_once_the_home_cycles_again
 test_arm_is_a_singleton_per_home
 test_report_stands_until_a_turn_consumes_it
 test_deadline_is_floored_at_the_watcher_grace
+test_deadline_is_settable_per_home
 test_exits_when_its_home_is_deleted
 test_exits_when_superseded_by_a_newer_sentry
