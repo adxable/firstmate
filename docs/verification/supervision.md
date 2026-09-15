@@ -497,7 +497,7 @@ Other primary harnesses are not applicable: the last-resort arm is reached only 
 The sentry reports a home that stopped watching when no turn ever ends, so the one fact a fixture cannot confirm is that a sentry forked from a watcher a real Claude primary's auto-arm brought up outlives Claude tearing that process tree down.
 Without it the mechanism would be inert exactly when it is needed.
 The home, project, and watcher are isolated; the only processes this test signals are the ones its own home recorded.
-The test also replaces the reporter's notifier with a recorder through `FM_WEDGE_ALARM_EXEC` and holds the deadline an hour beyond the session, so running it posts no notification on the host.
+The test also replaces the reporter's notifier with a stub that fires nothing through `FM_WEDGE_ALARM_EXEC` and holds the deadline an hour beyond the session, so running it posts no notification on the host.
 
 ```sh
 claude --version
