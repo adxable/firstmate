@@ -77,7 +77,8 @@ case "${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes
+  fm_fake_treehouse "$fakebin"
+  fm_fake_exit0 "$fakebin" gh gh-axi no-mistakes
 
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -559,7 +560,7 @@ run_spawn() {  # <case-dir> <args...>
   # without it this suite would write the developer's real ~/.claude.json.
   mkdir -p "$case_dir/user-home"
   FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" HOME="$case_dir/user-home" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="${SPAWN_PANE_WT:-$case_dir/wt}" TMUX="fake,1,0" \
     CLAUDE_CONFIG_DIR='' \
     PATH="$case_dir/fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
@@ -2577,13 +2578,18 @@ test_manual_backend_home_dispatches_and_completes_without_touching_the_backlog()
 }
 
 test_a_secondmate_home_keeps_its_own_books() {
-  local case_dir id out
+  local case_dir id out SPAWN_PANE_WT
   id=atomic-mate-b13
   case_dir=$(make_home mate-own-books "$id")
   # The mate's home is a firstmate home in its own right; the invariant is
   # single-host, so its own dispatch and completion keep its own two records
   # paired with no parent involved.
   printf '%s\n' mate-h1 > "$(home_of "$case_dir")/.fm-secondmate-home"
+  # That marker also gives the home a worktree pool root of its own, and the
+  # spawn verifies the slot it receives against that root, so this case's slot
+  # sits where a lease from that pool would put it.
+  SPAWN_PANE_WT="$case_dir/user-home/.treehouse-homes/mate-h1/pool/1"
+  git -C "$case_dir/project" worktree add --quiet -b mate-pooled "$SPAWN_PANE_WT"
   add_item "$case_dir" "$id"
 
   out=$(run_ship_spawn "$case_dir" "$id") || fail "mate-home spawn failed: $out"

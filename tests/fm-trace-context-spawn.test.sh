@@ -89,7 +89,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse
+  fm_fake_treehouse "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
@@ -231,7 +231,10 @@ run_two_level() {
   # env, reading the secondmate home's own (inherited) config.
   worker_id="w-$name"
   wproj="$base/wproj"
-  wwt="$base/wwt"
+  # The secondmate home resolves a worktree pool root of its own under its HOME,
+  # and the spawn verifies the slot it receives against that root, so the stand-in
+  # worktree has to sit where a lease from that pool would put it.
+  wwt="$sm/user-home/.treehouse-homes/$sm_id/pool/1"
   fm_git_worktree "$wproj" "$wwt" "wt-$name"
   mkdir -p "$sm/state" "$sm/projects" "$sm/data/$worker_id"
   write_ship_brief "$sm/data/$worker_id/brief.md" "$worker_id"

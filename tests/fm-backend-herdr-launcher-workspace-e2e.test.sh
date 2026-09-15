@@ -65,15 +65,20 @@ cleanup_all() {
   [ "$CLEANED" = 0 ] || return 0
   CLEANED=1
   for wt in ${WORKTREES[@]+"${WORKTREES[@]}"}; do
-    [ -n "$wt" ] && treehouse return --force "$wt" >/dev/null 2>&1
+    [ -n "$wt" ] && HOME="${LAB_HOME:-$HOME}" treehouse return --force "$wt" >/dev/null 2>&1
   done
   WORKTREES=()
   "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" || status=$?
+  # The lab HOME lives outside TMP_ROOT, short enough for herdr to bind its
+  # session socket under it (tests/herdr-test-safety.sh).
+  [ -z "${LAB_HOME:-}" ] || rm -rf "$LAB_HOME"
   rm -rf "$TMP_ROOT"
   return "$status"
 }
 trap cleanup_all EXIT
 "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" || fail "could not provision isolated Herdr lab session"
+LAB_HOME=$(herdr_lab_home) \
+  || fail "could not build a lab-owned HOME for this suite's spawns"
 
 lab() { "$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" "$@"; }
 
@@ -128,12 +133,13 @@ spawn_from_launcher() {
   SPAWN_OUT="$TMP_ROOT/$id.out"; SPAWN_ERR="$TMP_ROOT/$id.err"
   if [ -n "$pane" ]; then
     env HERDR_ENV=1 HERDR_PANE_ID="$pane" HERDR_SESSION="$HERDR_LAB_SESSION" \
-      HERDR_SOCKET_PATH="$LAB_SOCKET" \
+      HERDR_SOCKET_PATH="$LAB_SOCKET" HOME="$LAB_HOME" \
       FM_SPAWN_NO_GUARD=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
       "$ROOT/bin/fm-spawn.sh" "$id" "$proj" "sh -c 'echo launcher-ws-ok'" --backend herdr "$@" \
       >"$SPAWN_OUT" 2>"$SPAWN_ERR"
   else
     env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SOCKET_PATH HERDR_SESSION="$HERDR_LAB_SESSION" \
+      HOME="$LAB_HOME" \
       FM_SPAWN_NO_GUARD=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
       "$ROOT/bin/fm-spawn.sh" "$id" "$proj" "sh -c 'echo launcher-ws-ok'" --backend herdr "$@" \
       >"$SPAWN_OUT" 2>"$SPAWN_ERR"
@@ -425,7 +431,13 @@ pass "real herdr E2E: a --secondmate launch still stands up that secondmate's ow
 
 # --- 8. teardown closes only the worker's own pane --------------------------
 
-FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
+# FM_HOME names the home dupC was spawned from, so teardown anchors the shared
+# Treehouse project lock in that home's state directory - the same lock the
+# spawn took. Without it FM_HOME falls back to FM_ROOT_OVERRIDE, and teardown
+# either takes a different lock than the spawn or, in a checkout with no
+# untracked state/ directory, refuses to resolve one at all.
+HOME="$LAB_HOME" FM_HOME="$PRIMARY_HOME" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
   FM_CONFIG_OVERRIDE="$PRIMARY_HOME/config" \
   "$ROOT/bin/fm-teardown.sh" dupC >"$TMP_ROOT/teardown.out" 2>&1
 status=$?

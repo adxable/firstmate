@@ -321,11 +321,12 @@ fm_live_gate() {
 #
 # fm_fakebin <dir> creates <dir>/fakebin and echoes it; prepend it to PATH to
 # shadow real tools with stubs. fm_fake_exit0 drops trivial exit-0 stubs for the
-# named tools into a fakebin dir. fm_fake_crash_injector drops the shim a fake
-# uses to crash the process under test deterministically. fm_fake_version_tool
-# drops a stub for a tool whose installed version bootstrap gates, so a fixture
-# cannot be reported as an unparseable build simply for answering `--version`
-# with nothing.
+# named tools into a fakebin dir. fm_fake_treehouse drops the one stub that has
+# to answer `get --help` rather than merely exit 0. fm_fake_crash_injector drops
+# the shim a fake uses to crash the process under test deterministically.
+# fm_fake_version_tool drops a stub for a tool whose installed version bootstrap
+# gates, so a fixture cannot be reported as an unparseable build simply for
+# answering `--version` with nothing.
 
 fm_fakebin() {
   local dir=$1 fakebin="$1/fakebin"
@@ -343,6 +344,27 @@ exit 0
 SH
     chmod +x "$fakebin/$tool"
   done
+}
+
+# fm_fake_treehouse <fakebin>
+# A no-op treehouse that still answers `get --help` the way the pinned build
+# does, listing both --lease and --root. A spawn from a home that resolves a
+# worktree pool root of its own reads that help text before it sends the root
+# (bin/fm-treehouse-capability-lib.sh) and refuses when --root is absent, so a
+# bare exit-0 stub would make such a spawn fail for the fake's silence rather
+# than for anything the case is about. The build that answers "no" belongs to
+# tests/fm-treehouse-root.test.sh, which owns the refusal itself.
+fm_fake_treehouse() {
+  local fakebin=$1
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
+  printf 'Flags:\n      --lease   Take a durable lease\n'
+  printf '\nGlobal Flags:\n      --root string   Worktree root directory\n'
+fi
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
 }
 
 # fm_fake_crash_injector <fakebin>

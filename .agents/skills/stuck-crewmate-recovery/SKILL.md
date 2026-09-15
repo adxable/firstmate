@@ -33,6 +33,8 @@ A no-mistakes run matched to the crew's branch and current code remains authorit
 
 When no authoritative run accounts for the task, inspect only its recorded backend and worktree inventory.
 Use `treehouse status` for treehouse-backed tmux, herdr, zellij, or cmux tasks, and use the recorded `orca_worktree_id=` and `terminal=` for Orca tasks.
+A task whose record carries `treehouse_root=` was leased from that pool root rather than the default one, and a bare `treehouse status` reads the default root, so its slot looks absent when it is not.
+Read that task's inventory with `root=$(sed -n 's/^treehouse_root=//p' state/<id>.meta); treehouse status ${root:+--root "$root"}`, which leaves the default root alone when the record names none.
 Do not sweep another home's endpoints or infer ownership from a matching window label.
 
 Before relaunch, prove that no live agent still owns the recorded task and that the existing worktree remains available.

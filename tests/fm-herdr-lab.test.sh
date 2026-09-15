@@ -234,6 +234,51 @@ SH
   pass "fm-herdr-lab: timed-out provisioning cancels the launch before teardown"
 }
 
+# --- the lab $HOME the real-Herdr suites spawn under ------------------------
+
+# tests/herdr-test-safety.sh's herdr_lab_home is the $HOME every real-Herdr e2e
+# suite pins its spawns to, and two properties of the PATH it hands back decide
+# whether those suites can run at all - neither of them visible in the suites:
+#   - herdr binds a named session's socket at
+#     <home>/.config/herdr/sessions/<session>/herdr.sock, and a unix socket path
+#     is capped by sun_path (104 bytes on darwin, 108 on linux), so a home under
+#     a suite's own mktemp TMP_ROOT makes `herdr server` die with "local socket
+#     name length exceeds capacity of sun_path of sockaddr_un" before the first
+#     spawn;
+#   - treehouse records a leased worktree under the literal $HOME it resolved
+#     while fm-spawn records the pane's physically resolved cwd, so a home
+#     reached through a symlink makes teardown's `treehouse return` report the
+#     slot as "not managed by treehouse".
+# The longest session name fm_herdr_lab_name can produce is 36 characters
+# (fm-lab- + a 16-character label + pid + RANDOM), which is what the budget
+# below has to hold.
+HERDR_SUN_PATH_MAX=104
+HERDR_LONGEST_LAB_SESSION=fm-lab-0123456789abcdef-999999-32767
+
+test_lab_home_fits_a_session_socket_and_needs_no_symlink() {
+  local caller_home dir socket resolved
+  caller_home="$TMP_ROOT/lab-home-caller"
+  mkdir -p "$caller_home/.config/herdr"
+
+  dir=$(
+    # shellcheck source=tests/herdr-test-safety.sh
+    . "$ROOT/tests/herdr-test-safety.sh" >/dev/null 2>&1
+    HOME="$caller_home" herdr_lab_home
+  ) || fail "herdr_lab_home refused a caller home that has a herdr config"
+  [ -n "$dir" ] && [ -d "$dir" ] || fail "herdr_lab_home echoed no usable directory: '$dir'"
+
+  socket="$dir/.config/herdr/sessions/$HERDR_LONGEST_LAB_SESSION/herdr.sock"
+  [ "${#socket}" -le "$HERDR_SUN_PATH_MAX" ]     || { rm -rf "$dir"; fail "a lab session socket under this home is ${#socket} bytes, past the ${HERDR_SUN_PATH_MAX}-byte sun_path cap, so herdr could not bind it: $socket"; }
+
+  resolved=$(cd "$dir" && pwd -P)
+  [ "$resolved" = "$dir" ]     || { rm -rf "$dir"; fail "the lab home is reached through a symlink ('$dir' resolves to '$resolved'), so a leased worktree would be recorded under two different paths"; }
+
+  [ "$(cd "$dir/.config/herdr" && pwd -P)" = "$(cd "$caller_home/.config/herdr" && pwd -P)" ]     || { rm -rf "$dir"; fail "the lab home does not reach the caller's own herdr config, so a spawn under it would not find the lab session"; }
+
+  rm -rf "$dir"
+  pass "fm-herdr-lab: the lab HOME can host a session socket and is not reached through a symlink"
+}
+
 test_refuses_unsafe_names
 test_provision_run_and_guarded_teardown
 test_missing_tripwire_blocks_destruction
@@ -241,3 +286,4 @@ test_changed_default_trips_after_teardown
 test_stopped_owned_lab_can_reprovision
 test_failed_delete_retains_tripwire
 test_timed_out_provision_cancels_late_launch
+test_lab_home_fits_a_session_socket_and_needs_no_symlink

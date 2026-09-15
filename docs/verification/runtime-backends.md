@@ -1634,3 +1634,32 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --m
 6. `bin/fm-control.sh <id> exit` stopped the agent and `bin/fm-teardown.sh` returned the worktree and closed the item.
 
 `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence; the worker path above is refreshed by repeating the scout dispatch after any omp upgrade.
+
+## Treehouse
+
+The per-home worktree pool root (docs/configuration.md "Worktree pool root") needs the pool tool to honor a configured root.
+Both released versions below were probed on 2026-09-14, darwin-arm64, from the official release archives.
+
+```sh
+treehouse get --help                   # the flags bin/fm-treehouse-capability-lib.sh reads, per version
+strings treehouse | grep -c TREEHOUSE_ROOT
+TREEHOUSE_ROOT=<scratch> treehouse get --lease --lease-holder probe-holder
+TREEHOUSE_ROOT=<scratch> treehouse return --force <leased-worktree>
+```
+
+Observed:
+
+| capability | v2.0.1 | v2.3.0 |
+| --- | --- | --- |
+| `--root` in `get --help` global flags | absent | present |
+| `TREEHOUSE_ROOT` referenced in the binary | 0 occurrences | 3 occurrences |
+| lease honors a configured root | no, leased into the default `~/.treehouse` pool | yes, `<root>/.treehouse/<pool>/1/<repo>` |
+| `get --lease --lease-holder` | present | present |
+| `return --force` under a non-default root | not reachable, the version has no non-default root | succeeds |
+
+So v2.0.1 cannot place a pool anywhere but the default root, which is why `treehouse_supports_root` in `bin/fm-treehouse-capability-lib.sh` probes for the flag rather than the version.
+The lease probe matches on both versions, so it cannot answer this question; a home that resolves a root of its own refuses to spawn when the root probe says no.
+Which release introduced the support was not tested; only these two versions were.
+
+`bin/fm-install-treehouse.sh` therefore pins v2.3.0, and the required real-Herdr CI lane runs `tests/fm-treehouse-root.test.sh` against that pin with `--fail-on-gate-skip 'treehouse not found'`.
+The v2.3.0 archive layout is a single `treehouse` binary at the archive root, unchanged from v2.0.1, and the four release checksums the installer pins were reproduced from the official release URLs on the same date.

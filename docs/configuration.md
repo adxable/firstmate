@@ -141,6 +141,7 @@ A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herd
 A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zellij_pane_id=`.
 An Orca task additionally records `orca_worktree_id=` and `terminal=`, with `window=fm-<id>` kept as the shared firstmate alias.
 A cmux task additionally records `cmux_workspace_id=` and `cmux_surface_id=`.
+A task that leases a pooled worktree in a home that has a worktree pool root of its own additionally records `treehouse_root=`, which teardown returns the slot against; ["Worktree pool root"](#worktree-pool-root) below owns that field's resolution and its absence.
 Task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` resolve centrally through `fm_backend_resolve_selector`.
 A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
@@ -252,6 +253,63 @@ Opt in for a home that stows often enough that entries never sit unreinforced fo
 The flag is per home and is not inherited by secondmate homes, because stow cadence is a property of the home doing the stowing.
 Only the file's presence is read, so its contents are ignored; remove it to return to the default contract on the next pass.
 The skill text owns the marker spelling, the tick order, and the reinforcement rule.
+
+## Worktree pool root
+
+A secondmate home leases its task worktrees from a pool root of its own, so a secondmate and the home that seeded it can never be handed each other's worktrees.
+Treehouse keys a pool by the repository's remote URL rather than by the clone path, so without per-home roots both clones resolve to one pool under one root, and a slot that pool hands out can be a linked worktree of the other home's clone.
+That slot is a real, isolated worktree, so it passes the spawn guards; what fails is later and less legible.
+A claude spawn is refused by the workspace-trust scope test in `bin/fm-claude-trust.sh`, which is the one check that compares git common directories, and the home can start nothing at all.
+On a harness with no such pre-registration the worker instead branches and commits inside the other clone's object store, and this home's teardown does not recognize the slot as a pool slot at all, so its lease is never returned.
+
+There is nothing to configure: `bin/fm-treehouse-root.sh` is the single owner of the resolution, and a home's root follows from what the home is.
+A secondmate home resolves to `$HOME/.treehouse-homes/<home id>`, where the id is the registered secondmate id its `.fm-secondmate-home` marker holds, the same key `data/secondmates.md` registers.
+Whether a home is a secondmate at all is decided by `fm_root_is_secondmate_home` in `bin/fm-primary-scope-lib.sh`, the one owner of that question for the whole repository, so a marker it rejects makes the home a primary here exactly as it does everywhere else.
+The id, not the home's path, is what keys the root, because a secondmate home is itself a slot in the primary's firstmate pool: retiring the home returns that slot, and treehouse hands the same slot path to the next home, so a path-derived key would make the next home inherit the retired home's pool.
+An id that cannot be one path segment would name a directory other than this home's own, so it is refused by name rather than used.
+One case remains and is an operator's choice about identity rather than slot recycling: a new home deliberately created under a retired home's id inherits that id's leftover pool, which the cost notes below spell out.
+
+Every other home is left alone entirely.
+Nothing is printed, no `TREEHOUSE_ROOT` is forced on the pane, and treehouse's own resolution stands, so a project that configures its own `root` in `treehouse.toml` keeps it.
+
+The root governs the pools a home's project worktrees come from.
+It does not govern the firstmate-repo lease a secondmate home itself occupies: that slot belongs to the primary that seeded it and is returned by the primary, both through treehouse's own default resolution, so a resolved root never strands a live home.
+`bin/fm-spawn.sh` records the resolved root as `treehouse_root=` in the task record, and `bin/fm-teardown.sh` returns the slot against that recorded value; a task with no recorded value, whether it was spawned in a home with no root of its own or before the record existed, keeps treehouse's own resolution and tears down exactly as before.
+The per-home root depends on the pool tool honoring a configured root, which treehouse v2.0.1 does not and v2.3.0 does.
+A home that resolves a root of its own refuses to spawn against a tool that ignores one rather than silently leasing from the shared pool; the operator upgrades treehouse and spawns again.
+A recorded root is verified rather than trusted: the spawn asks the tool it can see whether it honors a root, then checks that the worktree the pane's own treehouse handed back really is under that root, and refuses the spawn when it is not.
+That second check is what catches a worker shell whose PATH resolves a treehouse that ignores the root, so no task can record a root its slot never came from and no teardown can wedge returning a slot to a pool that never held it.
+
+### What this costs
+
+A primary home pays nothing.
+Its root does not move, no migration runs, every slot it already holds stays where it is, and the secondmate homes leased inside its own firstmate pool are undisturbed.
+
+Work in flight pays nothing either.
+A task spawned before this change carries no `treehouse_root=` record, teardown reads that absence as treehouse's own resolution, and the slot goes back to the pool it came from.
+
+An existing secondmate home pays a second pool.
+Its next spawn builds a new and empty pool under `$HOME/.treehouse-homes/<id>`, while the slots it already created in the shared root stay allocated and are never handed to that home again.
+The machine can therefore carry two pools of up to `max_trees` full checkouts each.
+For scale, the shared `adx-worker` pool at `~/.treehouse/adx-worker-b1dabf` currently holds 14 slots and about 15 GB, roughly 1.3 GB per slot.
+A slot is a linked worktree sharing its clone's object store, so what each added slot costs is one working tree, not another copy of the history.
+Nothing reclaims the home's abandoned slots in the shared root; that is ordinary pruning there, done by hand.
+
+Housekeeping no longer reaches the new pools on its own.
+`treehouse prune --all` with no root argument sweeps only the managed pools under the user-level root, which is `$HOME` and puts those pools in `~/.treehouse`, so stale and merged worktrees inside each `$HOME/.treehouse-homes/<id>` accumulate until that root is pruned by name.
+Prune one by name with `treehouse prune --root "$HOME/.treehouse-homes/<id>" --all --prune-orphans`, which is a dry run until you add `--yes`.
+
+Retiring a secondmate leaves that home's whole pool tree behind, and reclaiming it is the operator's call rather than teardown's.
+`$HOME/.treehouse-homes/<id>` survives the retirement with its worktrees, and the clone those worktrees are linked to lived inside the retired home, so it is gone.
+Before this change those slots went back to the shared pool and were handed out again; they are not now, because the root is keyed by the registered id and ids are deliberately not recycled with the slot.
+Nothing deletes the directory automatically, because one of its worktrees can still hold unlanded work.
+Reclaim it with the same `treehouse prune --root "$HOME/.treehouse-homes/<id>" --all --prune-orphans`, which lists the worktrees whose backing repository is missing and deletes nothing until you re-run it with `--yes`.
+`--all` is required: without it prune derives the pool from the current directory, and the clone that directory would name no longer exists.
+
+Reusing a retired id inherits that id's orphaned pool, not a fresh one.
+Seeding a new secondmate under a retired home's id resolves to the same `$HOME/.treehouse-homes/<id>`, so its first spawn meets that id's leftover worktrees instead of an empty pool.
+Those worktrees point at the clone that went away with the retired home, so when the pool hands one out the spawn's isolation screen rejects it and the launch ends in the 60s `treehouse get did not enter an isolated worktree` refusal in `bin/fm-spawn.sh`.
+Prune that root before reseeding under an id that has been used before.
 
 ## Secondmate routes (data/secondmates.md)
 
