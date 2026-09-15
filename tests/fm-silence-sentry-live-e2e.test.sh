@@ -93,7 +93,8 @@ printf 'needs-decision: which option\n' > "$HOME_DIR/state/task.status"
 
 # Hold the sentry's own evaluation well outside this session: what is under test
 # is that the process survives, not what it decides, which the portable suite
-# owns. The recorder makes a real desktop notification impossible either way.
+# owns. The daemon's own notifier seam makes a real desktop notification
+# impossible either way.
 RECORDER="$LAB/alarm-recorder.sh"
 cat > "$RECORDER" <<'EOF'
 #!/usr/bin/env bash
@@ -105,7 +106,7 @@ PROMPT='Reply with exactly READY and stop. Whenever a Stop hook feedback message
 (
   cd "$PROJECT" || exit 1
   FM_HOME="$HOME_DIR" \
-  FM_SILENCE_POLL_SECS=900 FM_SILENCE_ALARM_SECS=3600 FM_SILENCE_ALARM_EXEC="$RECORDER" \
+  FM_SILENCE_POLL_SECS=900 FM_SILENCE_ALARM_SECS=3600 FM_WEDGE_ALARM_EXEC="$RECORDER" \
   CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 \
     claude -p "$PROMPT" --dangerously-skip-permissions --settings '{"feedbackDrafts":"off"}' \
     --effort low --output-format stream-json --verbose
@@ -122,10 +123,13 @@ esac
 kill -0 "$SENTRY_PID" 2>/dev/null \
   || fail "Claude $CLAUDE_VERSION: the sentry (pid $SENTRY_PID) did not survive Claude tearing its process tree down"
 
-SENTRY_IDENTITY=$(awk -F '\t' 'NR == 1 { print $2 }' "$HOME_DIR/state/.silence-sentry" 2>/dev/null || true)
-case "$SENTRY_IDENTITY" in
+# Read the command line from the process table rather than reusing the recorded
+# identity field: fm_pid_identity hex-encodes the command line wherever /proc is
+# readable, so the recorded form carries no matchable script name off macOS.
+SENTRY_COMMAND=$(ps -p "$SENTRY_PID" -o command= 2>/dev/null || true)
+case "$SENTRY_COMMAND" in
   *fm-silence-sentry.sh*--watch*) ;;
-  *) fail "Claude $CLAUDE_VERSION: the surviving process is not the sentry's own watch loop: $SENTRY_IDENTITY" ;;
+  *) fail "Claude $CLAUDE_VERSION: the surviving process is not the sentry's own watch loop: $SENTRY_COMMAND" ;;
 esac
 
 # The wake it is holding must be a real one this session's watcher queued, not a

@@ -146,7 +146,7 @@ state/               runtime records and signals; gitignored
   .hash-* .count-* .stale-* .stale-since-* .churn-since-* .paused-* .wedge-escalations-* .writing-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak   watcher internals; never touch
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
-  .silence-sentry .silence-alarm   the detached silence sentry armed by each watcher close, and its durable report that this home stopped watching while no turn ever picked the wake up; bin/fm-silence-sentry.sh owns both, and a standing .silence-alarm is a captain-facing finding, not an internal record (docs/watcher-continuity.md)
+  .silence-sentry .silence-alarm   the detached silence sentry armed by each watcher close, and its durable report that this home stopped watching while no turn ever finished the wake; bin/fm-silence-sentry.sh owns both, and a standing .silence-alarm is a captain-facing finding presented as its own queued wake until acknowledged, not an internal record (docs/watcher-continuity.md)
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
 .no-mistakes/        local validation state and evidence; gitignored
 ```

@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # Behavior tests for the silence sentry (bin/fm-silence-sentry.sh).
 #
-# The sentry reports when a home stops watching and no turn ever picks the wake
-# up - the quota-exhaustion shape, where no turn ever ENDS, so every
-# Stop-boundary recovery path is structurally inert
+# The sentry reports when a home stops watching and no turn ever finishes
+# handling the wake - the quota-exhaustion shape, where no turn ever ENDS, so
+# every Stop-boundary recovery path is structurally inert
 # (docs/watcher-continuity.md "Silence with no Stop boundary").
 #
-# The fault and the "a turn is genuinely running" healthy shape are driven
-# through the REAL bin/fm-watch.sh as a real process and the REAL
-# bin/fm-wake-drain.sh, because the signal under test is a durable record those
-# two produce and a stand-in could only repeat the assumption written into it.
+# The fault and the healthy handling shape are driven through the REAL
+# bin/fm-watch.sh as a real process and the REAL bin/fm-wake-drain.sh, including
+# its post-handling acknowledgement, because the signal under test is a durable
+# record those two produce and a stand-in could only repeat the assumption
+# written into it. The claim the drain writes at the START of handling is
+# deliberately exercised WITHOUT that acknowledgement: that is the quota shape,
+# and a sentry that retired on the claim would go blind for the rest of the turn.
 # The remaining cases assert the gates directly over the same durable records.
 #
-# The alarm dispatch is redirected to a recorder through FM_SILENCE_ALARM_EXEC,
-# so no case here can post a real desktop notification.
+# The alarm runs its real dispatch path, through the daemon's one-shot entry and
+# its own FM_WEDGE_ALARM_EXEC notifier seam, which is redirected to a recorder
+# here so no case can post a real desktop notification.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -43,7 +47,12 @@ cat > "$RECORDER" <<EOF
 printf '%s\t%s\n' "\$1" "\$2" >> "$ALARM_LOG"
 EOF
 chmod +x "$RECORDER"
-export FM_SILENCE_ALARM_EXEC="$RECORDER"
+export FM_WEDGE_ALARM_EXEC="$RECORDER"
+# `auto` resolves to no channel off macOS, so name one explicitly and the whole
+# dispatch path - the sentry's exec of the daemon, the daemon's one-shot --alarm
+# entry, its directive parsing and its emit - runs on every platform. The seam
+# above replaces the notifier itself, so nothing reaches Notification Center.
+export FM_WEDGE_ALARM_CHANNEL=osascript
 
 # Fixture homes are recorded in a FILE, not a shell array: make_home is called
 # from a command substitution, so an array append would happen in that subshell
@@ -105,10 +114,13 @@ make_home() { # <name>
   printf '%s\n' "$dir"
 }
 
-# The durable state a watcher close leaves: one queued wake no actor has claimed.
-queue_one_unclaimed_wake() { # <home>
+# The durable state a watcher close leaves: one queued wake no turn has handled.
+# The sequence counter moves with it, so a later real append (the sentry's own
+# report) takes the next sequence instead of colliding with this row.
+queue_one_unhandled_wake() { # <home>
   printf '%s\t1\tsignal\ttask1.status\tneeds-decision: which option\n' "$(date +%s)" \
     > "$1/state/.wake-queue"
+  printf '1\n' > "$1/state/.wake-queue.seq"
 }
 
 stop_home_watcher() { # <home>
@@ -203,6 +215,27 @@ run_watcher_to_actionable_close() { # <home>
   done
 }
 
+# The two halves of handling a wake, as AGENTS.md section 8 defines them and as
+# the real drain implements them: the claim at the START of handling, and the
+# acknowledgement AFTER it. They are separate calls here because the whole
+# verdict under test turns on which of the two retires a sentry.
+drain_wake() { # <home>
+  local dir=$1
+  FM_HOME="$dir" "$dir/bin/fm-wake-drain.sh" > "$dir/drain.out" 2> "$dir/drain.err" || true
+}
+
+acknowledge_wake() { # <home>
+  local dir=$1 seq generation
+  seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' \
+    "$dir/drain.err" | tail -1)
+  generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' \
+    "$dir/drain.err" | tail -1)
+  [ -n "$seq" ] && [ -n "$generation" ] \
+    || fail "the real drain demanded no acknowledgement (said: $(cat "$dir/drain.err" 2>/dev/null))"
+  FM_HOME="$dir" "$dir/bin/fm-wake-drain.sh" --ack-through "$seq" --recovery-generation "$generation" \
+    >/dev/null 2>&1 || fail "the real post-handling acknowledgement failed"
+}
+
 # grep -c prints 0 AND exits 1 on no match, so the count must be captured rather
 # than chained, or the fallback doubles it.
 alarm_count() {
@@ -233,30 +266,73 @@ test_reports_a_home_whose_wake_no_turn_ever_took() {
   [ "$(alarm_count)" -eq 1 ] || fail "expected exactly one alarm, got $(alarm_count)"
   assert_contains "$(cat "$ALARM_LOG")" "has not been watched" \
     "the alarm summary must say the home stopped being watched"
+  assert_contains "$(cat "$ALARM_LOG")" "osascript" \
+    "the alarm must reach the home's configured channel through the real dispatch"
+
+  # The durable half needs a reader, and the wake queue is the one this home
+  # already presents. Assert it through the real drain rather than the file.
+  drain_wake "$dir"
+  assert_contains "$(cat "$dir/drain.out")" "has not been watched" \
+    "the report must be presented to the next turn by the real drain"
 
   home_is_watched "$dir" && fail "the sentry started a watcher; it must only report"
   [ -d "$dir/state/.watch.lock" ] && fail "a watcher lock reappeared after the report"
   pass "fm-silence-sentry: reports a home whose wake no turn took, and starts nothing"
 }
 
+# The reported incident's exact shape: the woken turn began - it claimed the row
+# at its opening drain - and then died at its usage limit without ever finishing.
+# There is no Stop event, no watcher, and no later claim to observe, so a sentry
+# that retired at the claim would be blind for the whole remainder of the turn,
+# which is precisely where quota is consumed.
+test_reports_a_wake_a_turn_claimed_but_never_finished() {
+  local dir record
+  dir=$(make_home quota-mid-turn)
+  : > "$ALARM_LOG"
+  run_watcher_to_actionable_close "$dir"
+  [ -n "$(sentry_pid "$dir")" ] || fail "the watcher's close armed no sentry"
+
+  drain_wake "$dir"
+  [ -s "$dir/state/.main-eligible-rows" ] || fail "the real drain claimed no rows"
+  # No acknowledgement follows: this turn never gets that far.
+
+  wait_for_sentry_exit "$dir" || fail "the sentry never finished"
+  [ -e "$dir/state/.silence-alarm" ] \
+    || fail "a turn that claimed the wake and then died was never reported"
+  record=$(cat "$dir/state/.silence-alarm")
+  assert_contains "$record" "never acknowledged by any turn" \
+    "the record must name the acknowledgement that never came"
+  [ "$(alarm_count)" -eq 1 ] || fail "expected exactly one alarm, got $(alarm_count)"
+  home_is_watched "$dir" && fail "the sentry started a watcher; it must only report"
+  pass "fm-silence-sentry: reports a wake a turn claimed and never finished"
+}
+
 # --- healthy shapes ---------------------------------------------------------
 
-# A turn that is genuinely running claims the wake into its actor's file at the
-# START of handling, so an arbitrarily long turn after that point stays silent.
-test_silent_once_the_handling_turn_drains_the_wake() {
-  local dir
+# A turn that finishes acknowledges the wake after handling it, which is the one
+# durable record that says a turn actually got to the end of something.
+test_silent_once_the_handling_turn_acknowledges_the_wake() {
+  local dir out
   dir=$(make_home healthy-turn)
   : > "$ALARM_LOG"
   run_watcher_to_actionable_close "$dir"
   [ -n "$(sentry_pid "$dir")" ] || fail "the watcher's close armed no sentry"
 
-  FM_HOME="$dir" "$dir/bin/fm-wake-drain.sh" >/dev/null 2>&1 || true
+  drain_wake "$dir"
   [ -s "$dir/state/.main-eligible-rows" ] || fail "the real drain claimed no rows"
+  acknowledge_wake "$dir"
 
-  wait_for_sentry_exit "$dir" || fail "the sentry did not retire after the drain"
-  [ -e "$dir/state/.silence-alarm" ] && fail "a drained wake was reported as silence"
-  [ "$(alarm_count)" -eq 0 ] || fail "the sentry alarmed on a home whose turn began"
-  pass "fm-silence-sentry: silent once the handling turn claims the wake"
+  wait_for_sentry_exit "$dir" || fail "the sentry did not retire after the acknowledgement"
+  [ -e "$dir/state/.silence-alarm" ] && fail "a handled wake was reported as silence"
+  [ "$(alarm_count)" -eq 0 ] || fail "the sentry alarmed on a home whose turn finished"
+
+  # And nothing is left for a later close to arm over.
+  out=$(FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --check) && \
+    fail "a home with no unhandled wake was reported as silence: $out"
+  assert_contains "$out" "no unhandled wake" "a fully handled queue must say so"
+  FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "arm exited nonzero"
+  [ -e "$dir/state/.silence-sentry" ] && fail "a fully handled queue armed a sentry"
+  pass "fm-silence-sentry: silent once the handling turn acknowledges the wake"
 }
 
 # An idle home with no work is a healthy resting state and must never be reported.
@@ -264,7 +340,7 @@ test_never_arms_on_an_idle_home() {
   local dir
   dir=$(make_home idle)
   rm -f "$dir/state/task1.meta"
-  queue_one_unclaimed_wake "$dir"
+  queue_one_unhandled_wake "$dir"
   : > "$ALARM_LOG"
   FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "arm exited nonzero on an idle home"
   [ -e "$dir/state/.silence-sentry" ] && fail "an idle home armed a sentry"
@@ -276,7 +352,7 @@ test_never_arms_on_an_idle_home() {
 test_never_arms_under_away_mode() {
   local dir
   dir=$(make_home away)
-  queue_one_unclaimed_wake "$dir"
+  queue_one_unhandled_wake "$dir"
   : > "$dir/state/.afk"
   : > "$ALARM_LOG"
   FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "arm exited nonzero under away mode"
@@ -292,7 +368,7 @@ test_silent_while_a_watcher_is_live() {
   dir=$(make_home parked)
   : > "$ALARM_LOG"
   start_watcher "$dir"
-  queue_one_unclaimed_wake "$dir"
+  queue_one_unhandled_wake "$dir"
 
   # The real watcher is a live process and may legitimately close at any moment
   # (an actionable reason, its own heartbeat). Only a home that is STILL watched
@@ -339,7 +415,7 @@ test_silent_while_a_watcher_is_live() {
 test_no_report_before_the_deadline_elapses() {
   local dir
   dir=$(make_home patient)
-  queue_one_unclaimed_wake "$dir"
+  queue_one_unhandled_wake "$dir"
   : > "$ALARM_LOG"
   FM_SILENCE_ALARM_SECS=3600 FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "arm exited nonzero"
   [ -n "$(sentry_pid "$dir")" ] || fail "arm recorded no sentry"
@@ -348,7 +424,7 @@ test_no_report_before_the_deadline_elapses() {
   [ "$(alarm_count)" -eq 0 ] || fail "alarmed before the deadline elapsed"
   # The condition itself is already true; only the deadline holds the report back.
   FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --check >/dev/null \
-    || fail "this home is unwatched with an unclaimed wake, so --check must say so"
+    || fail "this home is unwatched with an unhandled wake, so --check must say so"
   pass "fm-silence-sentry: an unwatched home is not reported until the deadline elapses"
 }
 
@@ -357,7 +433,7 @@ test_no_report_before_the_deadline_elapses() {
 test_marker_is_retired_once_the_home_cycles_again() {
   local dir
   dir=$(make_home recovered)
-  queue_one_unclaimed_wake "$dir"
+  queue_one_unhandled_wake "$dir"
   printf 'stale record\n' > "$dir/state/.silence-alarm"
   FM_SILENCE_ALARM_SECS=3600 FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "arm exited nonzero"
   [ -e "$dir/state/.silence-alarm" ] \
@@ -368,7 +444,7 @@ test_marker_is_retired_once_the_home_cycles_again() {
 test_arm_is_a_singleton_per_home() {
   local dir first second
   dir=$(make_home singleton)
-  queue_one_unclaimed_wake "$dir"
+  queue_one_unhandled_wake "$dir"
   FM_SILENCE_ALARM_SECS=3600 FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "first arm failed"
   first=$(sentry_pid "$dir")
   [ -n "$first" ] || fail "the first arm recorded no sentry"
@@ -378,17 +454,32 @@ test_arm_is_a_singleton_per_home() {
   pass "fm-silence-sentry: one sentry per home, never a second"
 }
 
-test_reports_nothing_when_every_queued_wake_is_claimed() {
-  local dir out status
-  dir=$(make_home claimed)
-  queue_one_unclaimed_wake "$dir"
-  printf '1\n' > "$dir/state/.main-eligible-rows"
-  out=$(FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --check); status=$?
-  [ "$status" -eq 0 ] && fail "a claimed wake was reported as silence: $out"
-  assert_contains "$out" "no unclaimed wake" "a fully claimed queue must say so"
+# A standing report is the captain's, not the sentry's, to retire: supervision
+# coming back is exactly when he would look, so the next watcher cycle must not
+# erase it. Only a turn consuming it from the queue does.
+test_report_stands_until_a_turn_consumes_it() {
+  local dir
+  dir=$(make_home standing-report)
+  queue_one_unhandled_wake "$dir"
+  : > "$ALARM_LOG"
   FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "arm exited nonzero"
-  [ -e "$dir/state/.silence-sentry" ] && fail "a fully claimed queue armed a sentry"
-  pass "fm-silence-sentry: a queue whose rows are all claimed arms nothing"
+  [ -n "$(sentry_pid "$dir")" ] || fail "arm recorded no sentry"
+  wait_for_sentry_exit "$dir" || fail "the sentry never finished"
+  [ -e "$dir/state/.silence-alarm" ] || fail "no durable silence record was written"
+
+  # Supervision returns: a watcher cycles and arms again over what is queued.
+  FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "the next arm exited nonzero"
+  [ -e "$dir/state/.silence-alarm" ] \
+    || fail "the watcher cycle after the report erased it before anyone read it"
+  retire_pid "$(sentry_pid "$dir")"
+  rm -f "$dir/state/.silence-sentry"
+
+  drain_wake "$dir"
+  acknowledge_wake "$dir"
+  FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "the final arm exited nonzero"
+  [ -e "$dir/state/.silence-alarm" ] \
+    && fail "a report a turn already consumed was left standing"
+  pass "fm-silence-sentry: a report stands until a turn consumes it, then retires"
 }
 
 # The deadline is floored at the watcher grace, so the sentry can never be more
@@ -413,7 +504,7 @@ test_deadline_is_floored_at_the_watcher_grace() {
 test_exits_when_its_home_is_deleted() {
   local dir pid i=0
   dir=$(make_home vanishing)
-  queue_one_unclaimed_wake "$dir"
+  queue_one_unhandled_wake "$dir"
   FM_SILENCE_ALARM_SECS=3600 FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm \
     || fail "arm exited nonzero"
   pid=$(sentry_pid "$dir")
@@ -437,7 +528,7 @@ test_exits_when_its_home_is_deleted() {
 test_exits_when_superseded_by_a_newer_sentry() {
   local dir first second i=0
   dir=$(make_home superseded)
-  queue_one_unclaimed_wake "$dir"
+  queue_one_unhandled_wake "$dir"
   FM_SILENCE_ALARM_SECS=3600 FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm \
     || fail "first arm failed"
   first=$(sentry_pid "$dir")
@@ -467,14 +558,15 @@ test_exits_when_superseded_by_a_newer_sentry() {
 }
 
 test_reports_a_home_whose_wake_no_turn_ever_took
-test_silent_once_the_handling_turn_drains_the_wake
+test_reports_a_wake_a_turn_claimed_but_never_finished
+test_silent_once_the_handling_turn_acknowledges_the_wake
 test_never_arms_on_an_idle_home
 test_never_arms_under_away_mode
 test_silent_while_a_watcher_is_live
 test_no_report_before_the_deadline_elapses
 test_marker_is_retired_once_the_home_cycles_again
 test_arm_is_a_singleton_per_home
-test_reports_nothing_when_every_queued_wake_is_claimed
+test_report_stands_until_a_turn_consumes_it
 test_deadline_is_floored_at_the_watcher_grace
 test_exits_when_its_home_is_deleted
 test_exits_when_superseded_by_a_newer_sentry

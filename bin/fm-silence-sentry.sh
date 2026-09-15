@@ -43,34 +43,38 @@
 #   whether it was running a turn or parked at a prompt. No threshold separates
 #   working from idle, so cumulative CPU cannot carry this verdict.
 #
-# What does separate them is the durable wake record. The watcher appends every
-# actionable wake to state/.wake-queue before it exits, and the handling turn
-# claims that row into its actor's claim file at the START of handling, before
-# it reads anything or starts work (AGENTS.md section 8). So a claimed row means
-# a handling turn began; an unclaimed row that outlives the deadline means one
-# never did. The length of the turn AFTER the drain is irrelevant, which is what
-# keeps an arbitrarily long healthy turn silent.
+# What does separate them is the durable wake record, and specifically its END,
+# not its beginning. The watcher appends every actionable wake to
+# state/.wake-queue before it exits, and the row stays queued until the handling
+# turn acknowledges it AFTER handling it (AGENTS.md section 8). The claim the
+# drain writes at the START of handling is deliberately NOT the signal: it is
+# written before the turn does any work, so retiring on it would leave the whole
+# remainder of the turn unwatched - which is exactly where quota is consumed,
+# and exactly the shape of the incident above. A row that is gone from the queue
+# means a turn finished handling it; a row that outlives the deadline means none
+# ever did.
 #
 # The sentry reports only when ALL of these hold for the whole deadline:
 #   1. supervision is still needed here (bin/fm-supervision-lib.sh owns that),
 #   2. no live, identity-matched watcher holds this home's lock with a fresh
 #      beacon (fm_watcher_healthy),
-#   3. the wake it was armed over is still queued AND claimed by no actor,
+#   3. the wake it was armed over is still queued, i.e. unacknowledged,
 #   4. away mode is inactive, because the away daemon owns supervision then.
 #
 # Each healthy shape trips a different one of those and stays silent:
 #   idle home, no work at all          -> (1) is false; also nothing arms it.
 #   watcher parked on a long wait      -> (2) is false; the watcher is beating.
-#   a turn genuinely running           -> (3) goes false at the handling drain;
+#   a turn that handles the wake       -> (3) goes false at its acknowledgement;
 #                                         and when that turn ends, the Stop-owned
 #                                         auto-arm brings a watcher back, so (2)
 #                                         goes false too and the sentry retires.
 #
 # The deadline is generous on purpose. Any turn that ENDS re-arms the watcher and
 # retires this sentry through condition 2, so the only shape the deadline has to
-# outlast is a single turn that runs past it without ever draining. The default
-# is 30 minutes, floored at the watcher grace so it can never be more eager than
-# the staleness bound the rest of the stack already applies.
+# outlast is a single turn that runs past it without ever finishing the wake it
+# was handed. The default is 30 minutes, floored at the watcher grace so it can
+# never be more eager than the staleness bound the rest of the stack already
+# applies.
 #
 # HOME SCOPING IS ABSOLUTE. Every path derives from this home's FM_HOME /
 # FM_STATE_OVERRIDE. This script signals no process at all - not even its own
@@ -89,8 +93,9 @@
 #   FM_SILENCE_ALARM_SECS  deadline before reporting (default 1800, floored at
 #                          the guard grace)
 #   FM_SILENCE_POLL_SECS   how often the loop re-evaluates (default 30)
-#   FM_SILENCE_ALARM_EXEC  replaces the alarm dispatch with this command; the
-#                          test seam, so no suite can post a real notification
+#   FM_WEDGE_ALARM_EXEC    bin/fm-supervise-daemon.sh's own notifier seam, which
+#                          this reporter inherits with its channels; a test sets
+#                          it to a recorder so no suite posts a real notification
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,8 +113,10 @@ DAEMON="$SCRIPT_DIR/fm-supervise-daemon.sh"
 SENTRY_RECORD="$STATE/.silence-sentry"
 ALARM_MARKER="$STATE/.silence-alarm"
 QUEUE="${FM_WAKE_QUEUE:-$STATE/.wake-queue}"
-MAIN_ROWS="$STATE/.main-eligible-rows"
-BRANCH_ROWS="$STATE/.branch-eligible-rows"
+# The key this reporter's own queued wake carries, so a standing report can be
+# told from the wakes it reports about.
+REPORT_WAKE_KEY=silence-sentry
+ALARM_TITLE='firstmate: home stopped watching'
 
 GRACE=${FM_GUARD_GRACE:-300}
 case "$GRACE" in ''|*[!0-9]*|0) GRACE=300 ;; esac
@@ -122,40 +129,43 @@ case "$DEADLINE_SECS" in ''|*[!0-9]*|0) DEADLINE_SECS=1800 ;; esac
 POLL_SECS=${FM_SILENCE_POLL_SECS:-30}
 case "$POLL_SECS" in ''|*[!0-9]*|0) POLL_SECS=30 ;; esac
 
-# The lowest queued sequence that no actor has claimed, i.e. the oldest wake
-# nobody has picked up, or nothing when every queued row is claimed. Claim files
-# hold one sequence per line; a row missing its five fields or its numeric
-# sequence is unclaimable by contract and is ignored here too, because main
-# retires those rather than handling them.
-oldest_unclaimed_row() {
+# The lowest queued sequence, i.e. the oldest wake no turn has finished handling,
+# or nothing when the queue holds none. A row missing its five fields or its
+# numeric sequence can never be presented or acknowledged by contract and is
+# ignored here too, because main retires those rather than handling them.
+oldest_queued_row() {
   [ -s "$QUEUE" ] || return 1
-  awk -F '\t' -v main="$MAIN_ROWS" -v branch="$BRANCH_ROWS" '
-    BEGIN {
-      while ((getline line < main) > 0) if (line ~ /^[0-9]+$/) claimed[line] = 1
-      while ((getline line < branch) > 0) if (line ~ /^[0-9]+$/) claimed[line] = 1
-    }
-    NF >= 5 && $2 ~ /^[0-9]+$/ && !($2 in claimed) {
+  awk -F '\t' '
+    NF >= 5 && $2 ~ /^[0-9]+$/ {
       if (best == "" || $2 + 0 < best + 0) { best = $2; stamp = $1; kind = $3; key = $4 }
     }
     END { if (best != "") printf "%s\t%s\t%s\t%s\n", best, stamp, kind, key }
   ' "$QUEUE"
 }
 
-# True while sequence $1 is still queued and still claimed by no actor.
-row_still_unclaimed() { # <seq>
-  local seq=$1 found
-  found=$(oldest_unclaimed_row) || return 1
-  [ -n "$found" ] || return 1
-  # A BEGIN "exit 1" would still run END, whose own exit() would override the
-  # status, so the claim is carried as a flag and decided once in END.
-  awk -F '\t' -v want="$seq" -v main="$MAIN_ROWS" -v branch="$BRANCH_ROWS" '
-    BEGIN {
-      while ((getline line < main) > 0) if (line == want) claimed = 1
-      while ((getline line < branch) > 0) if (line == want) claimed = 1
-    }
+# True while sequence $1 is still queued, i.e. no turn has acknowledged it.
+row_still_queued() { # <seq>
+  local seq=$1
+  awk -F '\t' -v want="$seq" '
     NF >= 5 && $2 == want { queued = 1 }
-    END { exit((queued && !claimed) ? 0 : 1) }
-  ' "$QUEUE"
+    END { exit(queued ? 0 : 1) }
+  ' "$QUEUE" 2>/dev/null
+}
+
+# True while a report this sentry published is still queued for the captain.
+report_still_queued() {
+  awk -F '\t' -v want="$REPORT_WAKE_KEY" '
+    NF >= 5 && $3 == "check" && $4 == want { queued = 1 }
+    END { exit(queued ? 0 : 1) }
+  ' "$QUEUE" 2>/dev/null
+}
+
+# A silence report stands until a turn has actually consumed it from the wake
+# queue. Retiring it on the next watcher close would erase it at exactly the
+# moment supervision comes back, which is when the captain would look.
+retire_presented_alarm() {
+  report_still_queued && return 0
+  rm -f "$ALARM_MARKER" 2>/dev/null || true
 }
 
 # Evaluate the four conditions once. Prints the reason this home is NOT in
@@ -174,8 +184,8 @@ evaluate_silence() { # <target-seq>
     echo "watcher live pid=$FM_WATCHER_HEALTHY_PID"
     return 1
   fi
-  if ! row_still_unclaimed "$seq"; then
-    echo "wake $seq picked up or retired"
+  if ! row_still_queued "$seq"; then
+    echo "wake $seq handled or retired"
     return 1
   fi
   return 0
@@ -190,24 +200,22 @@ evaluate_silence() { # <target-seq>
 # real notification can fire. Best effort: a channel failure must never stop the
 # durable marker from standing.
 raise_alarm() { # <summary>
-  local summary=$1 override=${FM_SILENCE_ALARM_EXEC:-}
-  case "$override" in
-    '') ;;
-    discard) return 0 ;;
-    *) "$override" silence "$summary" >/dev/null 2>&1 || true; return 0 ;;
-  esac
+  local summary=$1
   [ -x "$DAEMON" ] || return 0
   # Pass this home's config override through, or a home that relocates its
   # config would silently fall back to the platform default channel instead of
-  # the captain's configured one.
-  FM_HOME="$FM_HOME" ${FM_CONFIG_OVERRIDE:+FM_CONFIG_OVERRIDE="$FM_CONFIG_OVERRIDE"} \
-    "$DAEMON" --alarm "$summary" "$ALARM_MARKER" >/dev/null 2>&1 || true
+  # the captain's configured one. Assigned unconditionally: a conditional
+  # prefix expands to an unquoted word, so a config path containing a space
+  # would be split and disable the alarm entirely. The daemon resolves an empty
+  # value back to its own default.
+  FM_HOME="$FM_HOME" FM_CONFIG_OVERRIDE="${FM_CONFIG_OVERRIDE:-}" \
+    "$DAEMON" --alarm "$summary" "$ALARM_MARKER" "$ALARM_TITLE" >/dev/null 2>&1 || true
 }
 
 report_silence() { # <target-seq> <queued-epoch> <kind> <key> <silent-secs>
   local seq=$1 stamp=$2 kind=$3 key=$4 silent=$5 summary mins
   mins=$(( silent / 60 ))
-  summary="firstmate home $FM_HOME has not been watched for ${mins}m: it delivered a ${kind} wake about ${key} and no turn ever picked it up. Quota exhaustion or a dead session will look exactly like this. Nothing was restarted - check the session."
+  summary="firstmate home $FM_HOME has not been watched for ${mins}m: it delivered a ${kind} wake about ${key} and no turn ever finished handling it. Quota exhaustion or a dead session will look exactly like this. Nothing was restarted - check the session."
   {
     printf 'silence detected at %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
     printf 'home=%s\n' "$FM_HOME"
@@ -216,9 +224,14 @@ report_silence() { # <target-seq> <queued-epoch> <kind> <key> <silent-secs>
     printf 'wake-queued-epoch=%s\n' "$stamp"
     printf 'wake-kind=%s\n' "$kind"
     printf 'wake-key=%s\n' "$key"
-    printf 'note=%s\n' "no watcher, supervision still needed, and this wake was never claimed by any actor"
+    printf 'note=%s\n' "no watcher, supervision still needed, and this wake was never acknowledged by any turn"
     printf 'note=%s\n' "nothing was restarted: this sentry only reports"
   } > "$ALARM_MARKER" 2>/dev/null || true
+  # Give the durable half a reader. The wake queue is this home's existing
+  # captain-facing channel: it is presented at session start and at every drain,
+  # and a row stays queued until a turn acknowledges it after handling. A queued
+  # row starts nothing on its own, so the report-only boundary holds.
+  fm_wake_append check "$REPORT_WAKE_KEY" "$summary" >/dev/null 2>&1 || true
   raise_alarm "$summary"
   printf 'silence-sentry: SILENT HOME - %s\n' "$summary"
 }
@@ -231,8 +244,10 @@ arm() {
   # A watcher just completed a cycle in this home, so whatever silence a previous
   # sentry reported is over. Retire that marker here as well as on the loop's own
   # healthy exit, because a sentry that already alarmed has exited and cannot
-  # retire it itself. The marker must always mean "this home is silent now".
-  rm -f "$ALARM_MARKER" 2>/dev/null || true
+  # retire it itself - but only once its queued report has actually reached a
+  # turn, or the first cycle after supervision returns would erase the record
+  # before anyone read it.
+  retire_presented_alarm
   # Away mode transfers supervision ownership to the away daemon; never watch
   # underneath it.
   [ -e "$STATE/.afk" ] && return 0
@@ -243,9 +258,9 @@ arm() {
   # itself on its first poll.
   fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME" && return 0
 
-  # Nothing unclaimed means no wake is waiting on a turn, so there is nothing
-  # this sentry could ever report. An idle home never arms one.
-  row=$(oldest_unclaimed_row) || return 0
+  # An empty queue means no wake is waiting on a turn, so there is nothing this
+  # sentry could ever report. An idle home never arms one.
+  row=$(oldest_queued_row) || return 0
   [ -n "$row" ] || return 0
   IFS=$'\t' read -r seq stamp kind key <<< "$row"
   case "$seq" in ''|*[!0-9]*) return 0 ;; esac
@@ -325,9 +340,11 @@ watch_loop() { # <seq> <queued-epoch> <kind> <key>
         return 0
       fi
     else
-      # The home is healthy again. Retire the marker so it always means "this
-      # home is in silence right now", never "it was once".
-      rm -f "$ALARM_MARKER" "$SENTRY_RECORD" 2>/dev/null || true
+      # The home is healthy again. Retire a previous report once a turn has
+      # consumed it, so a standing marker always means "a silence report is
+      # still waiting for the captain", never "it was once silent".
+      retire_presented_alarm
+      rm -f "$SENTRY_RECORD" 2>/dev/null || true
       return 0
     fi
     sleep "$POLL_SECS"
@@ -344,12 +361,12 @@ print_status() {
   else
     printf 'sentry=none\n'
   fi
-  row=$(oldest_unclaimed_row) || row=''
+  row=$(oldest_queued_row) || row=''
   if [ -n "$row" ]; then
     seq=$(printf '%s' "$row" | cut -f1)
-    printf 'oldest-unclaimed-wake=%s\n' "$seq"
+    printf 'oldest-unhandled-wake=%s\n' "$seq"
   else
-    printf 'oldest-unclaimed-wake=none\n'
+    printf 'oldest-unhandled-wake=none\n'
   fi
   if [ -e "$ALARM_MARKER" ]; then
     printf 'alarm=raised\n'
@@ -366,20 +383,20 @@ case "${1:---status}" in
     watch_loop "$1" "$2" "$3" "$4"
     ;;
   --check)
-    row=$(oldest_unclaimed_row) || row=''
+    row=$(oldest_queued_row) || row=''
     if [ -z "$row" ]; then
-      echo "no unclaimed wake"
+      echo "no unhandled wake"
       exit 1
     fi
     seq=$(printf '%s' "$row" | cut -f1)
     if reason=$(evaluate_silence "$seq"); then
-      echo "in silence: wake $seq unclaimed and no watcher"
+      echo "in silence: wake $seq unhandled and no watcher"
       exit 0
     fi
     echo "$reason"
     exit 1
     ;;
   --status) print_status ;;
-  -h|--help) sed -n '1,95p' "${BASH_SOURCE[0]}" | sed -n '/^# Usage:/,$p' | sed 's/^# \{0,1\}//' ;;
+  -h|--help) sed -n '/^# Usage:/,/^[^#]/p' "${BASH_SOURCE[0]}" | sed -n '/^#/p' | sed 's/^# \{0,1\}//' ;;
   *) echo "silence-sentry: unknown argument: $1" >&2; exit 2 ;;
 esac
