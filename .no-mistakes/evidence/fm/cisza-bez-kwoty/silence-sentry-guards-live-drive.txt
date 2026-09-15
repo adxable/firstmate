@@ -1,0 +1,61 @@
+Live drive of the silence sentry - the guards, including three adversarial ones.
+
+Same harness and same test-scoped knobs as silence-sentry-live-drive.txt, driven
+on 2026-09-15 against the real scripts of this branch.
+
+L4 healthy turn            the wake is handled AND acknowledged -> no report
+L5 live watcher            a beating watcher is never read as silence
+L6 lingering sentry        a sentry still holding an already-acknowledged wake
+                           must not keep the fresh wake unwatched
+L7 standing report         the sentry must not report its own report
+L8 deadline                default 2700, floored at the watcher grace,
+                           settable per home, and --status no longer exists
+L9 idle / away mode        neither arms anything
+
+The two notifications at the end are one per home, not a double report: the
+"parked" home of L5 is left deliberately unwatched with an unhandled wake when
+its watcher is killed, which is the fault, so it reports correctly.
+
+
+=== L4  healthy turn: the wake is handled and acknowledged, so nothing is reported
+    sentry armed: pid=40835 watching wake 1
+    the turn handles the wake, then acknowledges it after handling (AGENTS.md section 8)
+    PASS: no silence report on the home whose turn finished
+    --check says: deadline-seconds=10
+no unhandled wake
+    PASS: a fully handled queue arms nothing
+
+=== L5  adversarial: a live, beating watcher must never be read as silence
+    --check says: deadline-seconds=10
+watcher live pid=45534
+    PASS: no sentry armed while the watcher beats
+
+=== L6  adversarial: a lingering sentry over an already-acknowledged wake must not block the fresh one
+    sentry S1: pid=49293 watching wake 1 (900s poll: it cannot notice anything change)
+    the turn acknowledged wake 1; S1 is still alive and still holds the record
+    after the next watcher close: sentry pid=62179 watching wake 2
+    PASS: the fresh wake got its own sentry; the lingering generation did not block it
+
+=== L7  adversarial: the sentry must never arm over its own standing report
+    one report stands. the turn ends and acknowledges what it was shown:
+    queue now holds only the sentry's own report:
+      2	check	silence-sentry
+    --check says: deadline-seconds=10
+no unhandled wake
+    PASS: no sentry arms over a standing report, so no second SILENT HOME
+
+=== L8  the deadline a home actually applies
+    default, no override: deadline-seconds=2700
+    below the watcher grace (FM_SILENCE_ALARM_SECS=1, FM_GUARD_GRACE=300): deadline-seconds=300
+    per-home config/silence-deadline=600: deadline-seconds=600
+    dropped mode: silence-sentry: unknown argument: --status (exit 2)
+
+=== L9  homes that are legitimately quiet arm nothing
+    PASS: idle home with no work: nothing armed
+    PASS: away mode: the away daemon keeps supervision, nothing armed
+
+=== notifications raised across L4-L9 (must be exactly the L7 report)
+      titles raised: 2
+
+=== RESULT
+    all live scenarios passed

@@ -1,0 +1,53 @@
+Live drive of the silence sentry - the reported fault, end to end.
+
+Driven on 2026-09-15 against the real scripts of this branch (bin/fm-watch.sh as a
+real process, bin/fm-silence-sentry.sh detached by that watcher's own close,
+bin/fm-supervise-daemon.sh --alarm for the notification, bin/fm-wake-drain.sh for
+the presentation) in a throwaway firstmate home under /tmp.
+
+Two knobs are test-scoped and nothing else is: FM_SILENCE_ALARM_SECS=10 with
+FM_GUARD_GRACE=10, so the 45-minute production deadline does not have to elapse
+(hence "for 0m" in the banner), and /usr/bin/osascript is shadowed on PATH by a
+recorder, so the banner the captain would see is captured instead of posted.
+The macOS Notification Center surface itself could not be screenshotted: this
+agent's process lacks the Screen Recording permission (screencapture answered
+"could not create image from display").
+
+
+=== L1  quota shape: watcher closes, no turn ever ends, the home reports itself
+    home: /tmp/fm-live-run.RHCsSB/quota   deadline=10s (FM_SILENCE_ALARM_SECS), channel=osascript
+    14:42:55 starting the real bin/fm-watch.sh and making task1 actionable
+    14:43:28 watcher closed. cycle log tail:
+    queued wake the close left behind:
+      1789476207	1	signal	task1.status	needs-decision: /tmp/fm-live-run.RHCsSB/quota/state/task1.status
+      1789476207	2	signal	task1.status	needs-decision: /tmp/fm-live-run.RHCsSB/quota/state/task1.status
+    sentry armed by that close: pid=93812 watching wake 1
+    no turn will ever run here - this is the quota shape
+    14:43:39 sentry exited. durable report state/.silence-alarm:
+      silence detected at 2026-09-15T14:43:38+0200
+      home=/tmp/fm-live-run.RHCsSB/quota
+      unwatched-seconds=10
+      wake-sequence=1
+      wake-queued-epoch=1789476207
+      wake-kind=signal
+      wake-key=task1.status
+      note=no watcher, supervision still needed, and this wake was never acknowledged by any turn
+      note=nothing was restarted: this sentry only reports
+
+=== L3  what reaches the captain outside the pane (real dispatch, osascript stubbed)
+      osascript argv:
+        [-e]
+        [on run argv]
+        [-e]
+        [display notification (item 1 of argv) with title (item 2 of argv) sound name "Basso"]
+        [-e]
+        [end run]
+        [firstmate home /tmp/fm-live-run.RHCsSB/quota has not been watched for 0m: it delivered a signal wake about task1.status and no turn ever finished handling it. Quota exhaustion or a dead session will look exactly like this. Nothing was restarted - check the session.]
+        [firstmate: home stopped watching]
+
+=== L1b the report is presented to the next turn by the real bin/fm-wake-drain.sh
+      2:1789476218	3	check	silence-sentry	firstmate home /tmp/fm-live-run.RHCsSB/quota has not been watched for 0m: it delivered a signal wake about task1.status and no turn ever finished handling it. Quota exhaustion or a dead session will look exactly like this. Nothing was restarted - check the session.
+
+=== L2  report-only boundary: nothing was restarted
+    no live watcher: no watcher lock at all
+    processes still alive under this home:

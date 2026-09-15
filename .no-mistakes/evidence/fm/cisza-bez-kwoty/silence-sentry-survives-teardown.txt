@@ -1,0 +1,48 @@
+Live drive - the sentry outlives the process tree that armed it.
+
+The mechanism is inert unless the detached sentry survives the teardown of the
+session tree it was forked from. Driven on 2026-09-15 by running the real
+bin/fm-watch.sh inside its own process group, letting its real close arm the
+sentry, then SIGKILLing that entire process group.
+
+This stands in for a real Claude primary tearing its session down. The credentialed
+variant of exactly this fact - a watcher a real Claude Stop auto-arm brought up -
+is tests/fm-silence-sentry-live-e2e.test.sh, which is opt-in
+(FM_CLAUDE_LIVE_E2E=1) and was not run here.
+
+
+=== L10 the sentry must outlive the process tree that armed it
+    the watcher runs in its OWN process group, standing in for the session tree a harness tears down
+    wrapper=5568 watcher=5572 group=5568
+    sentry pid=23045 group=23045   torn-down group=5568
+    sentry command: bash /tmp/fm-live-run3.9Lf415/teardown/bin/fm-silence-sentry.sh --watch 1 1789476470 signal task1.status
+    tearing the whole watcher process group down with SIGKILL:
+drive3.sh: line 37:  5568 Killed: 9                  bash -c '
+  cd "$1" || exit 1
+  FM_HOME="$1" "$1/bin/fm-watch.sh" > "$1/watch.out" 2>&1 &
+  WPID=$!
+  echo "wrapper=$$ watcher=$WPID group=$(ps -o pgid= -p $$ | tr -d " ")"
+  for i in $(seq 1 480); do
+    if [ -s "$1/state/.watch.lock/pid" ] && [ -e "$1/state/.last-watcher-beat" ]; then break; fi
+    sleep 0.25
+  done
+  printf "needs-decision: which option\n" >> "$1/state/task1.status"
+  wait "$WPID"
+  echo "watcher exited rc=$?"
+  sleep 120
+' bash "$H" > "$WRAP_OUT" 2>&1
+    PASS: sentry 23045 is still alive after its parent tree was killed
+    still: bash /tmp/fm-live-run3.9Lf415/teardown/bin/fm-silence-sentry.sh --watch 1 1789476470 signal task1.status
+    and it still does its job:
+      silence detected at 2026-09-15T14:48:01+0200
+      home=/tmp/fm-live-run3.9Lf415/teardown
+      unwatched-seconds=10
+      wake-sequence=1
+      wake-queued-epoch=1789476470
+      wake-kind=signal
+      wake-key=task1.status
+      note=no watcher, supervision still needed, and this wake was never acknowledged by any turn
+      note=nothing was restarted: this sentry only reports
+
+=== RESULT
+    the armed sentry survives the teardown of the process tree that armed it
