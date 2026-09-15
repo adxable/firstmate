@@ -115,8 +115,10 @@ stage_holder_state() {
 
 # refuse_in_pane <window>: run the interactive `treehouse get` in a fresh pane
 # against a slot the pool is expected to skip, and print what the pane showed.
-# Returns 0 when treehouse refused, 1 when it handed the worktree out anyway,
-# and 2 when neither resolved. The refusal is read from treehouse's own exit
+# Returns 0 when treehouse refused at the exit 1 the record quotes, 1 when it
+# handed the worktree out anyway, 3 when it resolved at any other status - the
+# 127 a pane whose PATH lacks the binary reports is the case the caller names -
+# and 2 when nothing resolved at all. The refusal is read from treehouse's own exit
 # status rather than from a settle timeout, so a refused acquire is observed as
 # a refusal and costs a second rather than the settle loop's full minute.
 # The status is bracketed so it matches exactly: the shell's echo of the typed
@@ -209,10 +211,10 @@ KILL_POOL_STATUS=$(pool_status_of "$KILL_WT")
   || fail "treehouse $TREEHOUSE_VERSION reports the killed pane's worktree as '$KILL_POOL_STATUS' rather than available, so the refusal below would be occupancy rather than the unlanded commit and this case proves nothing"
 UNLANDED_BANNER=$( (cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-unlanded) 2>&1 )
 UNLANDED_RC=$?
-[ "$UNLANDED_RC" -eq 1 ] \
-  || fail "treehouse $TREEHOUSE_VERSION exited $UNLANDED_RC from get --lease against the slot carrying holder-kill's unlanded commit, rather than the exit 1 the record's unlanded row quotes; it printed: $UNLANDED_BANNER"
 [ "$UNLANDED_RC" -ne 0 ] \
   || fail "treehouse $TREEHOUSE_VERSION handed out the single-slot worktree to get --lease while it still carried holder-kill's unlanded commit; that reclaim resets the slot, so the unlanded-work protection v2.3.0 added in kunchenguid/treehouse#104 is gone and a dead task's committed work can be discarded at acquire time again"
+[ "$UNLANDED_RC" -eq 1 ] \
+  || fail "treehouse $TREEHOUSE_VERSION exited $UNLANDED_RC from get --lease against the slot carrying holder-kill's unlanded commit, rather than the exit 1 the record's unlanded row quotes; it printed: $UNLANDED_BANNER"
 says "all 1 worktrees are in use or dirty (max_trees = 1)" "$UNLANDED_BANNER" \
   || fail "treehouse $TREEHOUSE_VERSION refused get --lease with '$UNLANDED_BANNER' rather than the banner the record's unlanded row quotes"
 
@@ -332,6 +334,7 @@ DIRTY_EXIT_WT=$(acquire_in_pane fm-exit-dirty) || fail "treehouse $TREEHOUSE_VER
 [ "$DIRTY_EXIT_WT" = "$KILL_WT" ] || fail "the single-slot pool handed out $DIRTY_EXIT_WT rather than $KILL_WT, so the cases below no longer observe the same worktree"
 stage_holder_state "$DIRTY_EXIT_WT" holder-exit-dirty || fail "could not stage the holder state in $DIRTY_EXIT_WT"
 printf 'uncommitted\n' > "$DIRTY_EXIT_WT/holder-exit-edit.txt"
+DIRTY_EXIT_SHA=$(git -C "$DIRTY_EXIT_WT" rev-parse HEAD)
 "$REAL_TMUX" -L "$SOCKET" send-keys -t "=$SESSION:=fm-exit-dirty" 'exit' Enter || fail "could not exit the dirty task subshell"
 sleep 5
 
@@ -341,8 +344,10 @@ says "Clean worktree and return to pool? [Y/n]" "$(pane_text fm-exit-dirty)" \
   || fail "treehouse $TREEHOUSE_VERSION no longer asks before discarding uncommitted changes on a subshell exit, or no longer defaults the answer to yes; the record's dirty-exit row quotes the prompt with its [Y/n] default, and an unattended close now costs the working tree on different terms. The pane showed: $(pane_text fm-exit-dirty)"
 [ -f "$DIRTY_EXIT_WT/holder-exit-edit.txt" ] \
   || fail "treehouse $TREEHOUSE_VERSION discarded the uncommitted edit before the prompt was answered"
-[ "$(branch_of "$DIRTY_EXIT_WT")" != HEAD ] || [ -f "$DIRTY_EXIT_WT/holder-exit-dirty-work.txt" ] \
-  || fail "treehouse $TREEHOUSE_VERSION reset the worktree before the prompt was answered"
+[ "$(git -C "$DIRTY_EXIT_WT" rev-parse HEAD)" = "$DIRTY_EXIT_SHA" ] \
+  || fail "treehouse $TREEHOUSE_VERSION moved the worktree's HEAD off the holder's commit before the prompt was answered, so the work is already gone by the time the operator is asked"
+[ -f "$DIRTY_EXIT_WT/holder-exit-dirty-work.txt" ] \
+  || fail "treehouse $TREEHOUSE_VERSION discarded the unlanded commit's content before the prompt was answered"
 pass "a subshell exit on a dirty worktree stops at a prompt rather than discarding the working tree unattended"
 
 "$REAL_TMUX" -L "$SOCKET" send-keys -t "=$SESSION:=fm-exit-dirty" 'y' Enter || fail "could not confirm the dirty return"
