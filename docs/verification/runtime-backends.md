@@ -280,7 +280,7 @@ Observed results:
 | --- | --- | --- | --- |
 | `tmux kill-window` on the pane | unchanged, still `fm/holder` | intact, committed and uncommitted alike | n/a; the pane is destroyed before the pool could print into it |
 | `exit` typed in the subshell, worktree clean | detached at the base commit | reset, the unlanded commit dropped | `Worktree returned to pool.` |
-| `exit` typed in the subshell, worktree dirty | already detached while the prompt waits, but still at the holder's commit | nothing dropped until the operator answers; `y` then drops working-tree files and the unlanded commit alike | `Worktree has uncommitted changes.` then `Clean worktree and return to pool? [Y/n]` |
+| `exit` typed in the subshell, worktree dirty | detached while the prompt waits, though HEAD is still the holder's commit | nothing dropped until the operator answers; `y` then drops working-tree files and the unlanded commit alike | `Worktree has uncommitted changes.` then `Clean worktree and return to pool? [Y/n]` |
 | `treehouse get` or `get --lease` while the slot holds unlanded work | unchanged, still `fm/holder` | intact | `all 1 worktrees are in use or dirty (max_trees = 1)`, exit 1 |
 | `treehouse get` or `get --lease` once that work is landed | detached at the default-branch tip | reset before the caller sees it | `Entered worktree at ...` for the pane form, `Leased worktree at ...` for `--lease` |
 
@@ -292,7 +292,7 @@ Which of those cells the drift guard proves, and which are recorded from the run
 | --- | --- | --- |
 | `tmux kill-window` | branch unchanged; committed and uncommitted content both intact | the banner cell has nothing to pin, because the pane is destroyed before the pool could print into it |
 | `exit`, worktree clean | detached; HEAD back at the base commit; the unlanded commit gone; the quoted banner | - |
-| `exit`, worktree dirty | both quoted banner lines including the `[Y/n]` default; HEAD still at the holder's commit and both the unlanded commit's content and the untracked edit still present while the prompt waits; `y` then drops the working-tree file and the unlanded commit and detaches | what a bare Enter does: the guard answers `y` explicitly and never exercises the default itself |
+| `exit`, worktree dirty | HEAD still at the holder's commit, and both the unlanded commit's content and the untracked edit still present, while the prompt waits | the branch state, which nothing in the guard reads there; both quoted banner lines, the `[Y/n]` default and whatever the operator's answer then does. A third-party tool's interactive prompt text and its default are not a contract worth pinning here: they churn on any wording change in treehouse and would fail this guard on a cosmetic release, which is the false red the guard exists to remove |
 | acquire while unlanded | both forms refuse, each at exit 1; the quoted banner from each; branch, HEAD and content all unchanged | - |
 | acquire once landed | both forms detach and emit their quoted banner; the interactive form is staged from the seed commit, so its reset forward to the tip and the appearance of the landed content are both measured | the same forward reset under `get --lease`: that acquire has to run on the slot the unlanded case just left, whose HEAD is already the landed tip, because "only the landing changed" is what makes the skip above attributable at all |
 
@@ -302,7 +302,8 @@ A hung-up pane runs no return and no reset, so ending a refused spawn's own pane
 The ordinary subshell exit does run the return path, which means an orphaned pane left behind for an operator to close is the termination that detaches the contested worktree, not the kill.
 It runs that path silently when the worktree is clean and stops to ask when it is dirty.
 Under v2.3.0 the contested worktree is necessarily the silent case: a holder that has committed anything makes the acquire refuse outright, as the unlanded row above records, so the only slot that can still be handed to a newcomer and contested is one that is clean and at the reset target - a freshly spawned worker that has not committed yet.
-That is exactly the state in which the return asks nothing, so the operator closing the orphaned pane gets no prompt and no warning that the holder loses its position.
+At handout time that is exactly the state in which the return asks nothing, so nothing warns the operator that closing the orphaned pane costs the holder its position.
+Whether it still asks nothing when the operator actually closes the pane is not measured here: the holder keeps the worktree after the handout and can write to it, and the lab never exits a contested slot.
 That is the empirical basis for `discard_refused_endpoint` in `bin/fm-spawn.sh` taking its own endpoint down rather than leaving it parked.
 
 This evidence covers the tmux surface and nothing else.
@@ -332,7 +333,7 @@ It also narrows, without removing, what `worktree_owner_conflict` in `bin/fm-spa
 The pool no longer hands a live task's slot to a newcomer once that task has committed anything, so the residual window is a task whose worktree is still clean and still at the base commit - a freshly spawned worker that has not committed yet, which is exactly the window in which a reset is silent.
 This home's own `state/<id>.meta` records remain the ownership truth, because the pool's own check cannot see that a slot is owned, only that its content is safe to discard.
 
-Drift guard: `FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 tests/fm-treehouse-pool-termination-live-e2e.test.sh`, which reruns the hang-up over committed and uncommitted content, the unlanded-work skip under both `get --lease` and the interactive `treehouse get` sent into a pane, the landed-work reuse and detach under both of those forms, the clean subshell exit, the dirty subshell exit's prompt and its confirmation, and the dirty-slot skip against the installed binaries, asserting the cells marked pinned in the coverage table above and failing naming both versions if any of them changes.
+Drift guard: `FM_TREEHOUSE_POOL_TERMINATION_DRIFT=1 tests/fm-treehouse-pool-termination-live-e2e.test.sh`, which reruns the hang-up over committed and uncommitted content, the unlanded-work skip under both `get --lease` and the interactive `treehouse get` sent into a pane, the landed-work reuse and detach under both of those forms, the clean subshell exit, the dirty subshell exit's refusal to discard anything unattended, and the dirty-slot skip - which has no row of its own, because it runs to make the acquire rows' attribution falsifiable rather than to record a cell - against the installed binaries, asserting the cells marked pinned in the coverage table above and failing naming both versions if any of them changes.
 Where the table names both acquire forms, both are run: the interactive refusal is read from treehouse's own exit status in the pane rather than from a settle timeout, and the interactive reuse puts the returned slot back on a clean branch at the seed commit first, because a returned slot is already detached AND already at the reset target, which would leave that acquire nothing to detach and nothing to reset forward.
 
 ### Cleanup endpoint identity

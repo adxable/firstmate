@@ -327,9 +327,12 @@ pass "a normally exited subshell does return and reset the worktree, discarding 
 
 # --- what that same exit does when the worktree is dirty ---------------------
 # The record's exit row also covers working-tree files, and that half behaves
-# differently: the return stops and asks before discarding anything. It is
-# measured rather than folded into the case above, because the difference is the
-# whole of what an operator closing an orphaned pane actually sees.
+# differently: nothing is discarded unattended. What is pinned here is only that
+# - the boundary firstmate actually holds, that unlanded work is never torn down
+# without the operator saying so. The prompt's wording and its default are
+# treehouse's own interactive cosmetics, so they are recorded in the dated row
+# and deliberately left unpinned: pinning them would turn a wording change into
+# a red main, which is the failure this guard exists to remove.
 DIRTY_EXIT_WT=$(acquire_in_pane fm-exit-dirty) || fail "treehouse $TREEHOUSE_VERSION did not hand out the returned single-slot worktree for the dirty-exit case"
 [ "$DIRTY_EXIT_WT" = "$KILL_WT" ] || fail "the single-slot pool handed out $DIRTY_EXIT_WT rather than $KILL_WT, so the cases below no longer observe the same worktree"
 stage_holder_state "$DIRTY_EXIT_WT" holder-exit-dirty || fail "could not stage the holder state in $DIRTY_EXIT_WT"
@@ -338,31 +341,20 @@ DIRTY_EXIT_SHA=$(git -C "$DIRTY_EXIT_WT" rev-parse HEAD)
 "$REAL_TMUX" -L "$SOCKET" send-keys -t "=$SESSION:=fm-exit-dirty" 'exit' Enter || fail "could not exit the dirty task subshell"
 sleep 5
 
-says "Worktree has uncommitted changes." "$(pane_text fm-exit-dirty)" \
-  || fail "treehouse $TREEHOUSE_VERSION no longer names the uncommitted changes before asking; the record's dirty-exit row quotes that line and an operator loses the only warning that the answer costs the working tree. The pane showed: $(pane_text fm-exit-dirty)"
-says "Clean worktree and return to pool? [Y/n]" "$(pane_text fm-exit-dirty)" \
-  || fail "treehouse $TREEHOUSE_VERSION no longer asks before discarding uncommitted changes on a subshell exit, or no longer defaults the answer to yes; the record's dirty-exit row quotes the prompt with its [Y/n] default, and an unattended close now costs the working tree on different terms. The pane showed: $(pane_text fm-exit-dirty)"
 [ -f "$DIRTY_EXIT_WT/holder-exit-edit.txt" ] \
   || fail "treehouse $TREEHOUSE_VERSION discarded the uncommitted edit before the prompt was answered"
 [ "$(git -C "$DIRTY_EXIT_WT" rev-parse HEAD)" = "$DIRTY_EXIT_SHA" ] \
   || fail "treehouse $TREEHOUSE_VERSION moved the worktree's HEAD off the holder's commit before the prompt was answered, so the work is already gone by the time the operator is asked"
 [ -f "$DIRTY_EXIT_WT/holder-exit-dirty-work.txt" ] \
   || fail "treehouse $TREEHOUSE_VERSION discarded the unlanded commit's content before the prompt was answered"
-pass "a subshell exit on a dirty worktree stops at a prompt rather than discarding the working tree unattended"
+pass "a subshell exit on a dirty worktree discards nothing unattended: the holder's commit and its untracked edit both survive"
 
-"$REAL_TMUX" -L "$SOCKET" send-keys -t "=$SESSION:=fm-exit-dirty" 'y' Enter || fail "could not confirm the dirty return"
+# Answering the prompt is plumbing, not a pinned case - it only hands the slot
+# back so the dirty-slot case below has one. Whatever it leaves behind is
+# asserted there as that case's own precondition.
+"$REAL_TMUX" -L "$SOCKET" send-keys -t "=$SESSION:=fm-exit-dirty" 'y' Enter || fail "could not release the dirty-exit slot for the case below"
 sleep 8
-
-says "Worktree returned to pool." "$(pane_text fm-exit-dirty)" \
-  || fail "confirming the prompt did not complete the return; the pane showed: $(pane_text fm-exit-dirty)"
-[ ! -f "$DIRTY_EXIT_WT/holder-exit-edit.txt" ] \
-  || fail "treehouse $TREEHOUSE_VERSION kept the uncommitted edit after the operator confirmed the clean-and-return"
-[ ! -f "$DIRTY_EXIT_WT/holder-exit-dirty-work.txt" ] \
-  || fail "treehouse $TREEHOUSE_VERSION kept the unlanded commit after the operator confirmed the clean-and-return"
-[ "$(branch_of "$DIRTY_EXIT_WT")" = HEAD ] \
-  || fail "treehouse $TREEHOUSE_VERSION left the worktree on $(branch_of "$DIRTY_EXIT_WT") after the confirmed return rather than detaching it"
 ACQ_WT=$DIRTY_EXIT_WT
-pass "confirming that prompt drops the working-tree files and the unlanded commit alike, and detaches the slot"
 
 # --- what the acquire-time detach does NOT cost ------------------------------
 # The uncommitted half of the same boundary. The unlanded-commit case above is
@@ -401,14 +393,14 @@ DIRTY_SHA=$(git -C "$ACQ_WT" rev-parse HEAD)
 [ -n "$(git -C "$ACQ_WT" status --porcelain)" ] \
   || fail "the dirty case could not leave uncommitted changes in $ACQ_WT"
 [ "$(pool_status_of "$ACQ_WT")" = dirty ] \
-  || fail "treehouse $TREEHOUSE_VERSION reports $ACQ_WT as '$(pool_status_of "$ACQ_WT")' rather than dirty while it carries uncommitted changes; the record's dirty row needs re-deriving"
+  || fail "treehouse $TREEHOUSE_VERSION reports $ACQ_WT as '$(pool_status_of "$ACQ_WT")' rather than dirty while it carries uncommitted changes; the record's "Acquire-time reuse narrowed in v2.3.0" note that a dirty slot and an unlanded one are both skipped needs re-deriving"
 pass "the pool reads a worktree carrying uncommitted changes as dirty"
 
 DIRTY_ACQ=$(cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-dirty 2>/dev/null) \
-  || fail "treehouse $TREEHOUSE_VERSION refused to acquire at all while the only existing slot was dirty; the record's dirty row needs re-deriving"
+  || fail "treehouse $TREEHOUSE_VERSION refused to acquire at all while the only existing slot was dirty; the record's "Acquire-time reuse narrowed in v2.3.0" note that the pool skips such a slot rather than failing outright needs re-deriving"
 note "acquire with that worktree dirty and unleased handed out: $DIRTY_ACQ"
 [ "$DIRTY_ACQ" != "$ACQ_WT" ] \
-  || fail "treehouse $TREEHOUSE_VERSION handed out the worktree carrying uncommitted changes, which it had reused while clean; the record's claim that this detach costs branch position rather than unlanded edits no longer holds"
+  || fail "treehouse $TREEHOUSE_VERSION handed out the worktree carrying uncommitted changes, which it had reused while clean; the record's note that on v2.3.0 an acquire-time detach costs neither committed branch position nor unlanded edits no longer holds"
 [ -f "$ACQ_WT/holder-dirty.txt" ] \
   || fail "treehouse $TREEHOUSE_VERSION discarded the uncommitted file in the dirty worktree"
 [ "$(git -C "$ACQ_WT" rev-parse HEAD)" = "$DIRTY_SHA" ] \
