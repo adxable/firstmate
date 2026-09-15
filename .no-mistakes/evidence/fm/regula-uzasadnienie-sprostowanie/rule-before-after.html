@@ -1,0 +1,25 @@
+<!doctype html><meta charset=utf-8>
+<style>
+body{font:15px/1.6 -apple-system,Segoe UI,sans-serif;background:#f6f7f9;color:#16181d;margin:0;padding:28px}
+h1{font-size:19px;margin:0 0 4px}
+p.sub{margin:0 0 20px;color:#5b6270;font-size:13px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card{background:#fff;border:1px solid #dfe3e8;border-radius:8px;overflow:hidden}
+.hd{padding:9px 14px;font:600 13px/1.4 -apple-system,sans-serif;border-bottom:1px solid #dfe3e8}
+.before .hd{background:#fdf0ef;color:#8a2d24}.after .hd{background:#eefaf1;color:#1d6b38}
+pre{margin:0;padding:14px;white-space:pre-wrap;font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}
+.gone{background:#ffe2de;text-decoration:line-through;color:#8a2d24;display:block;padding:2px 4px;border-radius:3px}
+</style>
+<h1>Rule "No-mistakes test configuration" as delivered to an agent home</h1>
+<p class=sub>left: home at 9a5857c &middot; right: same home after <code>bin/fm-update.sh</code> fast-forwarded it to 9f5eb8f</p>
+<div class=cols>
+<div class="card before"><div class=hd>before &mdash; 9a5857c</div><pre>## No-mistakes test configuration
+
+Never configure a deterministic suite-walk `commands.test` in any repository&#x27;s no-mistakes config, whether it selects the full suite, changed tests, a family, or a fixed script list.
+Targeted validation belongs to the no-mistakes evidence path, while CI owns broad deterministic regression coverage.
+<span class=gone>Firstmate PR #3644 demonstrated the cost: pinning a 75-162-script walk took 32.7 minutes per validation, while removing it restored the 3.6-minute targeted-validation posture.</span></pre></div>
+<div class="card after"><div class=hd>after &mdash; 9f5eb8f (delivered)</div><pre>## No-mistakes test configuration
+
+Never configure a deterministic suite-walk `commands.test` in any repository&#x27;s no-mistakes config, whether it selects the full suite, changed tests, a family, or a fixed script list.
+Targeted validation belongs to the no-mistakes evidence path, while CI owns broad deterministic regression coverage.</pre></div>
+</div>

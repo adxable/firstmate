@@ -1,0 +1,4 @@
+=== docs/configuration.md points at the rule by anchor; heading must survive the edit ===
+215:The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns why `commands.test` stays absent and targeted validation belongs to the evidence path.
+-> heading present in the delivered skill:
+115:## No-mistakes test configuration

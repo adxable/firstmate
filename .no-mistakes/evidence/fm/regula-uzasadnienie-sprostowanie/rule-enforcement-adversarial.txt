@@ -1,0 +1,11 @@
+=== baseline: repo config obeys the rule ===
+ok - no-mistakes does not configure commands.test
+exit=0
+
+=== adversarial: pin a deterministic suite walk the rule forbids ===
+33:commands:
+34-  test: "tests/*.test.sh"
+35-  lint: 'bin/fm-lint.sh'
+36-
+not ok - commands.test must be absent or empty so Test stays intent-targeted; got: "tests/*.test.sh"
+exit=1

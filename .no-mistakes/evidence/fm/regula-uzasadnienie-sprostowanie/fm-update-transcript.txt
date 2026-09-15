@@ -1,0 +1,6 @@
+$ FM_ROOT_OVERRIDE=<home> FM_HOME=<home-state> bin/fm-update.sh
+firstmate: updated 9a5857c..9f5eb8f (instructions changed: .agents/skills)
+reread-firstmate: yes
+restart-secondmates: none
+nudge-secondmates: none
+EXIT=0

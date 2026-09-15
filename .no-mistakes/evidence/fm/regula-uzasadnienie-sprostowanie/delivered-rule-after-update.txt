@@ -1,0 +1,8 @@
+=== rule delivered to the agent home after /updatefirstmate (HEAD 9f5eb8f) ===
+## No-mistakes test configuration
+
+Never configure a deterministic suite-walk `commands.test` in any repository's no-mistakes config, whether it selects the full suite, changed tests, a family, or a fixed script list.
+Targeted validation belongs to the no-mistakes evidence path, while CI owns broad deterministic regression coverage.
+
+=== false-claim tokens still present in the delivered home? ===
+none found across the whole delivered tree

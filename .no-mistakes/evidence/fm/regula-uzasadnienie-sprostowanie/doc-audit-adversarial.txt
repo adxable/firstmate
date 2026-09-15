@@ -1,0 +1,7 @@
+=== documentation audit over the updated tree ===
+fm-doc-audience-check: ok surfaces=100 local_links=368
+exit=0
+
+=== adversarial: prove the audit actually covers the edited file ===
+fm-doc-audience-check: unresolved local link in .agents/skills/firstmate-coding-guidelines/SKILL.md: ../../../docs/does-not-exist.md
+exit=1
