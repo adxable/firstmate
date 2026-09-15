@@ -3,6 +3,10 @@
 # local, gitignored config/wedge-alarm and edit. One channel directive per
 # non-empty, non-comment line; every listed non-off channel fires, best-effort.
 #
+# These channels have a second consumer: the silence sentry reports through them
+# when this home stops watching and no turn ever picks the wake up, so `off`
+# silences that report's active alert too (docs/wedge-alarm.md).
+#
 # Directives:
 #   off              position-independent kill switch: disable every active
 #                    alert (the durable marker and tmux status-line flash remain)

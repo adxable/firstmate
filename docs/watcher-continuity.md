@@ -105,11 +105,13 @@ The sentry is therefore launched detached, in its own process group, and deliber
 A sentry must never outlive what it watches.
 One is armed at every watcher close, so a survivor is not a stray process but one stray process per close, accumulating for as long as the home runs and each holding a stale generation.
 The loop therefore terminates explicitly, before evaluating anything, when the home itself is gone or when the record names another process, rather than letting either fall out of the conditions above by accident.
+The arm gate is that rule from the other side - one sentry per home and per wake - so a lingering sentry still holding a wake some turn has since finished is superseded rather than deferred to, because deferring to it would leave the wake this close just queued with nobody watching it at all.
 
 The report is durable, read, and out of band.
 `state/.silence-alarm` records the evidence, and the report itself is published as a `check` wake on this home's own durable queue, which is presented at session start and at every drain and stays queued until a turn acknowledges it.
 That acknowledgement is what retires the marker, on the next watcher cycle or the sentry's own healthy exit: the first cycle after supervision returns is precisely when the captain would look, so a report he has not read yet is never erased underneath him.
 Publishing a queue row starts nothing, so the report-only boundary holds.
+A standing report is also the one queued row no sentry is ever armed over: it waits on the captain rather than on a turn, so a home that already holds an unread one gets no second report naming the first as the thing nobody handled.
 The active alert reuses this home's configured [`wedge-alarm.md`](wedge-alarm.md) channels through that owner's one-shot `--alarm` entry, because they are the only channels in this repository that reach a person outside the terminal pane without the model's participation, and it passes its own banner title so a notification never names a condition that did not produce it.
 Home scoping is absolute: every path derives from this home's own `FM_HOME`, and the sentry signals no process at all, so it cannot reach a sibling home sharing the machine.
 
@@ -222,6 +224,7 @@ The same suite covers the last-resort arm with the real `bin/fm-watch.sh` as a r
 `tests/fm-silence-sentry.test.sh` drives the real watcher, the real drain and its real post-handling acknowledgement to pin the sentry's verdict: it reports a home whose queued wake no turn took at all, it reports the incident's own shape where a turn claimed the wake at its opening drain and then died without finishing it, and it starts nothing in either; it stays silent on an idle home, under away mode, beside a live parked watcher, once a handling turn acknowledges the wake, and before its deadline elapses, with the deadline floored at the watcher grace.
 It also pins the report's reader: the real drain presents it to the next turn, and the marker stands through a later watcher cycle until a turn consumes it.
 The same suite pins the termination contract, which is what keeps one sentry per watcher close from accumulating: a sentry exits when the home it watches is deleted, and a superseded one stands down without retiring the current sentry's record.
+It pins the arm gate beside it: a second close over the same wake starts no second sentry, while a close carrying a fresher wake supersedes a sentry still holding a finished one, and a home whose only queued row is a standing silence report arms nothing.
 `FM_CLAUDE_LIVE_E2E=1 tests/fm-silence-sentry-live-e2e.test.sh` proves the one harness-dependent fact there: a sentry forked from a watcher a real Claude primary's auto-arm brought up survives Claude tearing that process tree down, without which the mechanism would be inert exactly when it is needed.
 It then reaps that sentry by name and asserts it is gone, because retiring a watcher arms a fresh one over the record, so a reaper that only follows the record would leave the process it just asserted on running.
 
