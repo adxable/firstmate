@@ -57,6 +57,66 @@ Two residuals are named rather than claimed closed, because both require a Stop 
 A claim taken seconds before a hung arm is still inside its arming budget, so that Stop allows correctly and only the next one recovers; when no next Stop comes, the home stays unwatched.
 An exit-2 rewake that the harness never delivers produces no turn at all, so no later Stop boundary exists for the guard to act at; upstream issue 4209 owns delivering a wake to an idle home, and this change does not address it.
 Every shape where Stop events keep arriving is covered, which is every attended session and every home with a live lane.
+Neither residual is repaired by the silence sentry below, but both stop being invisible: the sentry reports the resulting unwatched home within its deadline instead of leaving it indefinitely silent.
+
+## Silence with no Stop boundary
+
+Every arming and recovery path above is triggered by a Stop event.
+A session that runs out of quota mid-turn never completes that turn, so it emits no Stop at all: the auto-arm ledger does not advance, the turn-end guard's block record is never created, and the last-resort arm never runs, because all three act AT a boundary this shape does not have.
+Observed 2026-09-14 on a Claude primary: a watcher closed cleanly at 10:30:21 (exit 0, reason actionable-stale), the woken session hit its session limit, and the home stayed unwatched for 71 minutes while one worker's validation failed unobserved and a second sat stopped mid-gate.
+Nothing inside the home noticed; the supervision layer one level up did, from outside.
+
+`bin/fm-silence-sentry.sh` closes the noticing half only.
+It is a detached process armed by the watcher's own close, so it needs neither a turn to end nor the model to be alive, and it starts nothing: no watcher, no agent, no retry, no resumed work.
+That boundary is deliberate rather than a simplification, because a home whose quota is still exhausted would resurrect itself into a loop nobody asked for, and the last-resort arm above remains the only backstop that arms anything.
+
+The signal is the durable wake record, and specifically its end rather than its beginning.
+A watcher appends every actionable wake to `state/.wake-queue` before it exits, and the row stays queued until the handling turn acknowledges it after handling it.
+A row gone from the queue therefore means a turn finished with it, and a row that outlives the deadline means none ever did.
+The claim the drain writes at the start of handling is deliberately not the signal: it is written before the turn does any work, so retiring on it would leave the whole remainder of the turn unwatched, which is exactly where quota is consumed and exactly the shape of the incident above.
+Two signals that look plausible were measured and rejected: elapsed unwatched time alone says nothing, because under the autoarm model no watcher is the healthy mid-turn state, and harness CPU time cannot carry the verdict either, because on 2026-09-14 all twelve live Claude Code processes on one machine burned between 0.74% and 4.79% of a core continuously whether they were running a turn or parked at a prompt.
+
+The sentry reports only when supervision is still needed here, no live identity-matched watcher holds this home's lock with a fresh beacon, the wake it was armed over is still queued and unacknowledged, and away mode is inactive, for the whole deadline.
+Each healthy shape trips a different one of those: an idle home fails the need test and never arms a sentry at all, a watcher parked on a long external wait is alive and beating, and a turn that handles the wake acknowledges it when it is done.
+A turn that merely ENDS also retires the sentry, because the Stop-owned auto-arm brings a watcher back.
+The deadline therefore only has to outlast a single turn that runs past it without ever finishing the wake it was handed; it defaults to 45 minutes, is settable per home in `config/silence-deadline` (seconds, `FM_SILENCE_ALARM_SECS` overrides it), and is floored at the watcher grace, so it is never more eager than the staleness bound the rest of the stack already applies.
+
+That default is a judgement, and its two bounds are recorded so the next reader moves it on evidence rather than instinct.
+Below it the detector lies: on 2026-09-15 this home ran stretches of roughly nineteen minutes with nothing beating while work was genuinely in progress, and an alarm that cried wolf every four minutes for an hour that night is exactly how a domain learns to ignore that task's alarms.
+Above it detection costs real time: at 45 minutes the 2026-09-14 failure would have reported at 11:15, against the 11:42 a human actually noticed it.
+A home whose turns are reliably shorter is entitled to lower it and get the earlier detection.
+
+A third residual follows from that number, and it is a false report rather than a missed one.
+A turn that genuinely runs longer than the deadline without acknowledging its wake is reported as silence: the captain gets the `SILENT HOME` banner, the durable `state/.silence-alarm`, and a queued `check` wake, all naming quota exhaustion or a dead session, about a session that is alive and working.
+The cost is the detector's credibility, which is why the number is set where a turn rarely reaches it and why a home that lowers it accepts that trade knowingly.
+Nothing is restarted or lost in that case - the report is report-only - and the next turn that acknowledges the wake retires the marker.
+
+A fourth residual is that report's mirror, and it is a missed report rather than a false one.
+The sentry retires the moment its wake is acknowledged, so a home whose turn acknowledged receipt of the notification, kept working, and died before the turn ended will not be reported at all: no watcher, no Stop, no queued row, and nothing arms a sentry except a watcher close.
+The shape observed on 2026-09-14 is not that one - the limit fell at 10:29, before the 10:30:21 close and before any turn had acknowledged anything, so it sits inside the window this change covers - and the variant is bounded to a single turn, because the next turn that ends arms a watcher again.
+The answer to it is a turn-liveness signal, which is waiting as separate work.
+
+Three independent review passes over this change arrived at that same retirement rule and were answered the same way each time, and the finding is about the rule rather than the reviews, which were right about its coherence every time: a signal derived from the wake queue can decide that a turn finished with a wake, never that the session behind it is still alive, so the remedy is the liveness signal rather than a further addition here.
+
+The close path pays nothing for it.
+`watcher_cleanup` runs inside the watcher process, and callers bound that process from outside: `bin/fm-watch-checkpoint.sh` wraps the whole watcher in `timeout <n>`, and a kill at that bound discards the wake line the watcher had already written.
+The sentry is therefore launched detached, in its own process group, and deliberately not waited for, so the gating, the fork of the watch loop, and its confirmation are all charged to the sentry's own process instead of to a budget Codex's bounded foreground checkpoint also spends.
+
+A sentry must never outlive what it watches.
+One is armed at every watcher close, so a survivor is not a stray process but one stray process per close, accumulating for as long as the home runs and each holding a stale generation.
+The loop therefore terminates explicitly, before evaluating anything, when the home itself is gone or when the record names another process, rather than letting either fall out of the conditions above by accident.
+The arm gate is that rule from the other side - one sentry per home and per wake - so a lingering sentry still holding a wake some turn has since finished is superseded rather than deferred to, because deferring to it would leave the wake this close just queued with nobody watching it at all.
+
+The report is durable, read, and out of band.
+`state/.silence-alarm` records the evidence, and the report itself is published as a `check` wake on this home's own durable queue, which is presented at session start and at every drain and stays queued until a turn acknowledges it.
+That acknowledgement is what retires the marker, on the next watcher cycle or the sentry's own healthy exit: the first cycle after supervision returns is precisely when the captain would look, so a report he has not read yet is never erased underneath him.
+Publishing a queue row starts nothing, so the report-only boundary holds.
+A standing report is also the one queued row no sentry is ever armed over: it waits on the captain rather than on a turn, so a home that already holds an unread one gets no second report naming the first as the thing nobody handled.
+The active alert reuses this home's configured [`wedge-alarm.md`](wedge-alarm.md) channels through that owner's one-shot `--alarm` entry, because they are the only channels in this repository that reach a person outside the terminal pane without the model's participation, and it passes its own banner title so a notification never names a condition that did not produce it.
+Home scoping is absolute: every path derives from this home's own `FM_HOME`, and the sentry signals no process at all, so it cannot reach a sibling home sharing the machine.
+
+Upstream issue 4209 reports the adjacent undelivered-rewake failure, whose durable aftermath is identical to this one, and proposes delivering the wake and never leaving the home unwatched.
+This change does neither: it adds the third thing, noticing, and leaves both of 4209's halves open.
 
 ## Actionable wake ordering
 
@@ -161,6 +221,12 @@ It also covers generation-claim single-flight, stuck-claim supersession, superse
 The same suite covers the last-resort arm with the real `bin/fm-watch.sh` as a real process: it brings a watcher up when nothing owns recovery, it keeps a home watched whose claim mutex is permanently wedged, and it stays out of both healthy shapes - a live identity-matched watcher, and a claim that is genuinely still arming - asserting in each that no watcher was started.
 `tests/fm-claude-stop-autoarm.test.sh` drives the arming budget and the beacon apart and asserts the verdict survives losing either signal, with the grace held at its default so a regression to grace-only crediting fails all three assertions together.
 `FM_CLAUDE_LIVE_E2E=1 tests/fm-guard-last-resort-arm-live-e2e.test.sh` proves the two harness-dependent facts no fixture can: that Claude runs the guard synchronously and delivers its exit-2 banner, and that a watcher the guard spawns inside that hook outlives Claude tearing the hook down.
+`tests/fm-silence-sentry.test.sh` drives the real watcher, the real drain and its real post-handling acknowledgement to pin the sentry's verdict: it reports a home whose queued wake no turn took at all, it reports the incident's own shape where a turn claimed the wake at its opening drain and then died without finishing it, and it starts nothing in either; it stays silent on an idle home, under away mode, beside a live parked watcher, once a handling turn acknowledges the wake, and before its deadline elapses, with the deadline floored at the watcher grace.
+It also pins the report's reader: the real drain presents it to the next turn, and the marker stands through a later watcher cycle until a turn consumes it.
+The same suite pins the termination contract, which is what keeps one sentry per watcher close from accumulating: a sentry exits when the home it watches is deleted, and a superseded one stands down without retiring the current sentry's record.
+It pins the arm gate beside it: a second close over the same wake starts no second sentry, while a close carrying a fresher wake supersedes a sentry still holding a finished one, and a home whose only queued row is a standing silence report arms nothing.
+`FM_CLAUDE_LIVE_E2E=1 tests/fm-silence-sentry-live-e2e.test.sh` proves the one harness-dependent fact there: a sentry forked from a watcher a real Claude primary's auto-arm brought up survives Claude tearing that process tree down, without which the mechanism would be inert exactly when it is needed.
+It then reaps that sentry by name and asserts it is gone, because retiring a watcher arms a fresh one over the record, so a reaper that only follows the record would leave the process it just asserted on running.
 
 ## Active limits and verification
 
@@ -168,5 +234,6 @@ The goal is continuity without a Pi, omp, or OpenCode model-memory re-arm step.
 No zero-latency guarantee is claimed because lock verification, watcher startup, and bounded retry delays remain deliberate safety work.
 OpenCode support targets persistent TUI sessions rather than headless `opencode run`.
 Claude depends on the Stop `asyncRewake` rewake for the automatic cycle, with the last-resort arm above as a supervision-only backstop that keeps a home watched without reclaiming the rewake, Cursor depends on its awaited stop-hook park, Grok retains native background-completion notifications, and Codex retains bounded foreground checkpoints.
+The silence sentry adds no continuity of its own and is not a fallback for any of those: where a Stop event never arrives it reports the resulting unwatched home and nothing more, so a home that has gone silent still needs a person or the layer above to act on the report.
 
 [`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current five-harness live evidence, the 2026-07-24 Stop-owned Claude auto-arm results, and exact opt-in commands.

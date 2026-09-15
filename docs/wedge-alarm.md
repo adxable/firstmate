@@ -9,6 +9,9 @@ The durable marker and tmux flash remain as additional signals.
 
 `config/wedge-alarm` is local and gitignored.
 It lists channel directives, one per non-empty, non-comment line, and every listed non-`off` channel fires best-effort.
+These channels have a second consumer: `bin/fm-silence-sentry.sh` reaches them through the daemon's one-shot `--alarm` entry when a home stops watching and no turn ever picks the wake up ([`watcher-continuity.md`](watcher-continuity.md#silence-with-no-stop-boundary)).
+That entry must be executed rather than sourced, because the library-mode guard pins the notifier seam to `discard` so no sourced context can fire a real notification.
+It takes an optional banner title after the marker; without one the OS channels keep posting the away-mode title they always have, and a caller reporting something else supplies its own so the banner never names a condition that did not produce it.
 `FM_WEDGE_ALARM_CHANNEL` overrides the file with one directive for focused testing.
 
 - `off` disables every active alert while retaining the durable marker and tmux flash.
@@ -25,7 +28,7 @@ Each channel is best-effort.
 A missing binary or non-zero exit logs a warning and continues to the next channel without crashing the daemon loop.
 Every invocation is process-group bounded by `FM_WEDGE_ALARM_TIMEOUT_SECS`, which defaults to 10 seconds, including `command:`, `osascript`, `herdr`, and the test seam.
 On timeout or daemon shutdown, the notifier process group is terminated and the next configured channel may run.
-AppleScript receives the summary as an argv item rather than interpolated source, so summary text cannot alter the script.
+AppleScript receives the summary and the banner title as argv items rather than interpolated source, so neither text can alter the script.
 See [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
 ## Test safety
@@ -35,5 +38,5 @@ When the daemon is sourced as a library, that seam defaults to `discard`, so a t
 `tests/wake-helpers.sh` replaces it with a recorder when a suite needs to assert channel selection and summary propagation.
 Production leaves the seam unset and uses the configured real channels.
 
-`tests/fm-daemon.test.sh` covers directive parsing, rate limiting, timeout and process-group cleanup, argv-safe dispatch, channel fallback, and safe `command:` summary delivery.
+`tests/fm-daemon.test.sh` covers directive parsing, rate limiting, timeout and process-group cleanup, argv-safe dispatch, channel fallback, safe `command:` summary delivery, and the banner title reaching the OS channels as a caller's own or as the away-mode default.
 [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) records the bounded manual macOS and Herdr channel proof.
