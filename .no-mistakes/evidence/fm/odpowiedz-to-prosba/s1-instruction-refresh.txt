@@ -1,0 +1,26 @@
+# A firstmate session takes the helm while the contract is still at 3afe76c (pre-change)
+================================================================================
+SESSION START - /tmp/fm-contract-lab.HfpF6v/home
+================================================================================
+instruction baseline recorded: sha256:10c3e247c0728b69480ccb3546ddae1afd3d9d3965ee7ff23e8ce7e51c8b6536
+
+# The session compacts with the contract unchanged -> no instruction refresh
+refresh sections emitted: 0
+sharpened classification present in what the session received: 0
+
+# The captain's contract is sharpened mid-session (c670e77 lands in the fleet checkout)
+
+# The session compacts again -> the running firstmate is handed the current contract
+CURRENT AGENTS.md - INSTRUCTION REFRESH
+================================================================================
+The complete on-disk AGENTS.md below supersedes the instruction copy this session
+started with. Apply it as the current Firstmate instruction contract.
+
+# Firstmate
+...
+# the mid-task rule and its new classification, as delivered to the agent:
+380:When the captain adds or changes an ask mid-task, append the captain's words to that brief's `## Captain's intent` and steer the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.
+381-A captain's answer to a question this task escalated is itself such an added ask, and is covered by that same obligation: a ruling that never reaches the recorded ask can be correctly reversed later by a review that reads only that record.
+
+# ordering: replacement instructions arrive before the bulky digest
+refresh at line 17, BOOTSTRAP at line 627

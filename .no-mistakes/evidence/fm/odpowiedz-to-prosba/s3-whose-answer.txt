@@ -1,0 +1,15 @@
+### Whose answer may enter the recorded ask (why the sentence names a CAPTAIN's answer)
+
+--- C1: firstmate's own ruling on the escalated ask-user finding, offered as the recorded ask ---
+error: /tmp/fm-contract-lab.HfpF6v/home3/data/escalated/brief.md has no provenance-marked Captain's intent; add the captain's actual words before promotion
+exit: refused; task record still: kind=scout
+ship-instructions written: no
+
+--- C2: the CAPTAIN's answer to that same escalation ---
+promoted escalated to ship mode=no-mistakes yolo=on (teardown protection restored)
+--- what reaches the next run ---
+## Captain's intent
+the deadline is 45 minutes, settable per home.
+
+## Firstmate spec
+=> only the captain's words build the record; firstmate's own ruling is refused at the door.

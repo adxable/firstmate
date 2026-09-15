@@ -1,0 +1,24 @@
+### A. the 2026-09-15 shape: the captain's mid-task ruling never reached the recorded ask
+promoted silence-detector to ship mode=no-mistakes yolo=on (teardown protection restored)
+wrote ship instructions for mode=no-mistakes: /tmp/fm-contract-lab.HfpF6v/home2/data/silence-detector/ship-instructions.md
+--- the recorded ask a later review pass reads (it is also what --intent must carry) ---
+## Captain's intent
+Build a silence detector that notices when a worker stops reporting.
+
+## Firstmate spec
+the 45-minute, per-home ruling appears in that record: 0 time(s)
+=> a review reading only this record is entitled to call the per-home setting unrequested.
+
+### B. the sharpened rule applied: the captain's ANSWER to the escalated question is appended to ## Captain's intent
+promoted silence-detector to ship mode=no-mistakes yolo=on (teardown protection restored)
+wrote ship instructions for mode=no-mistakes: /tmp/fm-contract-lab.HfpF6v/home2/data/silence-detector/ship-instructions.md
+--- the recorded ask a later review pass reads (it is also what --intent must carry) ---
+## Captain's intent
+Build a silence detector that notices when a worker stops reporting.
+
+The deadline is 45 minutes, settable per home - a home with shorter turns has the right to go lower.
+
+## Firstmate spec
+the 45-minute, per-home ruling appears in that record: 1 time(s)
+29:When starting no-mistakes, pass `--intent` as only this brief's `## Captain's intent` subsection plus any later words the captain actually said.
+=> the same review now reads the ruling it would otherwise have reversed.
