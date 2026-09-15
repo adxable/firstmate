@@ -2066,9 +2066,10 @@ test_max_defer_afk_inactive_does_not_flush_or_alarm() {
 # the FM_WEDGE_ALARM_EXEC seam, which tests/wake-helpers.sh forces to a recorder
 # ($FM_WEDGE_ALARM_LOG logs "<channel>\t<summary>"); the daemon also defaults
 # that seam to "discard" whenever it is sourced. Assertions read the recorder
-# log, so they verify channel SELECTION and summary propagation; the real
-# osascript/herdr argv is verified once by the bounded manual evidence in
-# docs/wedge-alarm.md, never from a suite.
+# log, so they verify channel SELECTION and summary propagation; the argv the
+# daemon composes is asserted against a PATH stub standing in for osascript, and
+# what a real notification puts on screen stays the bounded manual evidence in
+# docs/wedge-alarm.md, never a suite.
 make_wedge_case() {  # <name> -> echoes dir; creates state/, fakebin/{uname,osascript,herdr}, alert.log
   local name=$1 dir fakebin
   dir="$TMP_ROOT/$name"; fakebin="$dir/fakebin"
@@ -2082,6 +2083,7 @@ SH
   cat > "$fakebin/osascript" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' osascript >> "${FM_WEDGE_ALARM_REAL_LOG:-/dev/null}"
+printf '%s\n' "$@" >> "${FM_WEDGE_ALARM_ARGV_LOG:-/dev/null}"
 exit 0
 SH
   cat > "$fakebin/herdr" <<'SH'
@@ -2165,6 +2167,34 @@ test_wedge_alarm_osascript_channel_selected() {
   grep -F 'WEDGED 600s undelivered' "$log" >/dev/null || fail "osascript channel did not carry the summary"
   grep -F 'herdr' "$log" >/dev/null && fail "osascript-only config also selected herdr"
   pass "osascript channel routes through the notifier seam with the summary (never a real notification)"
+}
+
+# The banner title is the one thing the recorder seam cannot see: it is consumed
+# after that seam, inside the notifier itself. A silence report must not reach
+# the captain under the away-mode title, and an away-mode alarm must keep the
+# title it has always had, so both are read off the argv the daemon composes.
+test_wedge_alarm_title_is_the_callers_and_defaults_to_away_mode() {
+  local dir argv
+  dir=$(make_wedge_case wedge-title); argv="$dir/osascript.argv"
+  : > "$argv"
+  PATH="$dir/fakebin:$PATH" FM_WEDGE_ALARM_EXEC='' FM_WEDGE_ALARM_ARGV_LOG="$argv" \
+    FM_WEDGE_ALARM_CHANNEL=osascript \
+    wedge_alarm_notify "firstmate home /h has not been watched for 46m" "/s/.silence-alarm" \
+      "firstmate: home stopped watching"
+  # The AppleScript reads the summary as item 1 and the title as item 2, so the
+  # last two argv items are the contract, in that order.
+  [ "$(tail -n 2 "$argv" | head -n 1)" = "firstmate home /h has not been watched for 46m" ] \
+    || fail "the summary did not reach osascript as item 1: $(cat "$argv")"
+  [ "$(tail -n 1 "$argv")" = "firstmate: home stopped watching" ] \
+    || fail "the caller's banner title did not reach osascript as item 2: $(cat "$argv")"
+
+  : > "$argv"
+  PATH="$dir/fakebin:$PATH" FM_WEDGE_ALARM_EXEC='' FM_WEDGE_ALARM_ARGV_LOG="$argv" \
+    FM_WEDGE_ALARM_CHANNEL=osascript \
+    wedge_alarm_notify "away-mode escalations WEDGED 900s undelivered - see /s/.marker" "/s/.marker"
+  [ "$(tail -n 1 "$argv")" = "firstmate: away-mode escalations WEDGED" ] \
+    || fail "a caller that supplies no title lost the away-mode banner: $(cat "$argv")"
+  pass "the banner title is the caller's, and an away-mode alarm keeps its own"
 }
 
 test_wedge_alarm_herdr_channel_selected() {
@@ -2758,6 +2788,7 @@ test_wake_helpers_replace_inherited_notifier_override
 test_wedge_alarm_discard_seam_fires_nothing
 test_wedge_alarm_direct_notifiers_honor_discard_seam
 test_wedge_alarm_osascript_channel_selected
+test_wedge_alarm_title_is_the_callers_and_defaults_to_away_mode
 test_wedge_alarm_herdr_channel_selected
 test_wedge_alarm_command_channel_receives_summary
 test_wedge_alarm_command_failure_hides_configured_command

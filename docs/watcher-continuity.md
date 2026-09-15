@@ -91,6 +91,13 @@ A turn that genuinely runs longer than the deadline without acknowledging its wa
 The cost is the detector's credibility, which is why the number is set where a turn rarely reaches it and why a home that lowers it accepts that trade knowingly.
 Nothing is restarted or lost in that case - the report is report-only - and the next turn that acknowledges the wake retires the marker.
 
+A fourth residual is that report's mirror, and it is a missed report rather than a false one.
+The sentry retires the moment its wake is acknowledged, so a home whose turn acknowledged receipt of the notification, kept working, and died before the turn ended will not be reported at all: no watcher, no Stop, no queued row, and nothing arms a sentry except a watcher close.
+The shape observed on 2026-09-14 is not that one - the limit fell at 10:29, before the 10:30:21 close and before any turn had acknowledged anything, so it sits inside the window this change covers - and the variant is bounded to a single turn, because the next turn that ends arms a watcher again.
+The answer to it is a turn-liveness signal, which is waiting as separate work.
+
+Three independent review passes over this change arrived at that same retirement rule and were answered the same way each time, and the finding is about the rule rather than the reviews, which were right about its coherence every time: a signal derived from the wake queue can decide that a turn finished with a wake, never that the session behind it is still alive, so the remedy is the liveness signal rather than a further addition here.
+
 The close path pays nothing for it.
 `watcher_cleanup` runs inside the watcher process, and callers bound that process from outside: `bin/fm-watch-checkpoint.sh` wraps the whole watcher in `timeout <n>`, and a kill at that bound discards the wake line the watcher had already written.
 The sentry is therefore launched detached, in its own process group, and deliberately not waited for, so the gating, the fork of the watch loop, and its confirmation are all charged to the sentry's own process instead of to a budget Codex's bounded foreground checkpoint also spends.
