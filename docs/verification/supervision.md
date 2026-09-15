@@ -512,6 +512,12 @@ FM_TEST_END 2026-09-14T20:07:41Z tests/fm-silence-sentry-live-e2e.test.sh exit=0
 
 Observed guarantee: the Stop-owned auto-arm brought up a real watcher, that watcher closed on a genuinely actionable wake while Claude was still alive, the close forked a sentry inside Claude's own process tree over a wake sequence present in this home's durable queue, and that process was still alive after the session had exited, having reported nothing about a session that was never silent, and was then reaped by name and proved gone.
 Against the pre-change tree the same command reports `not ok - Claude 2.1.247 (Claude Code): no watcher cycle in this session armed a sentry at its close`.
+
+That output was produced by `b336ccf`, before this branch's review rounds, so it is the last live evidence for the guarantee and not a measurement of the test as shipped.
+Two things in the test changed after that run.
+The notifier seam it sets is now `FM_WEDGE_ALARM_EXEC`, the one `bin/fm-supervise-daemon.sh` already owns, rather than the sentry's own `FM_SILENCE_ALARM_EXEC`, which existed and was honoured at that commit and no longer exists at all; a notification was suppressed in that run, but by a seam the shipped sentry no longer has.
+The surviving-process assertion now reads `ps -p <pid> -o command=` rather than the recorded identity field, which carries no matchable script name wherever `/proc` is readable.
+Neither touches what the run demonstrates, so the guarantee stands as proven against `b336ccf` and pending re-verification against the shipped test; the backlog task `dowod-sentry-po-rozbiorce` owns that opt-in re-run on this machine and refreshes this block.
 This command refreshes the record; rerun it after every Claude upgrade.
 
 Other primary harnesses are not applicable to this record for the same reason as the arm above: the reported shape is the Claude autoarm model's, where the watcher runs only between turns and the only unattended source of a turn is a Stop-driven rewake.

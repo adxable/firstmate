@@ -244,6 +244,16 @@ alarm_count() {
   printf '%s\n' "${n:-0}"
 }
 
+# The alarms THIS home raised, found by the home path every summary carries.
+# The log is shared by every fixture, and a home this suite deliberately leaves
+# unwatched keeps its own sentry armed, so it can report while a later case is
+# running; only a per-home count decides anything after that point.
+alarm_count_for() { # <home>
+  local n
+  n=$(grep -c -F "$1" "$ALARM_LOG" 2>/dev/null) || n=0
+  printf '%s\n' "${n:-0}"
+}
+
 # --- the fault --------------------------------------------------------------
 
 # The captain's boundary rides along in this case on purpose: detect and report,
@@ -421,11 +431,44 @@ test_no_report_before_the_deadline_elapses() {
   [ -n "$(sentry_pid "$dir")" ] || fail "arm recorded no sentry"
   sleep 4
   [ -e "$dir/state/.silence-alarm" ] && fail "reported silence before the deadline elapsed"
-  [ "$(alarm_count)" -eq 0 ] || fail "alarmed before the deadline elapsed"
+  [ "$(alarm_count_for "$dir")" -eq 0 ] || fail "alarmed before the deadline elapsed"
   # The condition itself is already true; only the deadline holds the report back.
   FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --check >/dev/null \
     || fail "this home is unwatched with an unhandled wake, so --check must say so"
   pass "fm-silence-sentry: an unwatched home is not reported until the deadline elapses"
+}
+
+# A report that is still waiting to be read is not a wake waiting on a turn.
+# The queue can hold one alone: a turn acknowledges through the cutoff its own
+# drain computed, and the report published after that presentation is above it,
+# so it survives the acknowledgement. Arming over it would produce a second
+# SILENT HOME naming the first report as the thing nobody handled.
+test_never_arms_over_its_own_standing_report() {
+  local dir out
+  dir=$(make_home self-report)
+  queue_one_unhandled_wake "$dir"
+  : > "$ALARM_LOG"
+
+  # The turn begins, and then runs past the deadline without finishing.
+  drain_wake "$dir"
+  FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "arm exited nonzero"
+  [ -n "$(sentry_pid "$dir")" ] || fail "arm recorded no sentry"
+  wait_for_sentry_exit "$dir" || fail "the sentry never finished"
+  [ -e "$dir/state/.silence-alarm" ] || fail "no durable silence record was written"
+
+  # The turn ends and acknowledges what it was presented, leaving the report.
+  acknowledge_wake "$dir"
+
+  out=$(FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --check) && \
+    fail "a home whose only queued row is its own standing report was called silent: $out"
+  assert_contains "$out" "no unhandled wake" \
+    "a standing report is not a wake this home is waiting on"
+  FM_HOME="$dir" "$dir/bin/fm-silence-sentry.sh" --arm || fail "the next arm exited nonzero"
+  [ -e "$dir/state/.silence-sentry" ] \
+    && fail "the sentry armed over its own standing report"
+  [ "$(alarm_count_for "$dir")" -eq 1 ] \
+    || fail "expected the single report, got $(alarm_count_for "$dir") alarms"
+  pass "fm-silence-sentry: never arms over its own standing report"
 }
 
 # --- lifecycle --------------------------------------------------------------
@@ -600,6 +643,7 @@ test_never_arms_on_an_idle_home
 test_never_arms_under_away_mode
 test_silent_while_a_watcher_is_live
 test_no_report_before_the_deadline_elapses
+test_never_arms_over_its_own_standing_report
 test_marker_is_retired_once_the_home_cycles_again
 test_arm_is_a_singleton_per_home
 test_report_stands_until_a_turn_consumes_it

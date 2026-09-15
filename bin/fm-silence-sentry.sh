@@ -148,11 +148,14 @@ case "$POLL_SECS" in ''|*[!0-9]*|0) POLL_SECS=30 ;; esac
 # The lowest queued sequence, i.e. the oldest wake no turn has finished handling,
 # or nothing when the queue holds none. A row missing its five fields or its
 # numeric sequence can never be presented or acknowledged by contract and is
-# ignored here too, because main retires those rather than handling them.
+# ignored here too, because main retires those rather than handling them. This
+# sentry's own standing report is skipped as well: it is a report waiting to be
+# read, not a wake waiting on a turn, and a home that already holds an unread
+# one needs no second report naming the first as the thing nobody handled.
 oldest_queued_row() {
   [ -s "$QUEUE" ] || return 1
-  awk -F '\t' '
-    NF >= 5 && $2 ~ /^[0-9]+$/ {
+  awk -F '\t' -v report="$REPORT_WAKE_KEY" '
+    NF >= 5 && $2 ~ /^[0-9]+$/ && !($3 == "check" && $4 == report) {
       if (best == "" || $2 + 0 < best + 0) { best = $2; stamp = $1; kind = $3; key = $4 }
     }
     END { if (best != "") printf "%s\t%s\t%s\t%s\n", best, stamp, kind, key }
