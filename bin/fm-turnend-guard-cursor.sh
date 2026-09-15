@@ -90,6 +90,14 @@ case "$LOCK_ATTEMPTS" in ''|*[!0-9]*|0) LOCK_ATTEMPTS=50 ;; esac
 # shellcheck source=bin/fm-operational-input.sh
 . "$SCRIPT_DIR/fm-operational-input.sh"
 
+# --- scope: genuine primary checkout only -----------------------------------
+# This scope test runs BEFORE the stdin payload read below, so an out-of-scope
+# checkout never blocks on a harness pipe that stays open. A crewmate/scout task
+# worktree inherits this tracked hook and is the common case, and a guard that
+# read stdin first would stall that whole session waiting for a payload it would
+# then discard.
+fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
+
 PAYLOAD=$(cat 2>/dev/null || true)
 [ -n "$PAYLOAD" ] || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
@@ -106,8 +114,6 @@ LOOP_COUNT=$(printf '%s' "$PAYLOAD" | jq -r '
 case "$LOOP_COUNT" in ''|*[!0-9]*) exit 0 ;; esac
 SESSION_ID=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // "unknown"' 2>/dev/null || printf 'unknown')
 case "$SESSION_ID" in ''|*[!A-Za-z0-9._-]*) SESSION_ID=unknown ;; esac
-
-fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
 # Pi-host stand-down: docs/turnend-guard.md owns the PI_CODING_AGENT /
 # CURSOR_AGENT / CURSOR_INVOKED_AS contract summarized in this script's header.

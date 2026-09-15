@@ -100,9 +100,19 @@ esac
 # owner of that max(300, poll+60) derivation.
 GRACE=${FM_GUARD_GRACE:-$(fm_poll_derived_grace)}
 
+# --- scope: genuine primary checkout only -----------------------------------
+# This scope test runs BEFORE the stdin payload read below, so an out-of-scope
+# home never blocks on a harness pipe that stays open. A crewmate/scout task
+# worktree inherits this tracked hook and is the common case, and a guard that
+# read stdin first would stall that whole session waiting for a payload it would
+# then discard. Exiting without draining the pipe is safe in the other
+# direction too: the writer sees the closed read end rather than a reader that
+# never returns.
+fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
+
 # Consume the Stop payload once. The decisions below are state-based; the
 # payload is read so a slow writer can never wedge on a full pipe, and its host
-# is inspected before anything else runs.
+# is inspected before anything else in-scope runs.
 PAYLOAD=$(cat 2>/dev/null || true)
 
 # Cursor loads the tracked Claude settings too. Cursor has no asyncRewake, so if
@@ -112,9 +122,6 @@ PAYLOAD=$(cat 2>/dev/null || true)
 # (docs/turnend-guard.md "Harness integrations"). Cursor's own park adapter owns
 # its turn boundary, so stand down on a Cursor-delivered payload.
 fm_hook_payload_is_foreign_host "$PAYLOAD" && exit 0
-
-# --- scope: genuine primary checkout only -----------------------------------
-fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
 # --- identity: only the lock-owning session's hooks may arm ------------------
 # A prior session may have died after leaving its numeric harness pid in .lock.

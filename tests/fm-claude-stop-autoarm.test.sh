@@ -245,6 +245,25 @@ test_inert_in_child_worktree() {
   pass "auto-arm: inert in a linked child worktree even when in-flight"
 }
 
+# A harness can hand a hook a payload pipe it never closes. An out-of-scope home
+# must decide it is inert without reading that pipe, or the arm wedges the whole
+# worker session on a Stop it was never going to act on. This pins the ordering:
+# scope first, payload second.
+test_out_of_scope_decided_without_reading_stdin() {
+  local base dir rc
+  base="$TMP_ROOT/stdin-order-base"
+  dir="$TMP_ROOT/stdin-order-wt"
+  make_crewmate_worktree_dir "$base" "$dir" >/dev/null
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" actionable
+  rc=$(FM_HOME="$dir" \
+    fm_run_open_stdin_deadline 5 bash "$dir/bin/fm-claude-stop-autoarm.sh")
+  [ "$rc" != 124 ] || fail "hook blocked on an open stdin pipe in an out-of-scope child worktree"
+  expect_code 0 "$rc" "hook must exit 0 in an out-of-scope child worktree without reading stdin"
+  [ ! -e "$dir/state/arm-ran" ] || fail "hook armed inside an out-of-scope child worktree"
+  pass "auto-arm: out-of-scope worktree exits 0 without waiting on an unclosed stdin pipe"
+}
+
 test_inert_without_session_lock() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/no-lock")
@@ -1251,6 +1270,7 @@ test_fm_lock_status_still_works_with_shared_lib() {
 }
 
 test_inert_in_child_worktree
+test_out_of_scope_decided_without_reading_stdin
 test_inert_without_session_lock
 test_reclaims_stale_session_lock_before_arming
 test_inert_when_lock_held_by_other_harness

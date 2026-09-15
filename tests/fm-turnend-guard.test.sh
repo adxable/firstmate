@@ -658,6 +658,23 @@ test_hook_silent_in_secondmate_child_worktree() {
   pass "fm-turnend-guard: inert in a secondmate's own child worktree (linked git worktree) even when unhealthy"
 }
 
+# A harness can hand a hook a payload pipe it never closes. An out-of-scope
+# checkout must decide it is inert without reading that pipe, or the guard
+# wedges the whole worker session on a turn it was never going to block. This
+# pins the ordering: scope first, payload second.
+test_out_of_scope_decided_without_reading_stdin() {
+  local base dir rc
+  base=$(make_primary_dir "$TMP_ROOT/stdin-order-base")
+  dir="$TMP_ROOT/stdin-order-wt"
+  make_crewmate_worktree_dir "$base" "$dir" >/dev/null
+  : > "$dir/state/task1.meta"
+  rc=$(CLAUDECODE=1 FM_HOME="$dir" \
+    fm_run_open_stdin_deadline 5 bash "$dir/bin/fm-turnend-guard.sh")
+  [ "$rc" != 124 ] || fail "hook blocked on an open stdin pipe in an out-of-scope child worktree"
+  expect_code 0 "$rc" "hook must exit 0 in an out-of-scope child worktree without reading stdin"
+  pass "fm-turnend-guard: out-of-scope worktree exits 0 without waiting on an unclosed stdin pipe"
+}
+
 # THE regression the plain git-init fixtures masked: a treehouse-leased secondmate
 # home is a genuine LINKED worktree (git-dir != git-common-dir), which the
 # remove-only form wrongly exempted. With the marker force-include, its own
@@ -2277,6 +2294,7 @@ test_hook_silent_in_idle_secondmate_home
 test_hook_secondmate_loop_guard_allows_retry
 test_hook_secondmate_reinvoke_recovery_loop
 test_hook_silent_in_secondmate_child_worktree
+test_out_of_scope_decided_without_reading_stdin
 test_hook_blocks_in_treehouse_leased_secondmate_home
 test_hook_exempts_linked_worktree_with_stray_marker
 test_hook_exempts_linked_worktree_with_non_ascii_marker

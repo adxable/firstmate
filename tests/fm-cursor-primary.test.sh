@@ -593,6 +593,28 @@ test_park_inert_in_child_worktree() {
   pass "cursor park: inert inside a child crewmate worktree"
 }
 
+# A harness can hand a hook a payload pipe it never closes. An out-of-scope
+# checkout must decide it is inert without reading that pipe, or the park guard
+# wedges the whole worker session on a turn it was never going to hold. This
+# pins the ordering: scope first, payload second.
+test_park_out_of_scope_decided_without_reading_stdin() {
+  local base child rc
+  base=$(make_primary_dir "$TMP_ROOT/stdin-order-base")
+  child="$TMP_ROOT/stdin-order-child"
+  fm_git_worktree "$base" "$child" fm/cursor-stdin-order-child
+  mkdir -p "$child/state"
+  : > "$child/AGENTS.md"
+  install_scripts "$child"
+  : > "$child/state/task1.meta"
+  write_arm_fixture "$child" actionable
+  rc=$(FM_HOME="$child" \
+    fm_run_open_stdin_deadline 5 env -u PI_CODING_AGENT FM_HOME="$child" \
+      bash "$child/bin/fm-turnend-guard-cursor.sh")
+  [ "$rc" != 124 ] || fail "park guard blocked on an open stdin pipe in an out-of-scope child worktree"
+  [ "$rc" -eq 0 ] || fail "park guard must exit 0 in an out-of-scope child worktree without reading stdin, got exit $rc"
+  pass "cursor park: out-of-scope worktree exits 0 without waiting on an unclosed stdin pipe"
+}
+
 test_park_ignores_malformed_payload() {
   local dir out
   dir=$(make_primary_dir "$TMP_ROOT/park-malformed")
@@ -701,6 +723,7 @@ test_park_stands_down_when_away_mode_activates_before_commit
 test_park_inert_without_session_lock
 test_park_stands_down_after_session_takeover
 test_park_inert_in_child_worktree
+test_park_out_of_scope_decided_without_reading_stdin
 test_park_ignores_malformed_payload
 test_sessionstart_emits_additional_context
 test_sessionstart_silent_in_child_worktree
