@@ -78,6 +78,9 @@ printf 'seed\n' > "$REPO/seed.txt"
 printf 'max_trees = 1\nroot = "./"\n' > "$REPO/treehouse.toml"
 git -C "$REPO" add -A
 git -C "$REPO" commit -qm "seed" || fail "could not seed the throwaway repo"
+# The commit the landed-reuse case stages a slot back onto, so that acquire has
+# a strict ancestor of the reset target to be reset forward FROM.
+SEED_SHA=$(git -C "$REPO" rev-parse HEAD)
 
 "$REAL_TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -n captain -c "$REPO" \
   || fail "could not start the private tmux server"
@@ -116,13 +119,14 @@ stage_holder_state() {
 # and 2 when neither resolved. The refusal is read from treehouse's own exit
 # status rather than from a settle timeout, so a refused acquire is observed as
 # a refusal and costs a second rather than the settle loop's full minute.
-# The marker is printed with a format string so the shell's echo of the typed
-# command, which still carries the literal %s, cannot be mistaken for output.
+# The status is bracketed so it matches exactly: the shell's echo of the typed
+# command carries the literal `rc=[%s]`, and `rc=[1]` cannot be confused with
+# the `rc=[127]` a pane whose PATH lacks the binary would report.
 refuse_in_pane() {
   local window=$1 i=0 text="" path=""
   "$REAL_TMUX" -L "$SOCKET" new-window -d -t "$SESSION:" -n "$window" -c "$REPO" || return 2
   "$REAL_TMUX" -L "$SOCKET" send-keys -t "$SESSION:$window" \
-    'treehouse get; printf "FM-GET-DONE rc=%s\n" "$?"' Enter || return 2
+    'treehouse get; printf "FM-GET-DONE rc=[%s]\n" "$?"' Enter || return 2
   while [ "$i" -lt 60 ]; do
     text=$("$REAL_TMUX" -L "$SOCKET" capture-pane -p -J -t "=$SESSION:=$window" 2>/dev/null)
     path=$("$REAL_TMUX" -L "$SOCKET" display-message -p -t "=$SESSION:=$window" '#{pane_current_path}' 2>/dev/null)
@@ -130,8 +134,9 @@ refuse_in_pane() {
       */.treehouse/*) printf '%s\n' "$text"; return 1 ;;
     esac
     case "$text" in
-      *"FM-GET-DONE rc=0"*) printf '%s\n' "$text"; return 1 ;;
-      *"FM-GET-DONE rc="[1-9]*) printf '%s\n' "$text"; return 0 ;;
+      *"FM-GET-DONE rc=[1]"*) printf '%s\n' "$text"; return 0 ;;
+      *"FM-GET-DONE rc=[0]"*) printf '%s\n' "$text"; return 1 ;;
+      *"FM-GET-DONE rc=["[0-9]*) printf '%s\n' "$text"; return 3 ;;
     esac
     i=$((i + 1))
     sleep 1
@@ -204,6 +209,8 @@ KILL_POOL_STATUS=$(pool_status_of "$KILL_WT")
   || fail "treehouse $TREEHOUSE_VERSION reports the killed pane's worktree as '$KILL_POOL_STATUS' rather than available, so the refusal below would be occupancy rather than the unlanded commit and this case proves nothing"
 UNLANDED_BANNER=$( (cd "$REPO" && treehouse get --lease --lease-holder fm-pool-termination-unlanded) 2>&1 )
 UNLANDED_RC=$?
+[ "$UNLANDED_RC" -eq 1 ] \
+  || fail "treehouse $TREEHOUSE_VERSION exited $UNLANDED_RC from get --lease against the slot carrying holder-kill's unlanded commit, rather than the exit 1 the record's unlanded row quotes; it printed: $UNLANDED_BANNER"
 [ "$UNLANDED_RC" -ne 0 ] \
   || fail "treehouse $TREEHOUSE_VERSION handed out the single-slot worktree to get --lease while it still carried holder-kill's unlanded commit; that reclaim resets the slot, so the unlanded-work protection v2.3.0 added in kunchenguid/treehouse#104 is gone and a dead task's committed work can be discarded at acquire time again"
 says "all 1 worktrees are in use or dirty (max_trees = 1)" "$UNLANDED_BANNER" \
@@ -216,6 +223,8 @@ UNLANDED_PANE=$(refuse_in_pane fm-unlanded)
 UNLANDED_PANE_RC=$?
 [ "$UNLANDED_PANE_RC" -ne 1 ] \
   || fail "the interactive treehouse get handed a pane the single-slot worktree while it still carried holder-kill's unlanded commit, even though get --lease refused it; the worker spawn path fm-spawn.sh uses can discard a dead task's committed work again"
+[ "$UNLANDED_PANE_RC" -ne 3 ] \
+  || fail "the pane could not run treehouse at all - a status other than the exit 1 the record's unlanded row quotes, which is what a fresh tmux shell whose PATH lacks the binary reports; nothing about the unlanded skip was measured. The pane showed: $UNLANDED_PANE"
 [ "$UNLANDED_PANE_RC" -eq 0 ] \
   || fail "the interactive treehouse get neither refused nor entered the worktree within the settle window, so the unlanded skip is unmeasured for the form fm-spawn.sh sends into a worker's pane"
 says "all 1 worktrees are in use or dirty (max_trees = 1)" "$UNLANDED_PANE" \
@@ -253,8 +262,6 @@ says "Leased worktree at" "$(cat "$LANDED_ERR")" \
   || fail "treehouse $TREEHOUSE_VERSION left the reused worktree on $(branch_of "$ACQ_WT") rather than detaching it; the dated record's claim that the destructive step happens at acquire time no longer describes this pool"
 [ "$(git -C "$ACQ_WT" rev-parse HEAD)" = "$LANDED_TIP" ] \
   || fail "treehouse $TREEHOUSE_VERSION reused the slot without resetting it to the landed default-branch tip, so the reset target the record names is no longer the one the acquire uses"
-[ ! -f "$ACQ_WT/holder-kill-work.txt" ] || [ "$LANDED_TIP" = "$KILL_SHA" ] \
-  || fail "treehouse $TREEHOUSE_VERSION reused the slot without resetting its content"
 (cd "$REPO" && treehouse return "$ACQ_WT" >/dev/null 2>&1) \
   || fail "could not release the contrast lease on $ACQ_WT"
 pass "landing that commit is the only change needed to get the same slot handed back out, reset to the default-branch tip"
@@ -263,15 +270,23 @@ pass "landing that commit is the only change needed to get the same slot handed 
 # The record's acquire row claims BOTH forms detach, and the interactive
 # `treehouse get` is the one fm-spawn.sh sends into the worker's own pane, so it
 # is pinned directly here rather than inferred from the lease form above.
-# The returned slot is already detached, which would leave a pane acquire
-# nothing to take away, so it is put back on a branch first. That branch sits at
-# the landed tip and carries no edits, so it is clean and its HEAD IS the reset
-# target: v2.3.0's narrowed rule permits the reuse, and branch position is the
-# only thing left for the acquire to detach.
-git -C "$ACQ_WT" checkout -q -b probe-interactive "$LANDED_TIP" \
-  || fail "could not put the returned slot on a clean branch at the landed tip, so the interactive acquire case cannot run"
+# The returned slot is already detached and already at the reset target, which
+# would leave a pane acquire nothing to take away and make every "after" check
+# true before it ran. It is put back on a branch at the SEED commit instead - a
+# strict ancestor of the reset target, so v2.3.0's "HEAD merged into the exact
+# reset target" rule still permits the reuse, while branch position, HEAD and
+# tree content all differ going in. That is what makes the forward reset this
+# case asserts falsifiable: a pool that detached the slot but stopped moving it
+# forward would leave a new task on a stale tree, and this is the only half of
+# the landed row that can catch it.
+git -C "$ACQ_WT" checkout -q -b probe-interactive "$SEED_SHA" \
+  || fail "could not put the returned slot on a clean branch at the seed commit, so the interactive acquire case cannot run"
 [ -z "$(git -C "$ACQ_WT" status --porcelain)" ] \
   || fail "the interactive acquire case started with uncommitted changes in $ACQ_WT, so the pool could skip it for dirtiness and a detach below would not be attributable to the acquire"
+[ "$(git -C "$ACQ_WT" rev-parse HEAD)" != "$LANDED_TIP" ] \
+  || fail "the interactive acquire case started with the slot already at the reset target, so its forward-reset assertions could not fail whatever the pool does"
+[ ! -f "$ACQ_WT/holder-kill-work.txt" ] \
+  || fail "the interactive acquire case started with the landed content already present, so its content assertion could not fail whatever the pool does"
 
 # --- the contrast that proves this lab drives the real return path -----------
 # The return path did NOT gain the acquire path's protection: an unlanded commit
@@ -285,7 +300,9 @@ ACQ_WT=$(acquire_in_pane fm-acquire) || fail "treehouse $TREEHOUSE_VERSION did n
 [ "$(branch_of "$ACQ_WT")" = HEAD ] \
   || fail "the interactive treehouse get handed the pane its worktree still on $(branch_of "$ACQ_WT") rather than detaching it; the record's claim that BOTH acquire forms detach before the caller can inspect the worktree no longer holds for the form fm-spawn.sh sends into the worker's own pane"
 [ "$(git -C "$ACQ_WT" rev-parse HEAD)" = "$LANDED_TIP" ] \
-  || fail "the interactive treehouse get reused the slot without resetting it to the landed default-branch tip, so the reset target the record names is not the one the interactive acquire uses"
+  || fail "the interactive treehouse get handed out the slot still at $(git -C "$ACQ_WT" rev-parse --short HEAD) rather than resetting it forward to the landed default-branch tip; a new task would start on a stale tree"
+[ -f "$ACQ_WT/holder-kill-work.txt" ] \
+  || fail "the interactive treehouse get moved HEAD without materializing the landed content, so the worktree the caller receives does not match the reset target the record names"
 says "Entered worktree at" "$(pane_text fm-acquire)" \
   || fail "the interactive treehouse get entered the worktree without the banner the record's landed row quotes; the pane showed: $(pane_text fm-acquire)"
 pass "the interactive treehouse get detaches the worktree it hands out as well, not only the non-interactive lease form"
@@ -318,8 +335,10 @@ printf 'uncommitted\n' > "$DIRTY_EXIT_WT/holder-exit-edit.txt"
 "$REAL_TMUX" -L "$SOCKET" send-keys -t "=$SESSION:=fm-exit-dirty" 'exit' Enter || fail "could not exit the dirty task subshell"
 sleep 5
 
-says "Clean worktree and return to pool?" "$(pane_text fm-exit-dirty)" \
-  || fail "treehouse $TREEHOUSE_VERSION no longer asks before discarding uncommitted changes on a subshell exit; the record's exit row says the drop waits on the operator, and an unattended close now costs the working tree without a prompt"
+says "Worktree has uncommitted changes." "$(pane_text fm-exit-dirty)" \
+  || fail "treehouse $TREEHOUSE_VERSION no longer names the uncommitted changes before asking; the record's dirty-exit row quotes that line and an operator loses the only warning that the answer costs the working tree. The pane showed: $(pane_text fm-exit-dirty)"
+says "Clean worktree and return to pool? [Y/n]" "$(pane_text fm-exit-dirty)" \
+  || fail "treehouse $TREEHOUSE_VERSION no longer asks before discarding uncommitted changes on a subshell exit, or no longer defaults the answer to yes; the record's dirty-exit row quotes the prompt with its [Y/n] default, and an unattended close now costs the working tree on different terms. The pane showed: $(pane_text fm-exit-dirty)"
 [ -f "$DIRTY_EXIT_WT/holder-exit-edit.txt" ] \
   || fail "treehouse $TREEHOUSE_VERSION discarded the uncommitted edit before the prompt was answered"
 [ "$(branch_of "$DIRTY_EXIT_WT")" != HEAD ] || [ -f "$DIRTY_EXIT_WT/holder-exit-dirty-work.txt" ] \
