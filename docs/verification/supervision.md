@@ -492,11 +492,12 @@ This command refreshes the record; rerun it after every Claude upgrade.
 
 Other primary harnesses are not applicable: the last-resort arm is reached only from `--claude` mode, and each of the other harnesses owns its own continuity path ([`watcher-continuity.md`](../watcher-continuity.md#ownership)).
 
-### Claude silence sentry survives session teardown, 2026-09-14
+### Claude silence sentry survives session teardown, 2026-09-15
 
 The sentry reports a home that stopped watching when no turn ever ends, so the one fact a fixture cannot confirm is that a sentry forked from a watcher a real Claude primary's auto-arm brought up outlives Claude tearing that process tree down.
 Without it the mechanism would be inert exactly when it is needed.
 The home, project, and watcher are isolated; the only processes this test signals are the ones its own home recorded.
+The test also replaces the reporter's notifier with a recorder through `FM_WEDGE_ALARM_EXEC` and holds the deadline an hour beyond the session, so running it posts no notification on the host.
 
 ```sh
 claude --version
@@ -505,19 +506,13 @@ FM_CLAUDE_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-silence-sentry-live-e2e.test.sh
 
 ```text
 2.1.247 (Claude Code)
-FM_TEST_BEGIN 2026-09-14T20:06:30Z tests/fm-silence-sentry-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
-ok - Claude 2.1.247 (Claude Code) live E2E: a watcher close inside the session armed the silence sentry over wake 1, and it outlived Claude tearing the session down, then reaped cleanly (pid 17244)
-FM_TEST_END 2026-09-14T20:07:41Z tests/fm-silence-sentry-live-e2e.test.sh exit=0 duration_ms=70844 gate_skip=false
+FM_TEST_BEGIN 2026-09-15T19:42:55Z tests/fm-silence-sentry-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+ok - Claude 2.1.247 (Claude Code) live E2E: a watcher close inside the session armed the silence sentry over wake 1, and it outlived Claude tearing the session down, then reaped cleanly (pid 32137)
+FM_TEST_END 2026-09-15T19:44:05Z tests/fm-silence-sentry-live-e2e.test.sh exit=0 duration_ms=70913 gate_skip=false
 ```
 
 Observed guarantee: the Stop-owned auto-arm brought up a real watcher, that watcher closed on a genuinely actionable wake while Claude was still alive, the close forked a sentry inside Claude's own process tree over a wake sequence present in this home's durable queue, and that process was still alive after the session had exited, having reported nothing about a session that was never silent, and was then reaped by name and proved gone.
-Against the pre-change tree the same command reports `not ok - Claude 2.1.247 (Claude Code): no watcher cycle in this session armed a sentry at its close`.
-
-That output was produced by `b336ccf`, before this branch's review rounds, so it is the last live evidence for the guarantee and not a measurement of the test as shipped.
-Two things in the test changed after that run.
-The notifier seam it sets is now `FM_WEDGE_ALARM_EXEC`, the one `bin/fm-supervise-daemon.sh` already owns, rather than the sentry's own `FM_SILENCE_ALARM_EXEC`, which existed and was honoured at that commit and no longer exists at all; a notification was suppressed in that run, but by a seam the shipped sentry no longer has.
-The surviving-process assertion now reads `ps -p <pid> -o command=` rather than the recorded identity field, which carries no matchable script name wherever `/proc` is readable.
-Neither touches what the run demonstrates, so the guarantee stands as proven against `b336ccf` and pending re-verification against the shipped test; the backlog task `dowod-sentry-po-rozbiorce` owns that opt-in re-run on this machine and refreshes this block.
+With the watcher's own close alone stopped from arming the sentry, the same command against the same tree and harness reports `not ok - Claude 2.1.247 (Claude Code): no watcher cycle in this session armed a sentry at its close`, so the pass is not vacuous.
 This command refreshes the record; rerun it after every Claude upgrade.
 
 Other primary harnesses are not applicable to this record for the same reason as the arm above: the reported shape is the Claude autoarm model's, where the watcher runs only between turns and the only unattended source of a turn is a Stop-driven rewake.
