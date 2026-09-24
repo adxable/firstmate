@@ -142,6 +142,8 @@ For the whole night: quota before and after (weekly and 5-hour), total tokens, e
 A turn-end notification may surface when the host starts each background wait; its current state reads as the declared pause, so acknowledge it and keep supervising.
 On the quota source's wake, read the quota again (`quota-axi --provider claude`): the source fires when any window drops below the threshold, so a 5-hour dip alone does not end the night, and the host's own weekly check between items still governs.
 Only when the weekly remaining is at or below the stop threshold, or any window is exhausted, interrupt the host with `bin/fm-control.sh <host-id> interrupt`, then steer it through `bin/fm-send.sh` to stop its running gnhf and close the night.
+The quota source fires once: after a wake dismissed as a 5-hour dip the backstop is spent and is not re-armed, so until the host's next between-item weekly check the running item is bounded only by its `--max-tokens` cap, and the night budget can be overrun by at most that one item.
+A weekly-only mid-item backstop is an open captain decision before the first night.
 A crashed host is resumed or relaunched through `stuck-crewmate-recovery`, never torn down.
 
 ## Morning
