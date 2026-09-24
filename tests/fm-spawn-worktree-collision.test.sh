@@ -123,6 +123,17 @@ case "${1:-}" in
     ;;
   send-keys)
     printf '%s\n' "$*" >> "${FM_FAKE_SENDLOG:?FM_FAKE_SENDLOG unset}"
+    # A spawn types a short line sourcing its staged launch file, so log the
+    # staged command too: that is what the pane actually runs.
+    for a in "$@"; do
+      case "$a" in
+        ". '"*"'")
+          staged=${a#". '"}
+          staged=${staged%"'"}
+          [ ! -f "$staged" ] || cat "$staged" >> "$FM_FAKE_SENDLOG"
+          ;;
+      esac
+    done
     exit 0
     ;;
   has-session|new-session) exit 0 ;;
