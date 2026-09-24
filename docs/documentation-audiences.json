@@ -269,6 +269,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/night-shift/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".greptile/rules.md",
       "audience": "maintainer-architecture"
     },
