@@ -1,0 +1,16 @@
+ok - fm-silence-sentry: reports a home whose wake no turn took, and starts nothing
+ok - fm-silence-sentry: reports a wake a turn claimed and never finished
+ok - fm-silence-sentry: silent once the handling turn acknowledges the wake
+ok - fm-silence-sentry: an idle home with no work never arms one
+ok - fm-silence-sentry: never arms underneath the away daemon
+ok - fm-silence-sentry: silent while this home's own watcher is live
+ok - fm-silence-sentry: an unwatched home is not reported until the deadline elapses
+ok - fm-silence-sentry: never arms over its own standing report
+ok - fm-silence-sentry: a new watcher cycle retires the previous silence record
+ok - fm-silence-sentry: arms over a fresh wake while the previous sentry lingers
+ok - fm-silence-sentry: one sentry per home, never a second
+ok - fm-silence-sentry: a report stands until a turn consumes it, then retires
+ok - fm-silence-sentry: the report deadline is floored at the watcher grace
+ok - fm-silence-sentry: the report deadline is settable per home
+ok - fm-silence-sentry: a sentry exits when the home it watches is deleted
+ok - fm-silence-sentry: a superseded sentry stands down and leaves the current one alone

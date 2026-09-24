@@ -1,0 +1,24 @@
+### PRE-FIX fm-install.sh (e4ca56c^), fake lavish-axi at 0.1.20, operator answers y
+firstmate installer
+
+Done:
+  - checkout: <tmp>/case-CbOfwW/checkout (already present)
+  - tools: every tool firstmate requires is already present
+  - GitHub: authenticated
+  - captain style rules: import=@<tmp>/case-CbOfwW/checkout/docs/styl-kapitanski.md  resolves=<tmp>/case-CbOfwW/checkout/docs/styl-kapitanski.md
+
+Nothing on this machine is outstanding.
+
+The toolchain check also reported this, which is not a step this installer
+recognizes as part of standing a machine up:
+  PRESENTATION_UNAVAILABLE: lavish-axi (requires >=0.1.77; install: npm install -g lavish-axi && lavish-axi setup hooks) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish
+
+Steps this installer cannot take for you:
+  - choose an agent harness, sign in to it, and launch it from the checkout:
+      cd <tmp>/case-CbOfwW/checkout
+      claude            # or: grok --trust, or: pi
+  - give that account access to the repositories the crew will work on.
+
+Nothing outside <tmp>/case-CbOfwW/checkout was written.
+### exit=0
+### npm.log:

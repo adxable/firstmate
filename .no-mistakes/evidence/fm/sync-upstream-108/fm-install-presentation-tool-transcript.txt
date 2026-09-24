@@ -1,0 +1,27 @@
+### fm-install.sh, fake lavish-axi at 0.1.20 (floor 0.1.77), operator answers y
+firstmate installer
+
+These tools are missing or below the version firstmate requires:
+  lavish-axi (requires >=0.1.77; install: npm install -g lavish-axi && lavish-axi setup hooks) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish
+
+Install them now? [y/N] 
+installing lavish-axi: npm install -g lavish-axi && lavish-axi setup hooks
+
+Done:
+  - checkout: <tmp>/template (already present)
+  - GitHub: authenticated
+  - captain style rules: import=@<tmp>/template/docs/styl-kapitanski.md  resolves=<tmp>/template/docs/styl-kapitanski.md
+
+Still to do on this machine:
+  - lavish-axi (requires >=0.1.77; install: npm install -g lavish-axi && lavish-axi setup hooks) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish
+
+Steps this installer cannot take for you:
+  - choose an agent harness, sign in to it, and launch it from the checkout:
+      cd <tmp>/template
+      claude            # or: grok --trust, or: pi
+  - give that account access to the repositories the crew will work on.
+
+Beyond the tools installed above, this run wrote nothing outside <tmp>/template.
+### exit=1
+### npm.log (installs the installer actually ran):
+npm install -g lavish-axi

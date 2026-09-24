@@ -1,0 +1,32 @@
+ok - fm-captain-style.sh: the printed line verifies after a verbatim paste
+ok - fm-captain-style.sh: a checkout under HOME gets a home-relative import
+ok - fm-captain-style.sh: a checkout outside HOME falls back to an absolute import
+ok - fm-captain-style.sh: the pasted import still resolves after HOME moves
+ok - fm-captain-style.sh: --check reports a dangling import and names the fix
+ok - fm-captain-style.sh: --check reports a missing import and prints what to paste
+ok - fm-captain-style.sh: --check reports an absent memory file without creating it
+ok - fm-captain-style.sh: an indented import is diagnosed as indentation
+ok - fm-captain-style.sh: a trailing space leaves a wired import wired
+ok - fm-captain-style.sh: a CR-terminated import is wired, not indented
+ok - fm-captain-style.sh: the different-checkout note follows the resolved target
+ok - fm-captain-style.sh: an unreadable memory file still yields the wiring, and --check refuses
+ok - fm-captain-style.sh: an import inside a code fence is not wiring
+ok - fm-captain-style.sh: a fenced example does not compete with a real import
+ok - fm-captain-style.sh: a tilde fence is an example, not wiring
+ok - fm-captain-style.sh: an unterminated fence runs to end of file
+ok - fm-captain-style.sh: an indented copy is context, not a competing import
+ok - fm-captain-style.sh: a fenced and an indented occurrence give one verdict
+ok - fm-captain-style.sh: competing imports are reported, not silently picked
+ok - fm-captain-style.sh: print mode asks for no paste when the import is already there
+ok - fm-captain-style.sh: print mode reports an import a moved checkout left behind
+ok - fm-captain-style.sh: print mode reports competing imports instead of declaring done
+ok - fm-captain-style.sh: an indented-only memory file gets exactly one remedy
+ok - fm-captain-style.sh: both modes return one exit status per memory state
+ok - fm-captain-style.sh: the printed remedy reaches wired from every state
+ok - fm-captain-style.sh: no mode writes to the memory file
+ok - fm-captain-style.sh: a symlinked memory file is read, never rewritten
+ok - fm-captain-style.sh: a missing style file is reported, not a refusal to look
+ok - fm-captain-style.sh: a --check that succeeds writes nothing to stderr
+ok - fm-captain-style.sh: success on stdout, every diagnostic on stderr
+ok - fm-captain-style.sh: --help documents the modes and a bad flag fails loudly
+ok - fm-captain-style.sh: --print-import and --check agree on the same line

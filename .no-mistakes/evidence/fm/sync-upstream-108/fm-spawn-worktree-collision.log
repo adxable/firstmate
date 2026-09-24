@@ -1,0 +1,9 @@
+ok - a worktree still owned by a live task refuses the spawn before the launch command is sent
+ok - a refusal takes its own endpoint back down, so re-running the same id works
+ok - a stale worktree record whose endpoint is gone does not block the slot
+ok - an uncontested spawn is unaffected by the ownership guard
+ok - the ownership refusal on a relaunch leaves the adopted endpoint and worktree exactly as they stood
+ok - the refusal on the default projected herdr layout closes no pane and reports what it left open
+ok - the refusal on a herdr spawn without projection closes no pane either
+ok - the isolation refusal still closes its projected pane, so a close is visible through this same instrumentation
+# all fm-spawn-worktree-collision tests passed

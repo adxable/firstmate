@@ -1,0 +1,84 @@
+merge 0f45fb7 parents: 3a6c9d2cdfec871f4473acbf7de67efe893c761a 31c47af563fab3d9a8e574a6a5d76281b92552e4
+parent1==base 3a6c9d2: 3a6c9d2
+parent2 == upstream 31c47af: 31c47af
+upstream commits 40c50ea..31c47af reachable unchanged from HEAD: 164 (all ancestors: 0 missing)
+
+fork-only files at base (absent in upstream 40c50ea) and their state at HEAD:
+  present .agents/skills/pipeline-retro/SKILL.md
+  present .agents/skills/software-factory/SKILL.md
+  present bin/fm-captain-style.sh
+  present bin/fm-guard-last-resort-arm.sh
+  present bin/fm-install.sh
+  present bin/fm-retro.sh
+  present bin/fm-silence-sentry.sh
+  present bin/fm-treehouse-capability-lib.sh
+  present bin/fm-treehouse-root.sh
+  present docs/styl-kapitanski.md
+  present tests/fm-captain-style.test.sh
+  present tests/fm-guard-last-resort-arm-live-e2e.test.sh
+  present tests/fm-install.test.sh
+  present tests/fm-retro.test.sh
+  present tests/fm-silence-sentry-live-e2e.test.sh
+  present tests/fm-silence-sentry.test.sh
+  present tests/fm-spawn-worktree-collision.test.sh
+  present tests/fm-tmux-target-fallback-live-e2e.test.sh
+  present tests/fm-tmux-target-proof.test.sh
+  present tests/fm-treehouse-pool-termination-live-e2e.test.sh
+  present tests/fm-treehouse-root.test.sh
+
+fork-modified upstream files at base: fork delta still present at HEAD? (diff base-vs-upstream40c50ea hunks lines / HEAD-vs-upstream31c47af)
+  .agents/skills/firstmate-coding-guidelines/SKILL.md before=1 now=1
+  .agents/skills/harness-adapters/references/harness/claude.md before=2 now=2
+  .agents/skills/secondmate-provisioning/SKILL.md before=2 now=2
+  .agents/skills/stuck-crewmate-recovery/SKILL.md before=2 now=2
+  .claude/settings.json before=3 now=3
+  .github/workflows/ci.yml before=21 now=12
+  AGENTS.md before=5 now=5
+  CONTRIBUTING.md before=4 now=4
+  README.md before=25 now=25
+  bin/backends/tmux.sh before=32 now=32
+  bin/fm-backend.sh before=28 now=28
+  bin/fm-cd-pretool-check.sh before=39 now=39
+  bin/fm-install-treehouse.sh before=20 now=20
+  bin/fm-lint.sh before=352 now=362
+  bin/fm-spawn.sh before=203 now=204
+  bin/fm-subagent-pretool-check.sh before=37 now=37
+  bin/fm-supervise-daemon.sh before=54 now=54
+  bin/fm-teardown.sh before=41 now=41
+  bin/fm-test-run.sh before=12 now=12
+  bin/fm-turnend-guard.sh before=36 now=36
+  bin/fm-wake-lib.sh before=77 now=77
+  bin/fm-watch.sh before=21 now=21
+  docs/architecture.md before=2 now=2
+  docs/cd-guard.md before=8 now=8
+  docs/configuration.md before=48 now=48
+  docs/documentation-audiences.json before=12 now=12
+  docs/examples/wedge-alarm before=4 now=4
+  docs/remote-secondmates.md before=1 now=1
+  docs/scripts.md before=3 now=3
+  docs/subagent-guard.md before=5 now=5
+  docs/supervision-protocols/claude.md before=1 now=1
+  docs/tmux-backend.md before=3 now=3
+  docs/turnend-guard.md before=6 now=6
+  docs/verification/runtime-backends.md before=128 now=128
+  docs/verification/supervision.md before=37 now=37
+  docs/watcher-continuity.md before=88 now=88
+  docs/wedge-alarm.md before=7 now=7
+  tests/fixtures.sh before=3 now=3
+  tests/fm-backend-herdr-launcher-workspace-e2e.test.sh before=18 now=18
+  tests/fm-backend-herdr-presentation-e2e.test.sh before=74 now=74
+  tests/fm-backend-herdr-workspace-per-home-e2e.test.sh before=28 now=28
+  tests/fm-backlog-atomicity.test.sh before=12 now=12
+  tests/fm-backlog-handoff.test.sh before=19 now=19
+  tests/fm-brief.test.sh before=141 now=141
+  tests/fm-cd-pretool-check.test.sh before=20 now=20
+  tests/fm-claude-stop-autoarm.test.sh before=63 now=63
+  tests/fm-daemon.test.sh before=35 now=35
+  tests/fm-herdr-lab.test.sh before=38 now=38
+  tests/fm-lint.test.sh before=295 now=314
+  tests/fm-public-followup.test.sh before=37 now=37
+  tests/fm-subagent-pretool-check.test.sh before=55 now=55
+  tests/fm-trace-context-spawn.test.sh before=7 now=7
+  tests/fm-turnend-guard.test.sh before=168 now=168
+  tests/herdr-test-safety.sh before=41 now=41
+  tests/lib.sh before=114 now=114

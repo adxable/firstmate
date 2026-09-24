@@ -1,0 +1,23 @@
+ok - a machine with no checkout gets one cloned, and the run reports it
+ok - the script piped into bash clones into the working directory it was run from
+ok - the script piped into bash inside an existing checkout reuses that checkout
+ok - the script piped into bash in a subdirectory reuses the checkout enclosing it
+ok - an existing checkout is used as it stands, with no clone
+ok - a second run over a finished machine changes nothing and exits 0
+ok - a fleet fact on a finished machine is relayed as a note and still exits 0
+ok - a tangled checkout gets a command to run, not a deferral to a lock holder
+ok - an absent tool is offered with bootstrap install command, then installed on consent
+ok - a tool below its version floor is upgraded by the same path as an absent one
+ok - the presentation tool below its floor is installed by the same path as any other
+ok - the toolchain check runs in full whatever the shell asked bootstrap to skip
+ok - a tool that can only be installed by hand holds back the every-tool-present line
+ok - a declined install installs nothing and stays an outstanding step
+ok - a run with no answer available installs nothing
+ok - --yes installs without asking, and only --yes does
+ok - unwired style rules are reported with the exact line and file, and nothing is written
+ok - wired style rules are reported as done
+ok - a memory file holding other content is reported on and left byte for byte
+ok - a target holding something else is refused and left alone
+ok - a style import reaching another checkout is an outstanding step, not a done one
+ok - a failing toolchain check shows what bootstrap reported before it gives up
+ok - the steps no script can take are listed on every run, including a finished one

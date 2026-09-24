@@ -1,0 +1,23 @@
+ok - classification separates recorded causes from unrecoverable ones
+ok - a single aborted run with a named reason is classed as explained
+ok - a task run twice is never clean even when every run completed
+ok - second-pass cost is excess over the median clean run
+ok - a task below the median contributes no negative cost
+ok - one cause is found across three differently named decision keys
+ok - self-reference and shared key naming are not reported as recurrence
+ok - unreadable input is reported instead of silently dropped
+ok - keyed blocked and indented rounds are read like upstream reads them
+ok - rounds upstream keys are kept whatever token shape carries them
+ok - a readable database with no records reports zero coverage not a failed read
+ok - a WAL database is still read when no sidecar allows a read-only open
+ok - a WAL database with a live writer is read directly
+ok - the copy fallback states the reason it actually observed
+ok - rows living only in the wal survive the copy fallback
+ok - empty step durations are reported by their observed state
+ok - the collapse figure counts dropped terms not comparisons
+ok - a symlinked status file is refused and named
+ok - the unexplained list announces the entries it cut
+ok - the run leaves the home and the database untouched
+ok - a wal database and its wal are byte-identical after a run
+ok - help needs no fleet state
+# all fm-retro tests passed

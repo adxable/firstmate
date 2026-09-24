@@ -1,0 +1,7 @@
+Bash 3.2 parse guard (bin/fm-lint.sh --parse-guard) vs real stock /bin/bash 3.2.57 -n, target c06c895
+tests/fm-omp-harness.test.sh: parse-guard rc=0  /bin/bash(3.2.57) -n rc=0
+tests/fm-pi-watch-extension.test.sh: parse-guard rc=0  /bin/bash(3.2.57) -n rc=0
+<tmp>/paired.sh   (paired backtick span with apostrophe+paren in $( <<EOF )): parse-guard rc=0  /bin/bash -n rc=0
+<tmp>/unpaired.sh (unpaired backtick in $( <<EOF )): parse-guard rc=1 "leaves a backtick open (an unpaired backtick)"  /bin/bash -n rc=2
+<tmp>/apos.sh     (unpaired apostrophe in $( <<EOF )): parse-guard rc=1 "leaves a single quote open (an unpaired apostrophe)"  /bin/bash -n rc=2
+Canonical set bin/*.sh bin/backends/*.sh tests/*.sh: parse-guard rc=0; /bin/bash 3.2 -n failures: 0
