@@ -11,8 +11,10 @@
 # it in the tool output of whatever it was doing - the one channel every harness
 # has. Supervision health is MODEL-AWARE (fm_watcher_supervision_verdict in
 # bin/fm-wake-lib.sh): under the Claude Stop auto-arm model the watcher runs only
-# between turns, so mid-turn a fresh beacon with no live watcher is healthy and
-# only a stale beacon (beyond FM_GUARD_GRACE) is a genuine lapse; under the Pi
+# between turns, so mid-turn a fresh beacon with no live watcher is healthy, and
+# a stale beacon is still healthy while fm_autoarm_midturn_healthy proves a
+# Claude auto-arm generation explains the gap; only a stale beacon with no such
+# generation is a genuine lapse; under the Pi
 # extension model the extension tears the watcher down and respawns it on every
 # actionable wake, so a fresh beacon with a genuinely unheld lock is healthy
 # while that live Pi session provably owns continuity; any held but unhealthy
@@ -36,7 +38,13 @@
 # The ordinary warning also stays silent for the supervision branch
 # actor (FM_SUPERVISION_ACTOR=branch), because that actor runs guarded commands
 # while handling exactly the queued rows its grant covers and can drain nothing
-# else. Always exits 0: the guard warns, it never blocks.
+# else. The watcher-down banner and its reminder stay silent for that actor too,
+# and its calls leave the episode state alone: the branch never owns watcher
+# continuity (Pi main or the supervision host restarts the watcher once the
+# branch's turn ends, and a successor cycle that closed on a newer wake mid-turn
+# is that host's normal gap), while the repair line names the primary's own arm
+# command, which under a supervision host's primary pin is the host itself or
+# the plain arm. Always exits 0: the guard warns, it never blocks.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -199,8 +207,11 @@ fi
 
 # No fresh watcher with tasks in flight is the dangerous state: emit a prominent,
 # bordered banner FIRST so it reads as an alarm, not a buried stderr line. Later
-# calls in the same episode get a one-line reminder only.
-if [ "$watcher_healthy" = false ]; then
+# calls in the same episode get a one-line reminder only. The supervision branch
+# actor neither sees nor advances an episode (header).
+if [ "$GUARD_ACTOR" = branch ]; then
+  :
+elif [ "$watcher_healthy" = false ]; then
   episode_key=$(fm_guard_stale_episode_key "$watcher_down_reason")
   episode_key=${episode_key%$'\n'}
   print_full_banner=0
@@ -219,6 +230,7 @@ if [ "$watcher_healthy" = false ]; then
     fix=$("$SCRIPT_DIR/fm-supervision-instructions.sh" \
       --read-only "$READ_ONLY" \
       --afk "$afk" \
+      --afk-mode "$(fm_afk_mode "$STATE")" \
       --x-mode "$x_mode" \
       --queue-pending "$queue_arg" \
       --repair-line 2>/dev/null || printf '%s\n' 'Repair missing watcher supervision according to the session-start operating block.')
