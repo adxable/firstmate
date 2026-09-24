@@ -35,7 +35,7 @@ state=${LAVISH_FAKE_STATE:?}
 emit() {  # <canonical-file> <status>
   printf 'session:\n'
   printf '  file: %s\n' "$1"
-  printf '  url: "http://127.0.0.1:4387/session/deadbeef"\n'
+  printf '  url: "http://127.0.0.1:4387/session/0123456789abcdef"\n'
   printf '  status: %s\n' "$2"
 }
 case "${1-}" in
@@ -69,7 +69,7 @@ case "${1-}" in
     if [ -s "$state/open" ]; then
       while IFS= read -r listed; do
         [ -n "$listed" ] || continue
-        printf '  %s,open,"http://127.0.0.1:4387/session/deadbeef",0\n' "$listed"
+        printf '  %s,open,"http://127.0.0.1:4387/session/0123456789abcdef",0\n' "$listed"
       done < "$state/open"
     fi
     exit 0
@@ -91,6 +91,9 @@ if [ -e "$state/refuse-reopen" ]; then
 fi
 rm -f -- "$state/user-ended"
 printf '%s\n' "$real" > "$state/open"
+jq -n --arg file "$real" \
+  '{sessions:{"0123456789abcdef":{file:$file,url:"http://127.0.0.1:4387/session/0123456789abcdef"}}}' \
+  > "$state/state.json"
 emit "$real" opened
 exit 0
 SH
@@ -106,7 +109,7 @@ run_board() {  # <home> <args...>
   PATH="$home/fakebin:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
-    LAVISH_FAKE_STATE="$home/lavish-state" \
+    LAVISH_FAKE_STATE="$home/lavish-state" LAVISH_AXI_STATE_DIR="$home/lavish-state" \
     "$BOARD" "$@"
 }
 
@@ -116,6 +119,7 @@ run_procevent() {  # <home> <command args...>
   PATH="$home/fakebin:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
+    LAVISH_AXI_STATE_DIR="$home/lavish-state" \
     "$ROOT/bin/fm-procevent.sh" "$@"
 }
 
@@ -261,6 +265,20 @@ test_build_refuses_malformed_payloads_before_touching_the_board() {
   [ "$rc" -ne 0 ] || fail "a fleet row without an explicit repo marker was accepted"
 
   write_valid_payload "$data"
+  jq '.underway = [{"id":"sample-task","repo":"sample","state":"working",
+    "kind":"ship","doing":"implementing"}]' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "an underway row without an explicit name marker was accepted"
+
+  for invalid_filed in "last Tuesday" "2026-13-01" "2026-08-14T99:30:00Z" "2026-02-29"; do
+    write_valid_payload "$data"
+    jq --arg filed "$invalid_filed" '.charted[0].filed = $filed' "$data" > "$data.tmp" \
+      && mv "$data.tmp" "$data"
+    set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+    [ "$rc" -ne 0 ] || fail "an invalid filed date was accepted: $invalid_filed"
+  done
+
+  write_valid_payload "$data"
   jq '.captains_call[0].allow_freeform = "yes"' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
   set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
   [ "$rc" -ne 0 ] || fail "a non-boolean renderer field was accepted"
@@ -386,6 +404,10 @@ fi
 if [ "${1:-}" != poll ]; then
   real=$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")
   printf '%s\n' "$real" > "$FM_HOME/order-open"
+  mkdir -p "$LAVISH_AXI_STATE_DIR"
+  jq -n --arg file "$real" \
+    '{sessions:{"0123456789abcdef":{file:$file,url:"http://127.0.0.1:14387/session/0123456789abcdef"}}}' \
+    > "$LAVISH_AXI_STATE_DIR/state.json"
   printf 'session:\n  status: opened\n'
   exit 0
 fi
@@ -405,6 +427,7 @@ SH
     FM_BEARINGS_BOARD_TEMPLATE="$ROOT/.agents/skills/bearings/assets/board-template.html" \
     REAL_LAVISH_ADAPTER="$ROOT/bin/fm-procevent-lavish.sh" \
     REAL_PROCEVENT="$ROOT/bin/fm-procevent.sh" ORDER_PROOF_HOLD="$hold" \
+    LAVISH_AXI_STATE_DIR="$home/lavish-state" \
     "$runtime/bin/fm-bearings-board.sh" build "$data" >/dev/null \
     || fail "the order-proof board build failed"
 

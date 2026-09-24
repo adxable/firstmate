@@ -63,11 +63,11 @@ make_fake_toolchain() {
   mkdir -p "$dir/fakebin-quota"
   fm_fake_exit0 "$fakebin" node tmux chrome-devtools-axi
   fm_fake_version_tool "$fakebin" gh-axi FM_FAKE_GH_AXI_VERSION 0.1.29
-  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.46
+  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.77
   # quota-axi sits in its own directory so a case can drop it from PATH without
   # writing a second toolchain: on macOS every newly created executable pays a
   # first-exec system check, which is most of what a fresh fake toolchain costs.
-  fm_fake_version_tool "$dir/fakebin-quota" quota-axi FM_FAKE_QUOTA_AXI_VERSION 0.1.29
+  fm_fake_version_tool "$dir/fakebin-quota" quota-axi FM_FAKE_QUOTA_AXI_VERSION 0.1.51
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -91,7 +91,7 @@ SH
   cat > "$fakebin/tasks-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' '0.2.4'
+  printf '%s\n' '0.2.6'
   exit 0
 fi
 if [ "${1:-}" = update ] && [ "${2:-}" = --help ]; then
@@ -167,7 +167,8 @@ run_script() {
     CLAUDE_CONFIG_DIR="$dir/home/.claude" \
     TMPDIR="${TMPDIR:-/tmp}" \
     FM_FAKE_NPM_LOG="$dir/npm.log" \
-    FM_FAKE_QUOTA_AXI_VERSION="${FM_FAKE_QUOTA_AXI_VERSION:-0.1.29}" \
+    FM_FAKE_QUOTA_AXI_VERSION="${FM_FAKE_QUOTA_AXI_VERSION:-0.1.51}" \
+    FM_FAKE_LAVISH_AXI_VERSION="${FM_FAKE_LAVISH_AXI_VERSION:-0.1.77}" \
     FM_BOOTSTRAP_NETWORK="${FM_TEST_BOOTSTRAP_NETWORK:-}" \
     bash "$script" "$@" 2>&1)
 }
@@ -258,7 +259,7 @@ out=$( (cd "$case_dir/checkout" && env -i \
   CLAUDE_CONFIG_DIR="$case_dir/home/.claude" \
   TMPDIR="${TMPDIR:-/tmp}" \
   FM_FAKE_NPM_LOG="$case_dir/npm.log" \
-  FM_FAKE_QUOTA_AXI_VERSION=0.1.29 \
+  FM_FAKE_QUOTA_AXI_VERSION=0.1.51 \
   bash -s -- --yes < "$case_dir/checkout/$INSTALLER_REL" 2>&1) )
 code=$?
 assert_absent "$case_dir/checkout/firstmate" \
@@ -282,7 +283,7 @@ out=$( (cd "$case_dir/checkout/docs" && env -i \
   CLAUDE_CONFIG_DIR="$case_dir/home/.claude" \
   TMPDIR="${TMPDIR:-/tmp}" \
   FM_FAKE_NPM_LOG="$case_dir/npm.log" \
-  FM_FAKE_QUOTA_AXI_VERSION=0.1.29 \
+  FM_FAKE_QUOTA_AXI_VERSION=0.1.51 \
   bash -s -- --yes < "$case_dir/checkout/$INSTALLER_REL" 2>&1) )
 code=$?
 assert_absent "$case_dir/checkout/docs/firstmate" \
@@ -407,6 +408,25 @@ assert_contains "$out" 'quota-axi (install: npm install -g quota-axi)' \
 assert_grep 'npm install -g quota-axi' "$case_dir/npm.log" \
   'below-floor tool: the approved upgrade did not run'
 pass 'a tool below its version floor is upgraded by the same path as an absent one'
+
+# --- the presentation tool below its floor -----------------------------------
+
+# Bootstrap reports lavish-axi as PRESENTATION_UNAVAILABLE rather than MISSING,
+# because a running session can work without it, but a machine being stood up
+# still gets it through the same consent and install path as any other tool.
+case_dir=$(new_case)
+wire_style "$case_dir"
+out=$(FM_FAKE_LAVISH_AXI_VERSION=0.1.20 run_installer "$case_dir" 'y
+')
+assert_contains "$out" 'missing or below the version firstmate requires' \
+  'below-floor presentation tool: the run did not report it'
+assert_contains "$out" 'lavish-axi (requires' \
+  'below-floor presentation tool: it was not offered with the other tools'
+assert_grep 'npm install -g lavish-axi' "$case_dir/npm.log" \
+  'below-floor presentation tool: the approved install did not run'
+assert_not_contains "$out" 'not a step this installer' \
+  'below-floor presentation tool: it was relayed as an unrecognized note instead'
+pass 'the presentation tool below its floor is installed by the same path as any other'
 
 # --- a shell that narrowed what the toolchain check runs ----------------------
 
