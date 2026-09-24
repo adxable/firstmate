@@ -1,0 +1,12 @@
+$ quota-axi --provider claude
+bin: ~/.nvm/versions/node/v22.21.1/bin/quota-axi
+description: Report local agent-provider quota windows for routing-aware agents
+generatedAt: "2026-09-24T22:18:04.540Z"
+quota[0]:
+exhaustion[0]:
+attention[1]{provider,scope,kind,detail,remedy}:
+  claude,all,auth_required,keychain_prompt_required · reason keychain_access_required,quota-axi --allow-keychain-prompt
+help[2]:
+  Tell your user: run `quota-axi --allow-keychain-prompt` once and approve Keychain access ("Always Allow") so quota-axi can read claude's live quota.
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+exit=1

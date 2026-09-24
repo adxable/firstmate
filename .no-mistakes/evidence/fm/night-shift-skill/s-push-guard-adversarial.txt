@@ -1,0 +1,7 @@
+git push origin HEAD:refs/heads/x -> exit=128
+git push --all origin -> exit=128
+git push --mirror origin -> exit=128
+git push /tmp/nightlab.zbhl/origin.git HEAD:refs/heads/bypass -> exit=0
+origin refs after:
+refs/heads/bypass
+refs/heads/main

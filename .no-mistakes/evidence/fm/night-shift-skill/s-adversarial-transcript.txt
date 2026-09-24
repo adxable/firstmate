@@ -1,0 +1,33 @@
+== item 2 (usage-limit): start from BASE
+gnhf exit=0
+branch=gnhf/add-a-docstring-to-a-b32b04 commits=0
+end-state:
+{
+  "status": "aborted",
+  "stopCondition": "maximum rate-limit wait exceeded (60000ms > 0ms)",
+  "agentError": "claude usage limit reached until 2026-09-21T14:13:20.000Z",
+  "iterations": 1,
+  "successCount": 0,
+  "failCount": 0,
+  "endedAt": "2026-09-24T22:17:47.148Z"
+}
+
+output log tail:
+                  git diff --stat 3c3ae6e51cfb..HEAD
+                  gh pr create
+
+  too much        git push no-mistakes:
+  to review?      https://github.com/kunchenguid/no-mistakes
+
+== adversarial push attempts under the night env
+git push -> exit=127
+git push origin HEAD:refs/heads/x -> exit=127
+git push --all origin -> exit=127
+git push /tmp/nightlab.zbhl/origin.git HEAD:refs/heads/bypass -> exit=127
+origin refs:
+refs/heads/main
+
+== version gate with an older gnhf first on PATH
+blocked: /tmp/nightlab.zbhl/oldgnhf/gnhf is 0.1.48, below 0.1.49
+ok: /Users/adix/.nvm/versions/node/v22.21.1/bin/gnhf 0.1.49
+ok: /opt/homebrew/bin/gnhf 0.1.49

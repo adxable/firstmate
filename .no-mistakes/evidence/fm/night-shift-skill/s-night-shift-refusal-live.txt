@@ -1,0 +1,3 @@
+$ claude -p "/night-shift" --setting-sources project --model sonnet --allowedTools "Bash(quota-axi:*)" Read  (isolated dir containing only the night-shift skill)
+Refusing the night: the Claude quota can't be read. It needs a one-time Keychain approval that only you can grant — run `quota-axi --allow-keychain-prompt` and approve Keychain access with "Always Allow", then invoke `/night-shift` again.
+exit=0
