@@ -255,12 +255,15 @@ try:
     print("other-session acquisition", "rc=" + str(refused.returncode), "stdout=" + repr(refused.stdout), "stderr=" + repr(refused.stderr), flush=True)
     require("lock_rc=1" in refused.stdout, "a different session id acquired a live owner's lock")
     require("session synthetic-same" in refused.stderr, "the refusal did not name the recorded session id")
-    same_stop = guard(same_env, "same-session stop", prefix="export CLAUDE_PID=$$; ")
-    require(same_stop.returncode == 2, "a same-session Stop must be held to the owner's own guard, not ended as a foreign session")
-    require("SUPERVISION IS OWNED BY ANOTHER LIVE SESSION" not in same_stop.stdout, "a same-session Stop took the foreign-owner exit")
+    # The different-session Stop runs first because the same-session Stop may
+    # restore supervision itself (the guard's last-resort arm), after which a
+    # foreign Stop has nothing left to report.
     other_stop = guard(same_env | {"CLAUDE_CODE_SESSION_ID": "synthetic-other"}, "other-session stop", prefix="export CLAUDE_PID=$$; ")
     require(other_stop.returncode == 0, "a different-session Stop must still end safely")
     require("SUPERVISION IS OWNED BY ANOTHER LIVE SESSION" in other_stop.stdout, "a different-session Stop lost the foreign-owner diagnostic")
+    same_stop = guard(same_env, "same-session stop", prefix="export CLAUDE_PID=$$; ")
+    require(same_stop.returncode == 2, "a same-session Stop must be held to the owner's own guard, not ended as a foreign session")
+    require("SUPERVISION IS OWNED BY ANOTHER LIVE SESSION" not in same_stop.stdout, "a same-session Stop took the foreign-owner exit")
     print("FIXED same-session id owns the lock; a different id is still foreign", flush=True)
     stop(same_owner)
 
