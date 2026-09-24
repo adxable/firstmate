@@ -82,6 +82,7 @@ Setup, once:
 2. Hook shim.
    gnhf's `claude -p` runs in this copy and would fire this worker's own busy and turn-end hooks on every iteration, which supervision reads as the host stopping.
    Create `NIGHT_DIR/bin/claude`, a shell script that runs `exec '<absolute path of command -v claude>' --setting-sources user,project "$@"`, make it executable, and put NIGHT_DIR/bin first on gnhf's PATH only.
+   This shim is the answer to V1, because per-iteration hooks are not absorbed under `paused:`; it is a launch flag scoping gnhf's inner Claude to user and project settings, not a configuration change.
 3. Record BASE=`git rev-parse HEAD` and the quota before (`quota-axi --provider claude`: weekly and 5-hour remaining).
    An unreadable quota means the night does not start: append `blocked:` and stop.
 4. Append once: `paused [at=<epoch>]: night loop, <n> items, until <morning YYYY-MM-DDTHH:MMZ>`.
@@ -139,7 +140,8 @@ For the whole night: quota before and after (weekly and 5-hour), total tokens, e
 ## During the night
 
 A turn-end notification may surface when the host starts each background wait; its current state reads as the declared pause, so acknowledge it and keep supervising.
-On the quota source's wake, interrupt the host with `bin/fm-control.sh <host-id> interrupt`, then steer it through `bin/fm-send.sh` to stop its running gnhf and close the night.
+On the quota source's wake, read the quota again (`quota-axi --provider claude`): the source fires when any window drops below the threshold, so a 5-hour dip alone does not end the night, and the host's own weekly check between items still governs.
+Only when the weekly remaining is at or below the stop threshold, or any window is exhausted, interrupt the host with `bin/fm-control.sh <host-id> interrupt`, then steer it through `bin/fm-send.sh` to stop its running gnhf and close the night.
 A crashed host is resumed or relaunched through `stuck-crewmate-recovery`, never torn down.
 
 ## Morning
