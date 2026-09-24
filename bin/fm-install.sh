@@ -48,7 +48,9 @@
 # is still missing. A second tool list here would drift out of step with that
 # one, and a tool that is installed but below its floor is reported as MISSING
 # by bootstrap, so it is upgraded here by the same path as an absent one with no
-# separate rule.
+# separate rule. The presentation tool is the one exception to MISSING: bootstrap
+# reports it as PRESENTATION_UNAVAILABLE because a live session can work without
+# it, but standing a machine up still installs it, so it takes the same path.
 #
 # Consent is required before anything is installed onto the machine, and the
 # quiet path is the one that installs nothing: a run with no answer available -
@@ -282,11 +284,11 @@ run_detect() {
 }
 
 missing_tools() {
-  awk '$1 == "MISSING:" { print $2 }' | awk '!seen[$0]++'
+  awk '$1 == "MISSING:" || $1 == "PRESENTATION_UNAVAILABLE:" { print $2 }' | awk '!seen[$0]++'
 }
 
 missing_lines() {
-  grep '^MISSING: ' || true
+  grep -E '^(MISSING|PRESENTATION_UNAVAILABLE): ' || true
 }
 
 manual_lines() {
@@ -301,7 +303,7 @@ manual_lines() {
 # as setup steps, and only they decide the exit status. An allowlist rather than
 # a list of prefixes to skip, so the next line bootstrap learns to report lands
 # on the harmless side.
-SETUP_LINE_RE='^(MISSING|MISSING_MANUAL|BACKEND_INVALID|TANGLE): |^NEEDS_GH_AUTH$'
+SETUP_LINE_RE='^(MISSING|MISSING_MANUAL|PRESENTATION_UNAVAILABLE|BACKEND_INVALID|TANGLE): |^NEEDS_GH_AUTH$'
 
 backend_lines() {
   grep '^BACKEND_INVALID: ' || true
@@ -355,7 +357,7 @@ INSTALL_RAN=0
 CONSENT_DECLINED=0
 if [ -n "$MISSING" ]; then
   say 'These tools are missing or below the version firstmate requires:'
-  printf '%s\n' "$DETECT" | missing_lines | sed 's/^MISSING: /  /'
+  printf '%s\n' "$DETECT" | missing_lines | sed -E 's/^(MISSING|PRESENTATION_UNAVAILABLE): /  /'
   say
   if [ "$ASSUME_YES" -eq 1 ]; then
     INSTALL_RAN=1
@@ -399,7 +401,7 @@ if [ -n "$MISSING" ]; then
   fi
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    add_todo "${line#MISSING: }"
+    add_todo "${line#*: }"
   done < <(printf '%s\n' "$DETECT" | missing_lines)
 fi
 
