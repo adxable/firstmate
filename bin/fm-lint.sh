@@ -57,7 +57,7 @@
 # closing paren textually and keeps lexing quote, escape, and paren state straight
 # through any heredoc body nested inside it, so a body that leaves that state
 # unbalanced swallows the rest of the script. The guard reports the bodies that
-# break, not the construct; two shapes it does not model are noted at the guard.
+# break, not the construct; the one shape it does not model is noted at the guard.
 #
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
@@ -627,21 +627,16 @@ fi
 # cross-version proof; this guard turns the same defect into a local, explained
 # failure before the push.
 #
-# Known boundary: the lexer below deliberately does not model backtick command
-# substitution. An unpaired backtick in a nested heredoc body carries the same
-# Bash 3.2 hazard as an unpaired apostrophe, confirmed against 3.2.57: the body
-# opens a backtick substitution that consumes the rest of the file. It is left
-# unmodelled because no script in the canonical file set uses backticks as shell
-# command substitution and ShellCheck's SC2006 keeps it that way, while many
-# nested heredoc bodies carry literal backticks as Markdown code spans and
-# JavaScript template literals, whose `${...}`, quotes and parens would then be
-# re-lexed as shell and reported as breaks that Bash 3.2 parses fine. A guard
-# that cries wolf on working scripts gets switched off, which would cost more
-# than the case it covers. The macos-stock-bash CI job runs
-# `/bin/bash -n` over the whole `--list-files` inventory and still catches a real
-# backtick break, so this guard is defence in depth rather than the backstop.
+# Backticks: Bash 3.2 scans a backtick span inside the substitution only for its
+# closing backtick, so quotes and parens inside a paired span change nothing,
+# confirmed against 3.2.57. The lexer below models exactly that: a paired span is
+# opaque, which keeps the Markdown code spans and JavaScript template literals
+# these bodies legitimately carry from being re-lexed as shell, and an unpaired
+# backtick is reported, because the span it opens consumes the rest of the file.
+# The macos-stock-bash CI job runs `/bin/bash -n` over the whole `--list-files`
+# inventory, so this guard is defence in depth rather than the backstop.
 #
-# Second known boundary: a heredoc is analysed only when the scan reads every
+# Known boundary: a heredoc is analysed only when the scan reads every
 # character of its delimiter word as a literal one. Bash applies only quote removal
 # to a delimiter word and expands nothing, so however such a word is spelled - bare,
 # backslash-escaped, single- or double-quoted, or any mix of those - the terminator
@@ -685,6 +680,17 @@ sub lex_line {
       $$quote_ref = '' if $char eq "'";
       next;
     }
+    # A backtick span is opaque to Bash 3.2's scan: it looks only for the closing
+    # backtick, so quotes, parens and `#` inside it change nothing. The state
+    # carries the quote the span opened in, which the closing backtick restores.
+    if (substr($$quote_ref, 0, 1) eq '`') {
+      if ($char eq '\\') {
+        $i++;
+      } elsif ($char eq '`') {
+        $$quote_ref = substr($$quote_ref, 1);
+      }
+      next;
+    }
     if ($char eq '\\') {
       $i++;
       next;
@@ -706,6 +712,10 @@ sub lex_line {
     # skip the rest of the line and miss the state-opening characters after it.
     if ($char eq '#' && $$quote_ref eq '' && ($i == 0 || substr($line, $i - 1, 1) =~ /[ \t]/)) {
       last;
+    }
+    if ($char eq '`' && ($$quote_ref eq '' || $$quote_ref eq '"')) {
+      $$quote_ref = '`' . $$quote_ref;
+      next;
     }
     # `$'...'` is ANSI-C quoting, where a backslash escapes the closing quote, so it
     # cannot be lexed as a plain single-quoted string. It is carried in the shared
@@ -826,6 +836,7 @@ sub reason {
   return 'leaves a single quote open (an unpaired apostrophe)' if $quote eq "'";
   return 'leaves a double quote open' if $quote eq '"';
   return "leaves a \$'...' quote open" if $quote eq "\$'";
+  return 'leaves a backtick open (an unpaired backtick)' if substr($quote, 0, 1) eq '`';
   return 'closes a quote that was already open' if $quote ne $entry_quote;
   return 'leaves an unbalanced parenthesis';
 }
@@ -924,13 +935,12 @@ fm-lint.sh: Bash 3.2 (stock macOS /bin/bash) resolves $( ... ) by scanning for t
   A modern Bash parses the same file cleanly, so this breaks only on macOS.
   Fix the shape rather than the prose - drop the $( ) wrapper, for example
   `IFS= read -r -d '' VAR <<EOF || true` - so no future wording can reintroduce it.
-  Known boundary: this check does not model backtick command substitution. An
-  unpaired backtick in such a body breaks Bash 3.2 exactly like an apostrophe, but
-  modelling it would re-lex the Markdown code spans and JavaScript template
-  literals these bodies legitimately carry and report breaks that Bash 3.2 parses
-  fine. The macos-stock-bash CI job parses every file in --list-files under stock
-  /bin/bash and still catches a real backtick break.
-  Second boundary: a heredoc is checked only when every character of its delimiter
+  Backticks: a paired backtick span is opaque to Bash 3.2, so quotes and parens
+  inside Markdown code spans and JavaScript template literals are not counted,
+  while an unpaired backtick breaks Bash 3.2 exactly like an apostrophe and is
+  reported. The macos-stock-bash CI job parses every file in --list-files under
+  stock /bin/bash as the authoritative cross-version check.
+  Known boundary: a heredoc is checked only when every character of its delimiter
   word reads as a literal one, however it is quoted or escaped. A word carrying an
   unquoted $ or a backtick, or a quote the line never closes, is skipped, its body
   read verbatim and unchecked, and scanning resumes where the word reappears.

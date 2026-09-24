@@ -1425,6 +1425,13 @@ fm_lint_write_unsafe_partly_quoted_delimiter() {  # <path>
   printf '%s\n' 'value=$(cat <<EO"F"' "it is firstmate's check" 'EOF' ')' 'printf "tail\n"' > "$1"
 }
 
+# An unpaired backtick opens a span Bash 3.2 scans to the end of the file, the
+# same way an unpaired apostrophe opens a quote.
+fm_lint_write_unsafe_backtick() {  # <path>
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' "value=\$(cat <<'EOF'" 'a stray ` backtick' 'EOF' ')' 'printf "tail\n"' > "$1"
+}
+
 fm_lint_write_unsafe_paren() {  # <path>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'value=$(cat <<EOF' 'a stray ) paren' 'EOF' ')' 'printf "tail\n"' > "$1"
@@ -1455,7 +1462,9 @@ fm_lint_write_unsafe_below_skipped_apostrophe() {  # <path>
 
 # The safe shapes: quotes that already pair inside the nesting, an apostrophe in
 # an ordinary heredoc, a here-string, an arithmetic left shift, a backtick
-# substitution, a `$'...'` that closes on a later line, an apostrophe behind a
+# substitution, an apostrophe and a paren inside a paired backtick span (the
+# JavaScript template-literal shape, which Bash 3.2 scans only for its closing
+# backtick), a `$'...'` that closes on a later line, an apostrophe behind a
 # real comment, and the delimiter forms the guard reads and the ones it skips.
 # Bash 3.2 runs every one to completion, so the guard must stay quiet.
 #
@@ -1482,6 +1491,9 @@ fm_lint_write_safe_shapes() {  # <directory>
   # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
   printf '%s\n' 'value=`cat <<EOF' "it is firstmate's check" 'EOF' '`' 'printf "tail\n"' \
     > "$1/backtick.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' "value=\$(cat <<'EOF'" 'throw new Error(`the host'"'"'s cycle (${rows}`);' 'EOF' ')' \
+    'printf "tail\n"' > "$1/template-literal.sh"
   # Bash applies only quote removal to a delimiter word, so each of these closes on
   # the literal word itself rather than on anything it would expand to. The guard
   # skips them for being outside the three readable forms, which must leave it
@@ -1519,6 +1531,7 @@ test_parse_guard_flags_the_bash32_break() {
   mkdir -p "$tmp"
   fm_lint_write_unsafe_apostrophe "$tmp/apostrophe.sh"
   fm_lint_write_unsafe_paren "$tmp/paren.sh"
+  fm_lint_write_unsafe_backtick "$tmp/backtick.sh"
   fm_lint_write_unsafe_semicolon_comment "$tmp/semicolon-comment.sh"
   fm_lint_write_unsafe_escaped_delimiter "$tmp/escaped-delimiter.sh"
   fm_lint_write_unsafe_partly_quoted_delimiter "$tmp/partly-quoted-delimiter.sh"
@@ -1539,6 +1552,12 @@ test_parse_guard_flags_the_bash32_break() {
   "$LINT" --parse-guard "$tmp/paren.sh" >/dev/null 2>&1 || rc=$?
   [ "$rc" -ne 0 ] \
     || fail "the parse guard passed a heredoc that leaves a paren unbalanced inside \$( )"
+
+  rc=0
+  out=$("$LINT" --parse-guard "$tmp/backtick.sh" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "the parse guard passed a heredoc that leaves a backtick open inside \$( )"
+  assert_contains "$out" "backtick open" "the parse guard did not name the unpaired backtick"
 
   rc=0
   "$LINT" --parse-guard "$tmp/semicolon-comment.sh" >/dev/null 2>&1 || rc=$?
@@ -1574,6 +1593,8 @@ test_parse_guard_flags_the_bash32_break() {
       && fail "fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/paren.sh" 2>/dev/null \
       && fail "paren fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
+    "$bash32" -n "$tmp/backtick.sh" 2>/dev/null \
+      && fail "backtick fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/semicolon-comment.sh" 2>/dev/null \
       && fail "\`;#\` fixture assumed to break Bash 3.2 parsed cleanly under $bash32"
     "$bash32" -n "$tmp/escaped-delimiter.sh" 2>/dev/null \
