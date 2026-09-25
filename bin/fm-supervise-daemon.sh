@@ -103,10 +103,6 @@
 #                                   while the away-posture record exists
 #          FM_ESCALATE_BATCH_SECS   buffer window for batched escalation
 #                                   digests; 0 = flush immediately (default 90)
-#          FM_ESCALATE_DIGEST_MAX_BYTES byte ceiling for one injected digest,
-#                                   operational envelope included (default 900,
-#                                   below the 1022 bytes a macOS terminal read
-#                                   carries; values under 256 use the default)
 #          FM_HEARTBEAT_SCAN_SECS   cadence for the catch-all status scan
 #                                   (default 300)
 #          FM_HOUSEKEEPING_TICK     seconds between housekeeping passes while
@@ -210,7 +206,7 @@ FM_SUPERVISOR_SUPPORTED_BACKENDS="tmux herdr"
 INJECT_SKIP_DEFAULT="heartbeat"
 STALE_ESCALATE_SECS_DEFAULT=240
 ESCALATE_BATCH_SECS_DEFAULT=90
-ESCALATE_DIGEST_MAX_BYTES_DEFAULT=900
+ESCALATE_DIGEST_MAX_BYTES=900
 HEARTBEAT_SCAN_SECS_DEFAULT=300
 HOUSEKEEPING_TICK_DEFAULT=15
 # Max time a buffered escalation may sit undelivered before the daemon retries
@@ -722,17 +718,6 @@ escalate_add() {  # <state> <distilled-item>
 # flush. A single event longer than the ceiling is cut at a UTF-8 boundary and
 # marked with the number of bytes it lost; its status log keeps the full text.
 
-# _escalate_digest_max_bytes: the configured ceiling, or the default when it is
-# not a number of at least 256 bytes (the wrapper alone needs about 130).
-_escalate_digest_max_bytes() {
-  local max=${FM_ESCALATE_DIGEST_MAX_BYTES:-}
-  case "$max" in
-    ''|*[!0-9]*) max=$ESCALATE_DIGEST_MAX_BYTES_DEFAULT ;;
-    *) [ "$max" -ge 256 ] 2>/dev/null || max=$ESCALATE_DIGEST_MAX_BYTES_DEFAULT ;;
-  esac
-  printf '%s' "$max"
-}
-
 # _escalate_digest_wrap: the single-line digest text for <items>, the first
 # <shown> of <total> buffered events.
 _escalate_digest_wrap() {  # <shown> <total> <items>
@@ -779,8 +764,7 @@ _utf8_prefix() {  # <text> <max-bytes> <out-var>
 # escalate_digest: the next digest from the head of <buf>. Sets ESCALATE_DIGEST
 # and ESCALATE_DIGEST_EVENTS (how many leading buffer lines it carries).
 escalate_digest() {  # <buf>
-  local buf=$1 max total item='' items='' candidate shown=0 room cut=''
-  max=$(_escalate_digest_max_bytes)
+  local buf=$1 max=$ESCALATE_DIGEST_MAX_BYTES total item='' items='' candidate shown=0 room cut=''
   total=$(( $(wc -l < "$buf" 2>/dev/null || echo 0) ))
   [ "$total" -gt 0 ] || total=1
   while IFS= read -r item || [ -n "$item" ]; do

@@ -1308,7 +1308,7 @@ Each away-supervisor payload was typed with `fm_backend_herdr_send_literal`, rea
 Above 800 characters a single read collapses into one `[Pasted text #N]` placeholder, which the proof accepts.
 From 1023 bytes on, Claude kept only the last partial read, or some placeholders plus that read, so the submit proof refused Enter and cleared the composer.
 A 5,153-character digest reproduced the away daemon's `inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)` on every attempt.
-`FM_ESCALATE_DIGEST_MAX_BYTES` defaults to 900 bytes for this reason.
+The daemon caps each digest at 900 bytes for this reason.
 
 Claude also wraps typed input inside its rule pair so that a row can start with `#402` or end with the digest's ` | ` separator.
 Before the classifier treated rows inside the closed pair as input, such a composer read `unknown` or yielded only its first row, and the proof refused it:

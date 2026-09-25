@@ -182,7 +182,7 @@ Classify each wake this way:
 
 Escalations are buffered up to `FM_ESCALATE_BATCH_SECS` (default 90s; 0 = immediate) and flushed as single-line digests prefixed with the current operational prefix, carrying pre-read status summaries and a recommended action.
 The single-line format makes the submission unambiguous across harnesses, and the operational prefix lets firstmate distinguish it from a real captain message.
-Each digest fits one terminal read (`FM_ESCALATE_DIGEST_MAX_BYTES`, default 900 bytes), because a longer typed line reaches Claude Code in pieces it does not keep whole.
+Each digest fits one terminal read (at most 900 bytes), because a longer typed line reaches Claude Code in pieces it does not keep whole.
 Events that do not fit follow in the next digest, which says how many more are coming, and an event cut to fit ends with `[+N bytes]`: read its status log for the rest before acting on it.
 
 ### Injection hardening
