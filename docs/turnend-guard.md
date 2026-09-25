@@ -74,6 +74,11 @@ The auto-arm hook additionally exports its resolved `FM_GUARD_GRACE` when it for
 `bin/fm-turnend-guard.sh`'s daemon-ownership branch (`fm_afk_daemon_owns_supervision`, above, covering both away and quiet mode) also derives its beacon grace from `fm_poll_derived_grace` rather than falling back to the bare 300-second default, for the same reason: the daemon's watcher-restart cadence there is not a fixed poll loop, so a flat grace misreads a daemon that is genuinely still cycling as down.
 Every other direct `FM_GUARD_GRACE` reader (`bin/fm-guard.sh`, the strict-watcher checks in `bin/fm-turnend-guard.sh` and its harness-specific wrappers, `bin/fm-wake-lib.sh`) still falls back to the bare 300-second default unless `FM_GUARD_GRACE` is set explicitly in the environment.
 
+Every one of those graces is compared against `fm_beacon_age` in `bin/fm-wake-lib.sh`, which counts from the later of the beacon's mtime and the last system wake rather than from the mtime alone.
+No process runs while the machine sleeps but the wall clock keeps moving, so plain mtime age would read a live watcher as stale right after a wake and make the arm refuse it; a watcher hung while the machine is awake still reads stale once it has been awake past the grace.
+The wake time comes from `kern.waketime` on macOS; Linux exposes no last-wake timestamp, so there, and whenever the wake time is missing, unparseable, or in the future, the age falls back to plain mtime age, never to fresh.
+`tests/fm-beacon-age.test.sh` pins both directions.
+
 ## Harness integrations
 
 - Claude registers two `Stop` hooks in `.claude/settings.json`, both anchored through `CLAUDE_PROJECT_DIR`: `bin/fm-turnend-guard.sh --claude` with `timeout: 180`, and `bin/fm-claude-stop-autoarm.sh` with `asyncRewake: true` and `timeout: 28800`.

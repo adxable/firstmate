@@ -109,6 +109,47 @@ fm_path_age() {
   echo $(( $(date +%s) - m ))
 }
 
+# fm_last_wake_epoch
+# Print the epoch second of this machine's last wake from system sleep, or
+# fail when no trustworthy source exists. FM_LAST_WAKE_EPOCH, when set (even
+# empty), replaces the platform source so tests can inject a wake time. macOS
+# reads kern.waketime, which every wake updates, DarkWake included. Linux has
+# no last-wake timestamp: CLOCK_BOOTTIME minus CLOCK_MONOTONIC is the total
+# time suspended since boot, which cannot say whether a suspend happened before
+# or after a given beat, so using it could hide a watcher hung while awake.
+fm_last_wake_epoch() {
+  local raw sec
+  if [ -n "${FM_LAST_WAKE_EPOCH+set}" ]; then
+    sec=$FM_LAST_WAKE_EPOCH
+  elif [ "$_FM_UNAME" = Darwin ]; then
+    raw=$(/usr/sbin/sysctl -n kern.waketime 2>/dev/null) || return 1
+    sec=$(printf '%s\n' "$raw" | sed -n 's/^{ *sec *= *\([0-9][0-9]*\) *,.*/\1/p')
+  else
+    return 1
+  fi
+  case "$sec" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$sec"
+}
+
+# fm_beacon_age <path>
+# Liveness age of a watcher beacon: seconds since the later of its mtime and the
+# last system wake. No process runs while the machine sleeps but the wall clock
+# keeps moving, so plain mtime age reads a live watcher as stale right after a
+# wake; counting from the wake keeps a genuinely hung watcher visible once it
+# has been awake past the grace. A missing, unparseable, or future wake time
+# falls back to plain mtime age, never to fresh. Missing path: 999999, as
+# fm_path_age. Every reader that turns beacon age into a live or stale verdict
+# goes through this helper.
+fm_beacon_age() {
+  local path=$1 m now wake
+  m=$(fm_path_mtime "$path") || { echo 999999; return; }
+  now=$(date +%s)
+  wake=$(fm_last_wake_epoch 2>/dev/null) || wake=0
+  [ "$wake" -le "$now" ] || wake=0
+  [ "$wake" -le "$m" ] || m=$wake
+  echo $(( now - m ))
+}
+
 # fm_poll_derived_grace [poll-seconds]
 # Default guard-grace derivation: max(300, poll + 60). A watcher touches its
 # liveness beacon once per poll cycle, so a fixed 300s grace stops correctly
@@ -169,7 +210,7 @@ fm_watcher_healthy() {
   fm_pid_alive "$pid" || return 1
   fm_watcher_lock_matches_pid "$state" "$watch_path" "$pid" "$home" || return 1
   identity=$FM_WATCHER_MATCHED_IDENTITY
-  age=$(fm_path_age "$beat")
+  age=$(fm_beacon_age "$beat")
   [ "$age" -lt "$grace" ] || return 1
   # shellcheck disable=SC2034 # Read by callers after fm_watcher_healthy returns.
   FM_WATCHER_HEALTHY_PID=$pid
@@ -410,7 +451,7 @@ fm_watcher_supervision_verdict() {
   FM_WATCHER_VERDICT_OK=false
   FM_WATCHER_VERDICT_REASON=stale-beacon
   beat="$state/.last-watcher-beat"
-  age=$(fm_path_age "$beat")
+  age=$(fm_beacon_age "$beat")
   case "$age" in
     ''|*[!0-9]*) ;;
     *) [ "$age" -lt "$grace" ] && fresh=true ;;
@@ -1551,7 +1592,7 @@ fm_autoarm_arming_stuck() {  # <state-dir> [grace]
   case "$grace" in
     ''|*[!0-9]*|0) grace=300 ;;
   esac
-  [ "$(fm_path_age "$state/.last-watcher-beat")" -ge "$grace" ] || return 1
+  [ "$(fm_beacon_age "$state/.last-watcher-beat")" -ge "$grace" ] || return 1
   # Same OSTYPE switch bin/fm-watch-arm.sh derives its own confirm window from,
   # and the same bounded attempt count bin/fm-claude-stop-autoarm.sh accepts, so
   # all three move together.

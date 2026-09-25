@@ -85,6 +85,8 @@ fm_supervision_status() {
     if [ -n "$m" ]; then
       age=$(( $(date +%s) - m ))
       FM_SUP_BEACON_DESC="${age}s ago"
+      # Freshness counts from the last system wake when bin/fm-wake-lib.sh is loaded.
+      ! command -v fm_beacon_age >/dev/null 2>&1 || age=$(fm_beacon_age "$beat")
       [ "$age" -lt "$grace" ] && FM_SUP_WATCHER_FRESH=true
     else
       # shellcheck disable=SC2034 # Read by callers (fm-guard.sh) after sourcing.
