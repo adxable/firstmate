@@ -1,0 +1,2 @@
+wake 45s ago, beacon 950s: arming_stuck=no
+wake 400s ago, beacon 950s: arming_stuck=YES (Stop hook reports auto-arm FAILED)

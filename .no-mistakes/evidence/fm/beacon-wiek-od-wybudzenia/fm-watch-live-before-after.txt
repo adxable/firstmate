@@ -1,0 +1,17 @@
+== BASE (before fix): wake 45s ago, beacon slept 903s | wake=inject:45 | beacon mtime 950s ago | live holder pid 43754
+   exit=1  output: watcher: lock held by live pid 43754 but heartbeat is stale for 951s (>300s); inspect or stop that watcher before re-arming.
+== TARGET: wake 45s ago, beacon slept 903s | wake=inject:45 | beacon mtime 950s ago | live holder pid 44220
+   exit=0  output: watcher: already running pid 44220
+== TARGET adversarial: wake 400s ago, watcher silent since (hung while awake) | wake=inject:400 | beacon mtime 950s ago | live holder pid 44484
+   exit=1  output: watcher: lock held by live pid 44484 but heartbeat is stale for 400s (>300s); inspect or stop that watcher before re-arming.
+/tmp/fm-beacon-live.KcF1/drive.sh: line 8: now--3600: arithmetic syntax error in expression (error token is "3600")
+== TARGET adversarial: future wake time (bogus source) | wake=inject:-3600 | beacon mtime 950s ago | live holder pid 44743
+   exit=1  output: watcher: lock held by live pid 44743 but heartbeat is stale for 950s (>300s); inspect or stop that watcher before re-arming.
+== TARGET real kern.waketime: beacon 60s old (healthy) | wake=real | beacon mtime 60s ago | live holder pid 45018
+   kern.waketime: { sec = 1790374866, usec = 293997 } Sat Sep 26 00:21:06 2026 (now 1790377813)
+   exit=0  output: watcher: already running pid 45018
+== TARGET real kern.waketime: beacon 1000s old, touched after last real wake (hung awake) | wake=real | beacon mtime 1000s ago | live holder pid 45284
+   kern.waketime: { sec = 1790374866, usec = 293997 } Sat Sep 26 00:21:06 2026 (now 1790377813)
+   exit=1  output: watcher: lock held by live pid 45284 but heartbeat is stale for 1000s (>300s); inspect or stop that watcher before re-arming.
+== TARGET adversarial (re-run, driver fixed): future wake time now+3600 | beacon 950s old | live holder pid 51687
+   exit=1  output: watcher: lock held by live pid 51687 but heartbeat is stale for 951s (>300s); inspect or stop that watcher before re-arming.

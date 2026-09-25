@@ -1,0 +1,6 @@
+ok - a wake newer than the beacon reads fresh within the grace and stale once it elapses
+ok - a wake older than the beacon leaves plain mtime age
+ok - an empty, unparseable, negative, or future wake time falls back to mtime age, never fresh
+ok - the platform wake source is readable where it exists and absent elsewhere
+ok - supervision status judges freshness from the wake and still reports the raw beat age
+ok - the watcher defers to a live holder after a wake and still refuses one hung while awake
