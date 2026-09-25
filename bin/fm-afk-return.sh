@@ -339,7 +339,7 @@ health_snapshot() {  # <evidence-file>
     lines="$lines
 GAP: the away daemon was not running at return (the away flag stood with no live daemon)"
   fi
-  if [ "$beat_age" -ge "$RETURN_GRACE" ]; then
+  if [ "$(fm_beacon_age "$STATE/.last-watcher-beat")" -ge "$RETURN_GRACE" ]; then
     lines="$lines
 GAP: the watcher beat was ${beat_age}s old at return (grace ${RETURN_GRACE}s)"
   fi

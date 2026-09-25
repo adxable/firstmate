@@ -63,6 +63,12 @@ unset FM_TASK_ID
 # against an ambient override sets TASKS_AXI_FILE itself.
 unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 
+# Pin beacon age to plain mtime age (bin/fm-wake-lib.sh fm_last_wake_epoch).
+# On a Mac that woke from sleep within the grace, the real wake time would read
+# every deliberately stale fixture beacon as fresh. A case that exercises the
+# wake source sets FM_LAST_WAKE_EPOCH itself or unsets it.
+export FM_LAST_WAKE_EPOCH=
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
