@@ -1287,6 +1287,57 @@ Observed 2026-08-19:
 ok - live Herdr submit confirm: Claude Code (2.1.236 (Claude Code)) on herdr 0.8.0 reports empty for a landed idle steer
 ```
 
+### Typed payload size
+
+Measured 2026-09-25 against Herdr 0.9.0 and Claude Code 2.1.280 on macOS 26.6.2 (Darwin 25.6.0) in an isolated `fm-lab-` session.
+
+A `pane send-text` payload reaches Claude in terminal reads of at most 1022 bytes.
+Each away-supervisor payload was typed with `fm_backend_herdr_send_literal`, read back with `fm_backend_herdr_composer_content`, judged with `fm_backend_herdr_composer_payload_shown`, and cleared, four times per size:
+
+```text
+ 700: shown shown shown shown
+ 800: shown shown shown shown
+ 900: shown shown shown shown
+1000: shown shown shown shown
+1022: shown shown shown
+1023: NOT(x) NOT(x) NOT(x)
+1100: NOT(zabcd abcdefghij klmnopqrst uv) NOT([Pasted text #529]zabcd abcdef) ...
+1500: NOT(zabcd abcdefghij klmnopqrst uv) ...
+```
+
+Above 800 characters a single read collapses into one `[Pasted text #N]` placeholder, which the proof accepts.
+From 1023 bytes on, Claude kept only the last partial read, or some placeholders plus that read, so the submit proof refused Enter and cleared the composer.
+A 5,153-character digest reproduced the away daemon's `inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)` on every attempt.
+`FM_ESCALATE_DIGEST_MAX_BYTES` defaults to 900 bytes for this reason.
+
+Claude also wraps typed input inside its rule pair so that a row can start with `#402` or end with the digest's ` | ` separator.
+Before the classifier treated rows inside the closed pair as input, such a composer read `unknown` or yielded only its first row, and the proof refused it:
+
+```text
+❯ FIRSTMATE_OP: v1 away-supervisor: Supervisor escalate (1 event(s)): lab-mate.status: done: merged PRs #400 #401
+  #402 #403 #404 #405 #406 #407 #408 #409 #410 #411 #412 #413 #414 #415 #416 #417 #418 #419 #420 #421 #422 #423 #424
+  #425 #426 #427 #428 #429 #430 (pre-read; re-arm not needed — watcher daemon-managed)
+state=unknown
+```
+
+The portable regressions are `test_claude_pair_wrap_rows_are_input` in `tests/fm-composer-lib.test.sh`, `test_send_text_submit_claude_wrap_rows_submit` in `tests/fm-backend-herdr.test.sh`, and the digest-bound tests in `tests/fm-daemon.test.sh`.
+Refresh the live proof, which drives the daemon's own flush with an overnight-shaped buffer, with:
+
+```sh
+FM_HERDR_SUBMIT_CONFIRM_LIVE=1 tests/fm-herdr-submit-confirm-live-e2e.test.sh
+```
+
+Observed 2026-09-25:
+
+```text
+ok - live Herdr submit confirm: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-63605-26431
+ok - live Herdr submit confirm: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 submits a U+2063 away-supervisor payload whose read-back drops the mark
+ok - live Herdr typed payload: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 shows a 900-byte payload whole
+measure: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 over one terminal read: 1100-byte payload shown whole=no
+ok - live Herdr away digests: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 receives an overnight-shaped buffer as bounded digests (2 flushes)
+ok - live Herdr away digests: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 receives a digest whose wrapped rows start with '#'
+```
+
 ### Prune and respawn
 
 The real label-collision reproduction is owned by:

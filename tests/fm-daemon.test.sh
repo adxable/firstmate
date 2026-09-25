@@ -1432,6 +1432,82 @@ test_escalate_batches_into_one_digest() {
   pass "multiple escalations flush as a single batched digest"
 }
 
+# A macOS terminal read carries at most 1022 bytes, and Claude Code turns a
+# longer typed digest into dropped paste placeholders, so no digest may exceed
+# the daemon's byte ceiling (docs/verification/runtime-backends.md "Typed
+# payload size"). A buffer larger than one read drains as successive digests in
+# order, each typed once, and only delivered events leave the buffer.
+test_escalate_digest_stays_within_one_terminal_read() {
+  local dir state fakebin sent capture i item joined digest bytes flushes=0 delivered='' body
+  local -a items=()
+  dir=$(make_supercase digest-bounded)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  sent="$dir/sent.log"; : > "$sent"
+  capture="$dir/pane.txt"; printf '\342\235\257 \n' > "$capture"
+  for i in 1 2 3 4 5 6; do
+    item="task-$i.status: done [key=child-pr-$i]: PR https://example.invalid/pull/$i ready - gotowe, żółw $(printf 'x%.0s' $(seq 1 180))"
+    items+=("$item")
+    escalate_add "$state" "$item"
+  done
+  joined=$(printf '%s | ' "${items[@]}")
+  [ "$(printf '%s' "$joined" | LC_ALL=C wc -c | tr -d ' ')" -gt 1022 ] \
+    || fail "fixture must exceed one terminal read, or the bound is never exercised"
+  afk_enter "$state"
+  while [ -s "$state/.subsuper-escalations" ] && [ "$flushes" -lt 6 ]; do
+    : > "$sent"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_PANE_ALIVE=1 FM_FAKE_TMUX_SENT="$sent" \
+      FM_FAKE_TMUX_CAPTURE="$capture" escalate_flush "$state" \
+      || fail "bounded escalate_flush $((flushes + 1)) failed"
+    flushes=$((flushes + 1))
+    [ "$(grep -c '\[ENTER\]' "$sent")" -eq 1 ] || fail "flush $flushes did not submit exactly one digest"
+    digest=$(grep -F 'FIRSTMATE_OP: v1 away-supervisor: ' "$sent")
+    [ "$(printf '%s\n' "$digest" | wc -l | tr -d ' ')" -eq 1 ] || fail "flush $flushes typed more than one digest"
+    bytes=$(printf '%s' "$digest" | LC_ALL=C wc -c | tr -d ' ')
+    [ "$bytes" -le 900 ] || fail "flush $flushes typed $bytes bytes, above the 900-byte digest ceiling"
+    if [ -s "$state/.subsuper-escalations" ]; then
+      assert_contains "$digest" "more to follow)" "a partial digest did not say more events follow"
+      [ -s "$state/.subsuper-escalations.since" ] || fail "the undelivered remainder lost its batch-window sidecar"
+    fi
+    body=${digest#*event(s)*): }
+    body=${body% (pre-read; re-arm not needed — watcher daemon-managed)}
+    delivered="${delivered:+$delivered | }$body"
+  done
+  [ ! -s "$state/.subsuper-escalations" ] || fail "buffer not drained after $flushes bounded flushes"
+  [ "$flushes" -ge 2 ] || fail "an over-read buffer was delivered in $flushes digest(s), not split"
+  [ "$delivered" = "${joined% | }" ] || fail "bounded digests lost, reordered, or altered events"
+  pass "an oversized escalation buffer drains as ordered digests that each fit one terminal read"
+}
+
+test_escalate_digest_cuts_an_oversized_event() {
+  local dir state fakebin sent capture item digest bytes kept lost total
+  dir=$(make_supercase digest-cut)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  sent="$dir/sent.log"; : > "$sent"
+  capture="$dir/pane.txt"; printf '\342\235\257 \n' > "$capture"
+  item="adx-worker-mate.status: done [key=span]: $(printf 'wdrożenie żółw — %.0s' $(seq 1 400))"
+  total=$(printf '%s' "$item" | LC_ALL=C wc -c | tr -d ' ')
+  escalate_add "$state" "$item"
+  afk_enter "$state"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_PANE_ALIVE=1 FM_FAKE_TMUX_SENT="$sent" \
+    FM_FAKE_TMUX_CAPTURE="$capture" escalate_flush "$state" \
+    || fail "escalate_flush of one oversized event failed"
+  digest=$(grep -F 'FIRSTMATE_OP: v1 away-supervisor: ' "$sent")
+  bytes=$(printf '%s' "$digest" | LC_ALL=C wc -c | tr -d ' ')
+  [ "$bytes" -le 900 ] || fail "an oversized event produced a $bytes-byte digest"
+  printf '%s' "$digest" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || fail "cutting the event split a UTF-8 sequence"
+  lost=$(printf '%s' "$digest" | sed -n 's/.* \[+\([0-9][0-9]*\) bytes\] (pre-read.*/\1/p')
+  [ -n "$lost" ] || fail "the cut event carries no omitted-bytes marker"
+  kept=${digest#*event(s)): }
+  kept=${kept% \[+"$lost" bytes\] (pre-read; re-arm not needed — watcher daemon-managed)}
+  case "$item" in "$kept"*) ;; *) fail "the delivered text is not a prefix of the event" ;; esac
+  [ $(( $(printf '%s' "$kept" | LC_ALL=C wc -c | tr -d ' ') + lost )) -eq "$total" ] \
+    || fail "the omitted-bytes marker does not account for the cut"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "a delivered cut event stayed buffered"
+  pass "an event longer than the digest ceiling is cut at a UTF-8 boundary and marked with its lost bytes"
+}
+
 test_escalate_batch_age_uses_first_append() {
   local dir state fakebin sent capture
   dir=$(make_supercase batch-age)
@@ -2848,6 +2924,8 @@ test_housekeeping_herdr_idle_busy_record_clears_stale
 test_housekeeping_herdr_resumed_stale_cleared
 test_housekeeping_orca_persistent_stale_resolves_terminal
 test_escalate_batches_into_one_digest
+test_escalate_digest_stays_within_one_terminal_read
+test_escalate_digest_cuts_an_oversized_event
 test_escalate_batch_age_uses_first_append
 test_heartbeat_scan_dedup
 test_handle_wake_routes_self_and_escalate
