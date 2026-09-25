@@ -753,6 +753,59 @@ test_bare_wrap_region_classifies() {
   pass "fm_composer_classify_screen: the bare composer's wrap region stays identified; structure breaks it"
 }
 
+# Claude draws its composer between two `─` rules. Typed input that wraps at a
+# space before `#402`, `$HOME`, `%`, or a `>` quote starts a row with a shell
+# glyph, an away digest's ` | ` separator can start or end a row, and Claude's
+# paste placeholders wrap the same way (`#277][Pasted...`). Such a row is that
+# composer's own input: read as a dead shell or a box border it made the
+# composer unknown or cut its content short, so the Herdr submit proof refused
+# away digests on every attempt (measured live 2026-09-25,
+# docs/verification/runtime-backends.md "Typed payload size"). The closing rule
+# is the load-bearing signal: without it the same rows still read as a dead
+# shell or a structural edge, and a shell prompt below a closed pair still
+# proves the composer above it stale.
+test_claude_pair_wrap_rows_are_input() {
+  local g row screen open out rule='────────────────────────' first='❯ supervisor digest: merged PRs'
+  for g in '#' '$' '%' '>'; do
+    row="${g}402 wrapped continuation of the digest"
+    screen="transcript line"$'\n'"$rule"$'\n'"$first"$'\n'"$row"$'\n'"$rule"$'\n'"  footer hint"
+    assert_screen "claude pair wrap row '$g' on herdr" pending "$CAPS_STYLED" "$screen" '' probe-absent
+    assert_screen "claude pair wrap row '$g' on zellij" pending "$CAPS_STYLED_NOID" "$screen"
+    assert_screen "claude pair wrap row '$g' on tmux" pending "$CAPS_TMUX" "$screen" 3 probe-absent
+    out=$(fm_composer_extract_selected_content "$CAPS_STYLED_NOID" "$screen") \
+      || fail "claude pair wrap row '$g': content extraction refused a closed composer"
+    [ "$out" = "supervisor digest: merged PRs $row" ] \
+      || fail "claude pair wrap row '$g': extraction dropped or altered the wrapped input, got '$out'"
+
+    open="transcript line"$'\n'"$rule"$'\n'"$first"$'\n'"$row"
+    assert_screen "unclosed pair row '$g' on herdr" unknown "$CAPS_STYLED" "$open" '' probe-absent
+    assert_screen "unclosed pair row '$g' on tmux" unknown "$CAPS_TMUX" "$open" 3 probe-absent
+    if out=$(fm_composer_extract_selected_content "$CAPS_STYLED_NOID" "$open"); then
+      fail "unclosed pair row '$g': a possible dead shell must still refuse extraction, got '$out'"
+    fi
+  done
+  for row in '| lab.status: done [key=b]: merged #402' 'lab.status: done [key=a]: merged #401 |'; do
+    screen="$rule"$'\n'"$first"$'\n'"$row"$'\n'"more of the same digest"$'\n'"$rule"
+    assert_screen "claude pair edge row '$row' on herdr" pending "$CAPS_STYLED" "$screen" '' probe-absent
+    assert_screen "claude pair edge row '$row' on tmux" pending "$CAPS_TMUX" "$screen" 3 probe-absent
+    out=$(fm_composer_extract_selected_content "$CAPS_STYLED_NOID" "$screen")
+    [ "$out" = "supervisor digest: merged PRs $row more of the same digest" ] \
+      || fail "claude pair edge row '$row': extraction stopped at the row edge, got '$out'"
+    open="$first"$'\n'"$row"$'\n'"more of the same digest"
+    out=$(fm_composer_extract_selected_content "$CAPS_STYLED_NOID" "$open" || true)
+    [ "$out" = 'supervisor digest: merged PRs' ] \
+      || fail "without a closing rule an edge row must still end the wrap region, got '$out'"
+  done
+  screen="$rule"$'\n'"❯ [Pasted text #265][Pasted text #266][Pasted"$'\n'"  text #267][Pasted text"$'\n'"  #268][Pasted text #269]"$'\n'"$rule"
+  assert_screen "wrapped claude paste placeholders on herdr" pending "$CAPS_STYLED" "$screen" '' probe-absent
+  out=$(fm_composer_extract_selected_content "$CAPS_STYLED_NOID" "$screen")
+  [ "$out" = '[Pasted text #265][Pasted text #266][Pasted text #267][Pasted text #268][Pasted text #269]' ] \
+    || fail "wrapped paste placeholders were not extracted whole, got '$out'"
+  screen="$rule"$'\n'"❯ old draft"$'\n'"$rule"$'\n'"$ "
+  assert_screen "dead shell below a closed claude pair" unknown "$CAPS_STYLED" "$screen" '' probe-absent
+  pass "fm_composer_classify_screen: rows inside claude's closed rule pair are input even when they lead with a shell glyph or touch a border character"
+}
+
 test_contiguous_transcript_reanchors_on_live_prompt() {
   local screen
   screen=$'❯ hi\nHello!\n❯'
@@ -934,6 +987,7 @@ test_matrix_kimi_bordered_shell_glyph_box
 test_matrix_claude_inside_zellij_ansi_dump
 test_strict_blank_row_divergence
 test_bare_wrap_region_classifies
+test_claude_pair_wrap_rows_are_input
 test_contiguous_transcript_reanchors_on_live_prompt
 test_lower_dead_shell_invalidates_cursorless_candidate
 test_cursorless_bare_wrap_region_classifies

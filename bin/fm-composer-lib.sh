@@ -76,7 +76,10 @@
 #                A separated pair that closes over a bare AGENT-GLYPH row is a
 #                different, self-proving thing: real claude 2.x draws exactly
 #                that (`─` rule, `❯`+NBSP, `─` rule), so the glyph inside the
-#                pair carries the shape and no identity is needed.
+#                pair carries the shape and no identity is needed. Rows between
+#                that glyph row and the closing rule are its wrapped input, even
+#                one that starts with a shell glyph or a border character
+#                (_fm_composer_row_in_glyph_pair).
 #
 # THE COMPOSER FOOTER ZONE (task firstmate-doorbell-vals-pending-p1): a
 # harness draws its own furniture BELOW the composer - a user statusLine, a
@@ -788,7 +791,7 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
   FM_COMPOSER_SCAN_PI_GLYPH=
   FM_COMPOSER_SCAN_LEFTBAR_GLYPH_ROW=-1
   FM_COMPOSER_SCAN_LEFTBAR_GLYPH=
-  local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max
+  local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max enclosed_shell=-1
   local probe row_glyph row_glyph_row
   local box_glyph_row=-1 box_glyph='' pi_glyph_row=-1 pi_glyph=''
   pi_max=$FM_COMPOSER_PI_MAX_LINES
@@ -837,6 +840,9 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
     if _fm_composer_pi_separator_row "$trimmed"; then
       FM_COMPOSER_SCAN_PI_LAST_SEPARATOR=$row
       if [ "$pi_open" -ge 0 ]; then
+        # This separator closes the pair, so a shell-glyph row it enclosed
+        # below the pair's agent glyph was that composer's wrapped input.
+        enclosed_shell=-1
         FM_COMPOSER_SCAN_PI_PAIR_FOUND=1
         FM_COMPOSER_SCAN_PI_OPEN=$pi_open
         FM_COMPOSER_SCAN_PI_CLOSE=$row
@@ -882,9 +888,16 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
     esac
     # Bare agent-glyph rows: the glyph itself is the container proof. Bare
     # shell glyphs are deliberately not candidates (dead-shell rule). Keep
-    # lower shell prompts as staleness evidence for cursorless selection.
+    # lower shell prompts as staleness evidence for cursorless selection,
+    # except a shell-glyph row below an open separator pair's agent glyph: it
+    # counts only if no separator closes that pair, because a closed pair makes
+    # it wrapped input (_fm_composer_row_in_glyph_pair owns that rule).
     if [ "$top" -lt 0 ] && fm_composer_leading_shell_glyph_var glyph "$trimmed"; then
-      FM_COMPOSER_SCAN_SHELL_ROW=$row
+      if [ "$pi_open" -ge 0 ] && [ "$pi_glyph_row" -ge 0 ]; then
+        enclosed_shell=$row
+      else
+        FM_COMPOSER_SCAN_SHELL_ROW=$row
+      fi
     elif fm_composer_leading_agent_glyph_var glyph "$trimmed"; then
       FM_COMPOSER_SCAN_BARE_ROW=$row
     fi
@@ -1012,6 +1025,9 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
   done <<EOF
 $pane
 EOF
+  if [ "$enclosed_shell" -gt "$FM_COMPOSER_SCAN_SHELL_ROW" ]; then
+    FM_COMPOSER_SCAN_SHELL_ROW=$enclosed_shell
+  fi
   if [ -n "$cy" ] && [ "$top" -ge 0 ] && [ "$top" -lt "$cy" ]; then
     FM_COMPOSER_SCAN_UNSAFE=1
   fi
@@ -1219,10 +1235,25 @@ _fm_composer_bare_row_strip_furniture_var() {  # <varname>
   fi
 }
 
+# _fm_composer_row_in_glyph_pair: 0 when <row> lies below the agent-glyph row
+# of the scan's last closed separator pair and above its closing separator.
+# Claude draws its composer as exactly that pair, so such a row is the
+# composer's own wrapped input even when it begins with a shell glyph or begins
+# or ends with a border character: a typed `PR #402` that wraps at the space
+# puts `#402` at the head of a row, and an away digest's ` | ` separator lands
+# at a row edge the same way. A dead shell prompt is drawn after the agent
+# exits and is never closed over by a later separator of the same pair.
+_fm_composer_row_in_glyph_pair() {  # <row>
+  [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] \
+    && [ "$FM_COMPOSER_SCAN_PI_GLYPH_ROW" -ge 0 ] \
+    && [ "$1" -gt "$FM_COMPOSER_SCAN_PI_GLYPH_ROW" ] \
+    && [ "$1" -lt "$FM_COMPOSER_SCAN_PI_CLOSE" ]
+}
+
 # _fm_composer_wrap_region_ok: 0 when every row STRICTLY BELOW <glyph-row>
-# through <cursor-row> is non-blank and carries no structural edge - the
-# contiguity proof that those rows are the bare composer's wrapped input
-# rather than unrelated screen content.
+# through <cursor-row> is non-blank and, outside a closed glyph pair, carries no
+# structural edge - the contiguity proof that those rows are the bare
+# composer's wrapped input rather than unrelated screen content.
 _fm_composer_wrap_region_ok() {  # <plain-screen> <glyph-row> <cursor-row>
   local plain=$1 g=$2 cy=$3 row line trimmed glyph
   row=$((g + 1))
@@ -1231,10 +1262,12 @@ _fm_composer_wrap_region_ok() {  # <plain-screen> <glyph-row> <cursor-row>
     trimmed=$line
     fm_composer_normalize_trim_var trimmed
     [ -n "$trimmed" ] || return 1
-    if fm_composer_row_has_edge "$trimmed"; then return 1; fi
+    if fm_composer_row_has_edge "$trimmed" \
+       && ! _fm_composer_row_in_glyph_pair "$row"; then return 1; fi
     if _fm_composer_row_is_omp_status "$trimmed"; then return 1; fi
     if _fm_composer_row_is_braille_furniture "$trimmed"; then return 1; fi
-    if fm_composer_leading_shell_glyph_var glyph "$trimmed"; then return 1; fi
+    if fm_composer_leading_shell_glyph_var glyph "$trimmed" \
+       && ! _fm_composer_row_in_glyph_pair "$row"; then return 1; fi
     row=$((row + 1))
   done
   return 0
@@ -1478,7 +1511,10 @@ _fm_composer_select_cursorless() {
       trimmed=$raw
       fm_composer_normalize_trim_var trimmed
       [ -n "$trimmed" ] || break
-      fm_composer_row_has_edge "$trimmed" && break
+      if fm_composer_row_has_edge "$trimmed" \
+         && ! _fm_composer_row_in_glyph_pair "$next"; then
+        break
+      fi
       _fm_composer_row_is_omp_status "$trimmed" && break
       _fm_composer_row_is_braille_furniture "$trimmed" && break
       FM_COMPOSER_SELECTED_LAST=$next

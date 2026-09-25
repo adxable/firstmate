@@ -9,8 +9,8 @@
 # token-efficient replacement for the prior always-inject daemon: routine
 # signal/stale/heartbeat wakes cost zero firstmate context; only done/
 # needs-decision/blocked/failed/persistent-wedge/check-output events and a
-# declared-wait recheck reach the LLM, and even then as one pre-read digest per
-# batch window.
+# declared-wait recheck reach the LLM, and even then as pre-read digests per
+# batch window, each small enough to arrive intact (see escalate_flush).
 #
 # PRESENCE-GATING (the /afk contract). The daemon is the away-mode engine: it
 # injects ONLY when the durable away-mode flag state/.afk is present. Invoking
@@ -206,6 +206,7 @@ FM_SUPERVISOR_SUPPORTED_BACKENDS="tmux herdr"
 INJECT_SKIP_DEFAULT="heartbeat"
 STALE_ESCALATE_SECS_DEFAULT=240
 ESCALATE_BATCH_SECS_DEFAULT=90
+ESCALATE_DIGEST_MAX_BYTES=900
 HEARTBEAT_SCAN_SECS_DEFAULT=300
 HOUSEKEEPING_TICK_DEFAULT=15
 # Max time a buffered escalation may sit undelivered before the daemon retries
@@ -703,21 +704,119 @@ escalate_add() {  # <state> <distilled-item>
   printf '%s\n' "$item" >> "$buf"
 }
 
-# Flush the escalation buffer as ONE batched, single-line digest to the
-# supervisor pane. Returns 0 on successful inject (or empty buffer), non-zero on
-# inject failure (buffer preserved for retry / catch-up).
+# --- digest size bound -------------------------------------------------------
+# A typed digest reaches the harness through the pane's terminal input, which a
+# macOS pty hands over in reads of at most 1022 bytes. Claude Code 2.1.280
+# collapses every read beyond its paste threshold into a `[Pasted text #N]`
+# placeholder and drops some of them when more reads follow, so a longer digest
+# lands as a tail or as placeholders plus a remainder. The herdr submit proof
+# then refuses Enter on every attempt, and because the undelivered buffer only
+# grows, no later retry can succeed (measured live on 2026-09-25, see
+# docs/verification/runtime-backends.md "Typed payload size"). Each injected
+# digest therefore stays within one read: it carries the leading buffered
+# events that fit the byte ceiling, and the rest stay buffered for the next
+# flush. A single event longer than the ceiling is cut at a UTF-8 boundary and
+# marked with the number of bytes it lost; its status log keeps the full text.
+
+# _escalate_digest_wrap: the single-line digest text for <items>, the first
+# <shown> of <total> buffered events.
+_escalate_digest_wrap() {  # <shown> <total> <items>
+  local count="$1 event(s)"
+  [ "$1" -ge "$2" ] || count="$1 of $2 event(s), $(($2 - $1)) more to follow"
+  printf 'Supervisor escalate (%s): %s (pre-read; re-arm not needed — watcher daemon-managed)' "$count" "$3"
+}
+
+# _escalate_digest_bytes: bytes inject_msg would type for this digest, the
+# operational envelope included.
+_escalate_digest_bytes() {  # <shown> <total> <items>
+  local msg encoded
+  msg=$(_escalate_digest_wrap "$1" "$2" "$3")
+  fm_operational_input_encode away-supervisor "$msg" encoded || { printf '%s' 999999; return 0; }
+  local LC_ALL=C
+  printf '%s' "${#encoded}"
+}
+
+# _utf8_prefix: the longest prefix of <text> within <max-bytes> bytes that does
+# not end inside a UTF-8 sequence, stored in <out-var>.
+_utf8_prefix() {  # <text> <max-bytes> <out-var>
+  local LC_ALL=C s=$1 max=$2 cont=0 need
+  if [ "${#s}" -gt "$max" ]; then
+    s=${s:0:$max}
+    while [ "$cont" -lt 3 ] && [ "$cont" -lt "${#s}" ]; do
+      case "${s:$((${#s} - cont - 1)):1}" in
+        [$'\x80'-$'\xbf']) cont=$((cont + 1)) ;;
+        *) break ;;
+      esac
+    done
+    need=$cont
+    if [ "$cont" -lt "${#s}" ]; then
+      case "${s:$((${#s} - cont - 1)):1}" in
+        [$'\xc0'-$'\xdf']) need=1 ;;
+        [$'\xe0'-$'\xef']) need=2 ;;
+        [$'\xf0'-$'\xf7']) need=3 ;;
+      esac
+    fi
+    [ "$cont" -ge "$need" ] || s=${s:0:$((${#s} - cont - 1))}
+  fi
+  printf -v "$3" '%s' "$s"
+}
+
+# escalate_digest: the next digest from the head of <buf>. Sets ESCALATE_DIGEST
+# and ESCALATE_DIGEST_EVENTS (how many leading buffer lines it carries).
+escalate_digest() {  # <buf>
+  local buf=$1 max=$ESCALATE_DIGEST_MAX_BYTES total item='' items='' candidate shown=0 room cut=''
+  total=$(( $(wc -l < "$buf" 2>/dev/null || echo 0) ))
+  [ "$total" -gt 0 ] || total=1
+  while IFS= read -r item || [ -n "$item" ]; do
+    candidate=${items:+$items | }$item
+    [ "$(_escalate_digest_bytes "$((shown + 1))" "$total" "$candidate")" -le "$max" ] || break
+    items=$candidate
+    shown=$((shown + 1))
+  done < "$buf"
+  if [ "$shown" -eq 0 ]; then
+    IFS= read -r item < "$buf" || true
+    room=$((max - $(_escalate_digest_bytes 1 "$total" " [+999999999 bytes]")))
+    _utf8_prefix "$item" "$room" cut
+    local LC_ALL=C
+    items="$cut [+$(( ${#item} - ${#cut} )) bytes]"
+    shown=1
+  fi
+  ESCALATE_DIGEST=$(_escalate_digest_wrap "$shown" "$total" "$items")
+  ESCALATE_DIGEST_EVENTS=$shown
+}
+
+# Flush the head of the escalation buffer as one bounded, single-line digest to
+# the supervisor pane. Returns 0 on successful inject (or empty buffer), non-zero
+# on inject failure (buffer preserved for retry / catch-up). Delivered events
+# leave the buffer; any remainder restarts the batch window, so it follows once
+# firstmate has taken this digest instead of aging toward a false wedge alarm.
 escalate_flush() {  # <state>
-  local state=$1 buf item n msg
+  local state=$1 buf total rest
   buf="$state/.subsuper-escalations"
   [ -s "$buf" ] || return 0
-  n=$(wc -l < "$buf" 2>/dev/null || echo 0)
-  # Join buffered items with the literal " | " separator into one digest line.
-  msg=$(awk 'NR>1{printf " | "} {printf "%s",$0} END{print ""}' "$buf" 2>/dev/null)
-  # Single-line wrapper: no embedded newlines (inject_msg also collapses as a
-  # safety net, but keeping the source single-line makes the intent explicit).
-  msg=$(printf 'Supervisor escalate (%s event(s)): %s (pre-read; re-arm not needed — watcher daemon-managed)' "$n" "$msg")
-  if inject_msg "$msg" "$state"; then : > "$buf"; rm -f "${buf}.since" "$state/.subsuper-inject-wedged"; return 0; fi
-  return 1
+  if [ ! -f "$buf" ] || [ ! -r "$buf" ]; then
+    log "inject skipped: escalation buffer $buf is not a readable file"
+    return 1
+  fi
+  escalate_digest "$buf"
+  if ! inject_msg "$ESCALATE_DIGEST" "$state"; then
+    return 1
+  fi
+  total=$(( $(wc -l < "$buf" 2>/dev/null || echo 0) ))
+  if [ "$ESCALATE_DIGEST_EVENTS" -ge "$total" ]; then
+    : > "$buf"
+    rm -f "${buf}.since"
+  else
+    rest="${buf}.rest.$$"
+    if tail -n "+$((ESCALATE_DIGEST_EVENTS + 1))" "$buf" > "$rest" 2>/dev/null && mv -f "$rest" "$buf"; then
+      _now > "${buf}.since"
+    else
+      rm -f "$rest"
+      log "escalation buffer trim failed after a delivered digest; its first $ESCALATE_DIGEST_EVENTS event(s) may be delivered again"
+    fi
+  fi
+  rm -f "$state/.subsuper-inject-wedged"
+  return 0
 }
 
 # --- backend-independent active wedge alert ---------------------------------

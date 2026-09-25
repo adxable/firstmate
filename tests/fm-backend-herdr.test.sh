@@ -4712,6 +4712,30 @@ test_send_text_submit_long_literal_submits_when_composer_holds_every_byte() {
   pass "fm_backend_herdr_send_text_submit: a 1500-character payload a Claude composer still holds is submitted whole"
 }
 
+# Claude wraps a typed payload inside its rule pair: a break before `#402`
+# starts a row with a shell glyph, and an away digest's ` | ` separator can end
+# one. The proof must still read those rows as the payload
+# (tests/fm-composer-lib.test.sh owns the classifier rule); reading them as a
+# dead shell or a box border refused every away digest that wrapped this way.
+test_send_text_submit_claude_wrap_rows_submit() {
+  local dir log resp fb out enter_count text rule='────────────────────────'
+  dir="$TMP_ROOT/submit-wrap-rows"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  text='Supervisor escalate (2 event(s)): a.status: done: merged PRs #400 #401 #402 #403 | b.status: done: merged'
+  printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/2.out"
+  printf '{"result":{"agent":{"agent_status":"working"}}}\n' > "$resp/4.out"
+  herdr_submit_claude_prefix "$resp" "$text"
+  printf '%s\n  \xe2\x9d\xaf %s\n    %s\n    %s\n%s\n' "$rule" 'Supervisor escalate (2 event(s)): a.status: done: merged PRs #400 #401' \
+    '#402 #403 |' 'b.status: done: merged' "$rule" > "$resp/4.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0.01' "$ROOT" "$text" )
+  [ "$out" = empty ] || fail "a payload whose wrapped rows start with '#' and end with '|' should be proven and submitted, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 1 ] || fail "the proven wrapped payload should be submitted once, sent $enter_count Enter(s)"
+  [ "$(herdr_ctrl_u_count "$log")" -eq 0 ] || fail "a proven wrapped payload must not be cleared"
+  pass "fm_backend_herdr_send_text_submit: a Claude payload whose wrapped rows start with '#' or end with '|' is proven and submitted"
+}
+
 test_send_text_submit_refuses_enter_when_composer_holds_only_the_suffix() {
   local dir log resp fb out enter_count text suffix
   dir="$TMP_ROOT/submit-long-suffix"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -5773,6 +5797,7 @@ test_send_text_submit_send_failed
 test_send_text_submit_unknown_on_capture_failure
 test_send_text_submit_unknown_on_composer_capture_failure
 test_send_text_submit_long_literal_submits_when_composer_holds_every_byte
+test_send_text_submit_claude_wrap_rows_submit
 test_send_text_submit_refuses_enter_when_composer_holds_only_the_suffix
 test_send_text_submit_refused_suffix_that_will_not_clear_is_unknown
 test_send_text_submit_clears_a_wrapped_suffix_one_row_per_press
