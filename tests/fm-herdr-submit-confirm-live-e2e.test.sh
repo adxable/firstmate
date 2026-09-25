@@ -224,7 +224,7 @@ mkdir -p "$DAEMON_STATE" "$TMP_ROOT/home"
 printf 'away\n' > "$DAEMON_STATE/.afk"
 export FM_HOME="$TMP_ROOT/home" FM_STATE_OVERRIDE="$DAEMON_STATE" FM_SUPERVISOR_TARGET="$TARGET" \
   FM_SUPERVISOR_BACKEND=herdr FM_DAEMON_PRIMARY_HARNESS=claude LOG="$TMP_ROOT/daemon.log"
-# shellcheck source=bin/fm-supervise-daemon.sh
+# shellcheck source=/dev/null
 . "$ROOT/bin/fm-supervise-daemon.sh"
 HEAD_TOKEN="FMDIGESTHEAD$$_$RANDOM"
 TAIL_TOKEN="FMDIGESTTAIL$$_$RANDOM"
