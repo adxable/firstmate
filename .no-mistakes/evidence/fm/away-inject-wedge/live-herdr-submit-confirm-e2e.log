@@ -1,0 +1,7 @@
+ok - live Herdr submit confirm: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-19710-17590
+ok - live Herdr submit confirm: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 submits a U+2063 away-supervisor payload whose read-back drops the mark
+ok - live Herdr typed payload: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 shows a 900-byte payload whole
+measure: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 over one terminal read: 1100-byte payload shown whole=no
+ok - live Herdr away digests: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 receives an overnight-shaped buffer as bounded digests (2 flushes)
+ok - live Herdr away digests: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 receives a digest whose wrapped rows start with '#'
+exit=

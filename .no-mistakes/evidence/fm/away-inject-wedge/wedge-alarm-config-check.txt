@@ -1,0 +1,4 @@
+config/wedge-alarm in operator checkout: absent -> auto -> osascript (docs/wedge-alarm.md)
+overnight 'alarm marker written' lines: 218
+notifier warning lines (channel failed/timeout): 0
+[2026-09-25T08:15:31+0200] ERROR: away-mode escalation undelivered 29058s; inject could not confirm a submit (supervisor pane busy or wedged). Buffer + wake-queue preserved; alarm marker written.

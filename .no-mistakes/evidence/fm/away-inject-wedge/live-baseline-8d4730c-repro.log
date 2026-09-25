@@ -1,0 +1,17 @@
+ok - live Herdr submit confirm: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 reports empty and renders the requested reply in isolated session fm-lab-herdr-submit-con-69635-24373
+ok - live Herdr submit confirm: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 submits a U+2063 away-supervisor payload whose read-back drops the mark
+ok - live Herdr typed payload: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 shows a 900-byte payload whole
+measure: Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0 over one terminal read: 1100-byte payload shown whole=no
+not ok - Claude Code (2.1.280 (Claude Code)) on herdr 0.9.0: overnight-shaped away digests were not all delivered after 12 flushes: [2026-09-25T09:39:09+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:14+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:19+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:24+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:30+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:35+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:40+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:45+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:51+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:39:56+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:40:01+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+[2026-09-25T09:40:06+0200] inject failed: submit unconfirmed after 3 retries (verdict=send-failed, text may be in composer)
+exit=1
