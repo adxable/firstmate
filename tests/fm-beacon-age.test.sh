@@ -18,6 +18,7 @@ TMP_ROOT=$(fm_test_tmproot fm-beacon-age-tests)
 
 beacon_age() {  # <state> <beacon> [wake-epoch|unset]
   if [ "${3-unset}" = unset ]; then
+    # shellcheck disable=SC2016 # expanded by the child shell
     env -u FM_LAST_WAKE_EPOCH FM_STATE_OVERRIDE="$1" \
       bash -c '. "$1"; fm_beacon_age "$2"' _ "$LIB" "$2"
   else
@@ -78,6 +79,7 @@ test_platform_wake_source() {
   beat="$state/.last-watcher-beat"
   now=$(date +%s)
   status=0
+  # shellcheck disable=SC2016 # expanded by the child shell
   out=$(env -u FM_LAST_WAKE_EPOCH FM_STATE_OVERRIDE="$state" \
     bash -c '. "$1"; fm_last_wake_epoch' _ "$LIB") || status=$?
   if [ "$(uname)" = Darwin ]; then
